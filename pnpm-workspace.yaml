@@ -1,0 +1,6 @@
+packages:
+  - 'packages/*'
+
+# esbuild(vite/tsx가 사용)는 설치 시 네이티브 바이너리를 내려받는 스크립트가 필요하다
+onlyBuiltDependencies:
+  - esbuild

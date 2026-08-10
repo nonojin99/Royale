@@ -1,0 +1,56 @@
+# 클라이언트를 GitHub Pages로 배포한다.
+#
+# 서버는 여기 올라가지 않는다 — GitHub Pages는 정적 파일만 서빙하므로
+# WebSocket 서버를 호스팅할 수 없다. 서버는 Fly.io로 따로 나가고,
+# 클라이언트는 VITE_SERVER_URL 변수로 그 주소를 가리킨다.
+#
+# 설정: Settings → Pages → Source: GitHub Actions
+#       Settings → Secrets and variables → Actions → Variables →
+#         VITE_SERVER_URL = wss://<앱이름>.fly.dev
+
+name: Deploy client
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @royale/client build
+        env:
+          VITE_SERVER_URL: ${{ vars.VITE_SERVER_URL }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/client/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

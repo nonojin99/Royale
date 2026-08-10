@@ -1,0 +1,37 @@
+# Fly.io 배포 설정
+#
+#   fly launch --no-deploy      (앱 이름/리전 확정)
+#   fly deploy
+#
+# 리전은 플레이어와 가까울수록 좋다. 한국 대상이면 nrt(도쿄)가 현실적으로 가장 낮은 지연을 준다.
+# 시뮬레이션이 20Hz이고 커맨드에 300ms 여유를 두므로, 왕복 150ms까지는 체감이 없다.
+
+app = "pomingpu-royale"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "packages/server/Dockerfile"
+
+[env]
+  PORT = "8787"
+  HOST = "0.0.0.0"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # 매치 상태가 프로세스 메모리에 있으므로 절대 0으로 내리면 안 된다.
+  # 경기 중에 머신이 멈추면 진행 중인 매치가 통째로 사라진다.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

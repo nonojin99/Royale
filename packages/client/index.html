@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="icon" href="data:," />
+  <title>포밍뿌 로얄</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #131c2e;
+      --line: #24314b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --elixir: #d946ef;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    /* 상단 바 */
+    #topbar {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+    }
+    #crowns { font-weight: 700; }
+    #timer { font-variant-numeric: tabular-nums; font-weight: 700; }
+    #opponent { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* 아레나 */
+    #arena {
+      position: relative;
+      line-height: 0;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 8px 30px rgba(0,0,0,.5);
+      touch-action: none;
+    }
+    #arena canvas { display: block; }
+
+    /* 하단 패널 */
+    #bottom {
+      width: 100%;
+      max-width: 520px;
+      padding: 10px 12px 14px;
+    }
+    #elixir-bar {
+      position: relative;
+      height: 16px;
+      background: #1e293b;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+    #elixir-fill {
+      height: 100%;
+      width: 50%;
+      background: linear-gradient(90deg, #a21caf, var(--elixir));
+      transition: width 80ms linear;
+    }
+    #elixir-num {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 800;
+      text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    }
+
+    #hand {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .card {
+      --card-color: #64748b;
+      position: relative;
+      aspect-ratio: 3 / 4;
+      max-height: 108px;
+      border: 2px solid var(--line);
+      border-left: 5px solid var(--card-color);
+      border-radius: 9px;
+      background: var(--panel);
+      color: var(--text);
+      font-family: inherit;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 8px 6px;
+      transition: transform 90ms ease, border-color 90ms ease;
+    }
+    .card .cname { font-size: 13px; font-weight: 700; }
+    .card .ccost {
+      align-self: flex-end;
+      font-size: 12px;
+      font-weight: 800;
+      background: var(--elixir);
+      color: #fff;
+      border-radius: 999px;
+      min-width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+    }
+    .card.selected { border-color: #facc15; transform: translateY(-6px); }
+    .card.unaffordable { opacity: .45; }
+
+    #meta {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    #netinfo.bad { color: #f87171; font-weight: 700; }
+
+    /* 시작 오버레이 */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(8,13,24,.92);
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 14px;
+      padding: 24px;
+      text-align: center;
+      z-index: 10;
+    }
+    #overlay.hidden { display: none; }
+    #overlay-title { font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
+    #overlay p { color: var(--muted); font-size: 13px; max-width: 320px; line-height: 1.6; }
+    #name {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 14px;
+      text-align: center;
+    }
+    #start {
+      background: linear-gradient(135deg, #d946ef, #8b5cf6);
+      color: #fff;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 32px;
+      font-size: 15px;
+      font-weight: 800;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    #start:disabled { opacity: .5; cursor: default; }
+    #status { color: var(--muted); font-size: 13px; min-height: 18px; }
+
+    /* 토스트 */
+    #toast {
+      position: fixed;
+      bottom: 220px;
+      background: rgba(15,23,42,.95);
+      border: 1px solid var(--line);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 150ms ease;
+      pointer-events: none;
+      z-index: 20;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <span id="crowns">👑 0 : 0</span>
+    <span id="opponent"></span>
+    <span id="timer">3:00</span>
+  </div>
+
+  <div id="arena"></div>
+
+  <div id="bottom">
+    <div id="elixir-bar">
+      <div id="elixir-fill"></div>
+      <div id="elixir-num">5</div>
+    </div>
+    <div id="hand"></div>
+    <div id="meta">
+      <span id="next-card"></span>
+      <span id="netinfo"></span>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div id="overlay-title">포밍뿌 로얄</div>
+    <p>
+      엘릭서를 모아 카드를 배치하고 상대 타워를 부수세요.<br />
+      카드를 고른 뒤 <strong>내 진영</strong>을 탭하면 배치됩니다. (숫자키 1~4)
+    </p>
+    <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
+    <button id="start">시작</button>
+    <div id="status"></div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

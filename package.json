@@ -1,0 +1,22 @@
+{
+  "name": "pomingpu-royale",
+  "private": true,
+  "version": "0.1.0",
+  "description": "1v1 실시간 라인 전략 게임 — 결정론적 lockstep 넷코드",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @royale/shared test",
+    "dev:server": "pnpm --filter @royale/server dev",
+    "dev:client": "pnpm --filter @royale/client dev",
+    "dev": "pnpm --parallel --filter @royale/server --filter @royale/client dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
