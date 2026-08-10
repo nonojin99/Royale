@@ -30,11 +30,12 @@ import {
 } from './arena.js';
 import {
   CardDef,
-  DEFAULT_DECK,
   KING_STATS,
   PRINCESS_STATS,
+  TargetPref,
   getCard,
 } from './cards.js';
+import { DEFAULT_DECK } from './decks.js';
 import {
   BUILDING_RADIUS,
   DEPLOY_TICKS,
@@ -77,6 +78,12 @@ export interface Entity {
   target: number;
   /** 킹타워 활성화 여부 (킹 외에는 항상 true) */
   active: boolean;
+  /**
+   * 공중 유닛인가.
+   * 공중은 강·다리를 무시하고 직선으로 날아가며 지상 엔티티와 충돌하지 않는다.
+   * 대신 targets가 'ground'인 공격에는 맞지 않는다.
+   */
+  flying: boolean;
 }
 
 export interface PlayerState {
@@ -156,6 +163,7 @@ export function createState(
       target: -1,
       // 킹타워는 비활성으로 시작한다
       active: spot.kind !== 'king',
+      flying: false,
     });
   }
   return s;
@@ -241,6 +249,7 @@ function spawnUnit(s: GameState, team: Team, c: CardDef, x: number, y: number): 
     life: c.lifetime,
     target: -1,
     active: true,
+    flying: c.flying,
   });
 }
 
@@ -286,6 +295,9 @@ function applySpell(s: GameState, team: Team, c: CardDef, x: number, y: number):
   for (const e of s.entities) {
     if (e.team === team) continue;
     if (e.kind === 'tower') continue;
+    // 지상 전용 주문은 공중을 때리지 못한다 (현재 주문은 모두 'any')
+    if (c.targets === 'ground' && e.flying) continue;
+    if (c.targets === 'air' && !e.flying) continue;
     if (dist2(e.x, e.y, x, y) <= r2) {
       e.hp -= c.damage;
     }
@@ -301,13 +313,26 @@ function aggroRange(range: number): number {
   return range > base ? range : base;
 }
 
+/**
+ * 이 엔티티가 무엇을 때릴 수 있는가.
+ * 타워는 지상·공중을 모두 때린다 — 그러지 않으면 공중 유닛만으로 타워를
+ * 무한정 부술 수 있어 게임이 성립하지 않는다.
+ */
+function targetsOf(e: Entity): TargetPref {
+  return e.tower !== 'none' ? 'any' : getCard(e.card).targets;
+}
+
 function canAttack(e: Entity, target: Entity): boolean {
-  if (e.tower !== 'none') return true; // 타워는 아무거나
-  const c = getCard(e.card);
-  if (c.targets === 'buildings') {
-    return target.kind !== 'unit';
+  switch (targetsOf(e)) {
+    case 'buildings':
+      return target.kind !== 'unit';
+    case 'ground':
+      return !target.flying;
+    case 'air':
+      return target.flying;
+    default:
+      return true;
   }
-  return true;
 }
 
 /**
@@ -369,6 +394,9 @@ function findById(s: GameState, id: number): Entity | undefined {
 
 /** 목표까지 가기 위해 지금 향해야 할 지점 (강을 건너야 하면 다리를 경유) */
 function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
+  // 공중 유닛은 지형을 무시하고 직선으로 난다. 다리를 우회하지 않는 것이
+  // 공중의 핵심 이점이자, 대공 수단을 반드시 덱에 넣어야 하는 이유다.
+  if (e.flying) return [tx, ty];
   if (!mustCross(e.y, ty)) return [tx, ty];
 
   const lane = e.lane === -1 ? nearestLane(e.x) : e.lane;
@@ -449,6 +477,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       for (let j = 0; j < n; j++) {
         const o = s.entities[j];
         if (o.team === e.team) continue;
+        // 지상 전용 광역은 범위 안이어도 공중을 때리지 못한다
+        if (!canAttack(e, o)) continue;
         if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += st.damage;
       }
     } else {
@@ -490,8 +520,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     nx[i] = e.x + Math.trunc((dx * stepLen) / d);
     ny[i] = e.y + Math.trunc((dy * stepLen) / d);
 
-    // 강 위로는 못 간다 (다리 밖). 축별로 되돌린다.
-    if (inRiver(nx[i], ny[i])) {
+    // 강 위로는 못 간다 (다리 밖). 축별로 되돌린다. 공중은 해당 없음.
+    if (!e.flying && inRiver(nx[i], ny[i])) {
       if (!inRiver(e.x, ny[i])) nx[i] = e.x;
       else if (!inRiver(nx[i], e.y)) ny[i] = e.y;
       else {
@@ -536,7 +566,12 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   checkEnd(s);
 }
 
-/** 유닛끼리 겹치면 서로 밀어낸다. 읽기 → 쓰기 2단계라 순회 순서에 의존하지 않는다. */
+/**
+ * 유닛끼리 겹치면 서로 밀어낸다. 읽기 → 쓰기 2단계라 순회 순서에 의존하지 않는다.
+ *
+ * 공중과 지상은 서로 다른 층에 있다 — 겹쳐도 밀어내지 않고, 공중 유닛은
+ * 건물·타워 위를 그대로 지나간다.
+ */
 function separate(s: GameState): void {
   const n = s.entities.length;
   const px = new Array<number>(n).fill(0);
@@ -549,6 +584,8 @@ function separate(s: GameState): void {
       const b = s.entities[j];
       if (b.deploy > 0) continue;
       if (b.kind !== 'unit' && b.kind !== 'building' && b.kind !== 'tower') continue;
+      // 층이 다르면 충돌하지 않는다 (공중 vs 지상, 공중 vs 건물)
+      if (a.flying !== b.flying) continue;
 
       const minD = radiusOf(a) + radiusOf(b);
       const d2 = dist2(a.x, a.y, b.x, b.y);
@@ -582,7 +619,8 @@ function separate(s: GameState): void {
     const e = s.entities[i];
     const cx = clamp(e.x + px[i], 0, ARENA_W - 1);
     const cy = clamp(e.y + py[i], 0, ARENA_H - 1);
-    if (!inRiver(cx, cy)) {
+    // 밀려나다가 강에 빠지지는 않는다 (공중은 예외)
+    if (e.flying || !inRiver(cx, cy)) {
       e.x = cx;
       e.y = cy;
     }

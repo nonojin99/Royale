@@ -14,13 +14,19 @@ import {
   ARENA_H,
   ARENA_W,
   CARD_IDS,
+  DECK_IDS,
+  DECK_SIZE,
   ELIXIR_MAX,
   HAND_SIZE,
   MATCH_TICKS,
   RIVER_BOT,
   RIVER_TOP,
+  TEAM_COLOR_FOE,
+  TEAM_COLOR_ME,
   createRng,
   createState,
+  getCard,
+  getDeck,
   hashState,
   isqrt,
   nextInt,
@@ -33,13 +39,21 @@ import {
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
 
-/** 시드로부터 결정론적인 "플레이 대본"을 만든다 (Math.random 금지) */
-function genCommands(seed, ticks) {
+/** 기본 대전 구성 — 포밍뿌 미러전 */
+const MIRROR = [getDeck('pomingpu').cards, getDeck('pomingpu').cards];
+
+/**
+ * 시드로부터 결정론적인 "플레이 대본"을 만든다 (Math.random 금지).
+ * 카드는 각 팀의 덱 안에서만 뽑는다 — 덱에 없는 카드는 어차피 무시되므로
+ * 그것만 내면 시뮬을 거의 진행시키지 못한다.
+ */
+function genCommands(seed, ticks, decks = MIRROR) {
   const rng = createRng((seed ^ 0x5bf03635) >>> 0);
   const cmds = [];
   for (let t = 40; t < ticks; t += 13) {
     const team = nextInt(rng, 2);
-    const card = CARD_IDS[nextInt(rng, CARD_IDS.length)];
+    const pool = decks[team];
+    const card = pool[nextInt(rng, pool.length)];
     const x = nextRange(rng, 1000, ARENA_W - 1000);
     const y =
       team === 0
@@ -61,8 +75,8 @@ function indexByTick(cmds) {
 }
 
 /** 매치를 ticks만큼 돌리고, 100틱마다의 해시 궤적을 반환한다 */
-function runMatch(seed, ticks, cmds) {
-  const s = createState(seed);
+function runMatch(seed, ticks, cmds, decks = MIRROR) {
+  const s = createState(seed, decks);
   const byTick = indexByTick(cmds);
   const trace = [];
   for (let i = 0; i < ticks; i++) {
@@ -118,11 +132,11 @@ test('스냅샷 → 복원 후 이어서 돌려도 끊김 없이 동일하다', 
   const byTick = indexByTick(cmds);
 
   // 통짜로 1500틱
-  const straight = createState(seed);
+  const straight = createState(seed, MIRROR);
   for (let i = 0; i < 1500; i++) step(straight, byTick.get(straight.tick) ?? []);
 
   // 700틱에서 스냅샷을 뜨고, 새 상태에 복원한 뒤 나머지를 돌린다
-  const split = createState(seed);
+  const split = createState(seed, MIRROR);
   for (let i = 0; i < 700; i++) step(split, byTick.get(split.tick) ?? []);
   const snap = snapshot(split);
 
@@ -169,7 +183,7 @@ test('시뮬레이션 상태에 부동소수점이 새어 들어오지 않는다
 /* ── 게임 규칙 ─────────────────────────────────────────────────────────── */
 
 test('엘릭서는 상한을 넘지 않는다', () => {
-  const s = createState(5);
+  const s = createState(5, MIRROR);
   for (let i = 0; i < 600; i++) step(s, []);
   for (const p of s.players) {
     assert.equal(p.elixir, ELIXIR_MAX);
@@ -177,7 +191,7 @@ test('엘릭서는 상한을 넘지 않는다', () => {
 });
 
 test('카드를 내면 손패가 순환한다 (셔플 없음, 덱 크기 유지)', () => {
-  const s = createState(5);
+  const s = createState(5, MIRROR);
   const before = s.players[0].cycle.slice();
   const played = before[1];
   const upcoming = before[HAND_SIZE];
@@ -199,7 +213,7 @@ test('카드를 내면 손패가 순환한다 (셔플 없음, 덱 크기 유지)
 });
 
 test('엘릭서가 모자라면 커맨드가 조용히 무시된다', () => {
-  const s = createState(5);
+  const s = createState(5, MIRROR);
   const card = s.players[0].cycle[0]; // 손패 첫 장
   const entitiesBefore = s.entities.length;
   const elixirBefore = s.players[0].elixir;
@@ -220,7 +234,7 @@ test('엘릭서가 모자라면 커맨드가 조용히 무시된다', () => {
 });
 
 test('상대 진영에는 기본적으로 배치할 수 없다', () => {
-  const s = createState(5);
+  const s = createState(5, MIRROR);
   for (let i = 0; i < 200; i++) step(s, []);
   const before = s.entities.length;
   const card = s.players[0].cycle[0];
@@ -230,7 +244,7 @@ test('상대 진영에는 기본적으로 배치할 수 없다', () => {
 });
 
 test('강 위에는 배치할 수 없다', () => {
-  const s = createState(5);
+  const s = createState(5, MIRROR);
   for (let i = 0; i < 200; i++) step(s, []);
   const before = s.entities.length;
   const card = s.players[0].cycle[0];
@@ -239,7 +253,7 @@ test('강 위에는 배치할 수 없다', () => {
 });
 
 test('손패(덱 앞 4장)에 없는 카드는 낼 수 없다', () => {
-  const s = createState(5);
+  const s = createState(5, MIRROR);
   for (let i = 0; i < 200; i++) step(s, []);
   // 기본 덱에서 5번째 이후 카드는 손패가 아니다
   const notInHand = s.players[0].cycle[5];
@@ -284,7 +298,7 @@ test('유닛은 강을 건너지 않고 다리로만 넘어간다', () => {
 });
 
 test('3분이 지나면 경기가 끝나거나 연장전에 들어간다', () => {
-  const s = createState(2024);
+  const s = createState(2024, MIRROR);
   const cmds = genCommands(2024, MATCH_TICKS);
   const byTick = indexByTick(cmds);
   for (let i = 0; i < MATCH_TICKS + 5; i++) step(s, byTick.get(s.tick) ?? []);
@@ -292,7 +306,7 @@ test('3분이 지나면 경기가 끝나거나 연장전에 들어간다', () =>
 });
 
 test('킹타워가 파괴되면 즉시 종료되고 왕관 3개가 주어진다', () => {
-  const s = createState(11);
+  const s = createState(11, MIRROR);
   const king = s.entities.find((e) => e.tower === 'king' && e.team === 1);
   king.hp = 1; // 마지막 일격 상황을 강제로 만든다
   // 팀 0 유닛을 적 킹타워 옆에 직접 꽂아 넣는다 (테스트 목적의 상태 조작)
@@ -321,7 +335,7 @@ test('킹타워가 파괴되면 즉시 종료되고 왕관 3개가 주어진다'
 });
 
 test('공주탑이 무너지면 같은 팀 킹타워가 활성화된다', () => {
-  const s = createState(13);
+  const s = createState(13, MIRROR);
   const princess = s.entities.find((e) => e.tower === 'princess' && e.team === 1);
   const king = s.entities.find((e) => e.tower === 'king' && e.team === 1);
   assert.equal(king.active, false, '킹타워가 처음부터 활성화되어 있다');
@@ -342,4 +356,205 @@ test('긴 경기(연장전 포함)를 끝까지 돌려도 예외 없이 종료�
   const b = runMatch(seed, total, cmds);
   assert.deepEqual(a.trace, b.trace);
   assert.ok(a.state.over, '연장전까지 끝났는데 경기가 안 끝났다');
+});
+
+/* ── 덱 ────────────────────────────────────────────────────────────────── */
+
+test('모든 덱이 유효하다 (8장, 실존 카드, 중복 없음)', () => {
+  assert.ok(DECK_IDS.length >= 4, `덱이 ${DECK_IDS.length}개뿐이다`);
+  for (const id of DECK_IDS) {
+    const d = getDeck(id);
+    assert.equal(d.cards.length, DECK_SIZE, `덱 '${id}'의 카드 수가 다르다`);
+    assert.equal(new Set(d.cards).size, DECK_SIZE, `덱 '${id}'에 중복 카드가 있다`);
+    for (const c of d.cards) {
+      assert.doesNotThrow(() => getCard(c), `덱 '${id}'에 존재하지 않는 카드 '${c}'`);
+    }
+  }
+});
+
+test('알 수 없는 덱 id는 기본 덱으로 떨어진다', () => {
+  assert.equal(getDeck('없는덱').id, getDeck(undefined).id);
+});
+
+test('모든 덱은 대공 수단을 최소 하나 갖는다', () => {
+  // 대공이 없는 덱은 상대의 공중 유닛에 아무것도 못 하고 진다.
+  // 밸런스가 아니라 "게임이 성립하는가"의 문제다.
+  for (const id of DECK_IDS) {
+    const canHitAir = getDeck(id).cards.some((c) => {
+      const t = getCard(c).targets;
+      return t === 'any' || t === 'air';
+    });
+    assert.ok(canHitAir, `덱 '${id}'에 대공 수단이 하나도 없다`);
+  }
+});
+
+test('서로 다른 덱끼리 붙어도 결정론이 유지된다', () => {
+  const pairs = [
+    ['steel', 'swarmhive'],
+    ['covenant', 'steel'],
+    ['swarmhive', 'covenant'],
+    ['pomingpu', 'covenant'],
+  ];
+  for (const [d0, d1] of pairs) {
+    const decks = [getDeck(d0).cards, getDeck(d1).cards];
+    const cmds = genCommands(4242, 1500, decks);
+    const a = runMatch(4242, 1500, cmds, decks);
+    const b = runMatch(4242, 1500, cmds, decks);
+    assert.deepEqual(a.trace, b.trace, `${d0} vs ${d1} 에서 궤적 불일치`);
+  }
+});
+
+/* ── 공중 / 대공 ───────────────────────────────────────────────────────── */
+
+/** 테스트 목적으로 엔티티를 직접 꽂아 넣는다 (id 오름차순 유지) */
+function place(s, team, cardId, x, y) {
+  const c = getCard(cardId);
+  const e = {
+    id: s.nextId++,
+    team,
+    card: cardId,
+    kind: c.kind === 'building' ? 'building' : 'unit',
+    tower: 'none',
+    lane: 0,
+    x,
+    y,
+    hp: c.hp,
+    maxHp: c.hp,
+    cd: 0,
+    deploy: 0,
+    life: -1,
+    target: -1,
+    active: true,
+    flying: c.flying,
+  };
+  s.entities.push(e);
+  return e;
+}
+
+const byId = (s, id) => s.entities.find((e) => e.id === id);
+
+test('지상 전용 유닛은 바로 옆 공중 유닛을 타겟으로 삼지 않는다', () => {
+  const s = createState(5, MIRROR);
+  const zealot = place(s, 0, 'zealot', 9000, 19000); // targets: ground
+  const gunship = place(s, 1, 'gunship', 9400, 19000); // flying, targets: any
+  step(s, []);
+
+  assert.notEqual(byId(s, zealot.id).target, gunship.id, '지상 전용이 공중을 타겟팅했다');
+  assert.equal(byId(s, gunship.id).target, zealot.id, '공중이 옆의 지상 유닛을 무시했다');
+});
+
+test('지상 전용 광역 공격은 범위 안의 공중 유닛에 피해를 주지 않는다', () => {
+  const s = createState(5, MIRROR);
+  // 강 바로 아래 중앙에 배치한다. 네 공주탑 사거리(7.5타일) 밖이어야 한다 —
+  // 타워는 설계상 공중을 때리므로, 사거리 안에 두면 이 테스트가 무엇을 재는지 흐려진다.
+  const mystic = place(s, 0, 'mystic', 9000, 17500); // 지상 전용, 광역 2.0타일
+  const ground = place(s, 1, 'zealot', 9000, 19500);
+  const air = place(s, 1, 'gunship', 9200, 19500);
+  const airHp0 = air.hp;
+
+  // 첫 일격만 관찰한다. 세 유닛의 쿨다운이 모두 0이라 첫 스텝에 동시에 발사되고,
+  // 그 이후로는 술사가 집중포화로 죽으면서 타워 피해가 섞여 들어온다.
+  for (let i = 0; i < 3; i++) step(s, []);
+  assert.ok(byId(s, mystic.id), '술사가 관찰 구간 안에 죽어 테스트 전제가 깨졌다');
+
+  const g = byId(s, ground.id);
+  const a = byId(s, air.id);
+  // 지상 적은 맞아서 피가 깎이거나 죽었어야 한다
+  assert.ok(!g || g.hp < ground.maxHp, '지상 전용 광역이 지상 적을 못 때렸다');
+  assert.ok(a, '공중 유닛이 지상 전용 광역에 죽었다');
+  assert.equal(a.hp, airHp0, '지상 전용 광역이 공중 유닛에 피해를 줬다');
+});
+
+test('대공 전용 건물은 지상만 있을 때 아무것도 타겟팅하지 않는다', () => {
+  const s = createState(5, MIRROR);
+  const spore = place(s, 0, 'sporetentacle', 9000, 19000); // targets: air
+  place(s, 1, 'zealot', 9600, 19000);
+  step(s, []);
+  assert.equal(byId(s, spore.id).target, -1, '대공 전용이 지상 유닛을 타겟팅했다');
+});
+
+test('대공 전용 건물은 공중 유닛이 오면 타겟팅한다', () => {
+  const s = createState(5, MIRROR);
+  const spore = place(s, 0, 'sporetentacle', 9000, 19000);
+  place(s, 1, 'zealot', 9600, 19000);
+  const air = place(s, 1, 'gunship', 10000, 19000);
+  step(s, []);
+  assert.equal(byId(s, spore.id).target, air.id, '대공 전용이 공중 유닛을 놓쳤다');
+});
+
+test('타워는 공중 유닛을 공격한다', () => {
+  const s = createState(5, MIRROR);
+  const princess = s.entities.find((e) => e.tower === 'princess' && e.team === 0);
+  const air = place(s, 1, 'gunship', princess.x, princess.y - 2000);
+  const hp0 = air.hp;
+
+  for (let i = 0; i < 40; i++) step(s, []);
+
+  const a = byId(s, air.id);
+  assert.ok(!a || a.hp < hp0, '타워가 공중 유닛을 때리지 못했다 — 공중이 무적이 된다');
+});
+
+test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다', () => {
+  const airFirst = [
+    'gunship', 'rifleman', 'flamer', 'scoutcar',
+    'bulwark', 'ironwalker', 'carpetbomb', 'siegetank',
+  ];
+  const s = createState(5, [airFirst, getDeck('pomingpu').cards]);
+  for (let i = 0; i < 200; i++) step(s, []); // 엘릭서 축적
+
+  step(s, [{ execTick: s.tick, team: 0, card: 'gunship', x: 9000, y: 20000 }]);
+  assert.ok(s.entities.some((e) => e.card === 'gunship'), 'gunship이 배치되지 않았다');
+
+  let crossedOffBridge = false;
+  for (let i = 0; i < 300; i++) {
+    step(s, []);
+    for (const e of s.entities) {
+      if (e.card !== 'gunship') continue;
+      if (e.y >= RIVER_TOP && e.y < RIVER_BOT) {
+        const onBridge = (e.x >= 3000 && e.x <= 5000) || (e.x >= 13000 && e.x <= 15000);
+        if (!onBridge) crossedOffBridge = true;
+      }
+    }
+  }
+  assert.ok(crossedOffBridge, '공중 유닛이 다리로 우회했다 — 지형을 무시해야 한다');
+});
+
+test('공중과 지상은 서로 밀어내지 않는다 (다른 층)', () => {
+  // 두 유닛의 좌표를 직접 비교하면 안 된다 — 애초에 이동 경로가 다르기 때문에
+  // (공중은 직선, 지상은 다리 경유) 분리력과 무관하게 갈라진다.
+  // 대신 "지상 유닛이 겹쳐 있든 없든 공중 유닛의 위치가 같은가"를 본다.
+  const solo = createState(5, MIRROR);
+  const a0 = place(solo, 0, 'gunship', 9000, 19000);
+  step(solo, []);
+  const soloPos = [byId(solo, a0.id).x, byId(solo, a0.id).y];
+
+  const mixed = createState(5, MIRROR);
+  const a1 = place(mixed, 0, 'gunship', 9000, 19000);
+  place(mixed, 0, 'zealot', 9000, 19000); // 정확히 같은 좌표에 겹쳐 놓는다
+  step(mixed, []);
+  const mixedPos = [byId(mixed, a1.id).x, byId(mixed, a1.id).y];
+
+  assert.deepEqual(mixedPos, soloPos, '겹친 지상 유닛이 공중 유닛을 밀어냈다');
+});
+
+test('공중 유닛끼리는 서로 밀어낸다 (같은 층)', () => {
+  const s = createState(5, MIRROR);
+  const a0 = place(s, 0, 'gunship', 9000, 19000);
+  const a1 = place(s, 0, 'gunship', 9000, 19000);
+
+  step(s, []);
+
+  const p = byId(s, a0.id);
+  const q = byId(s, a1.id);
+  assert.notEqual(`${p.x},${p.y}`, `${q.x},${q.y}`, '겹친 공중 유닛이 분리되지 않았다');
+});
+
+test('카드 색이 팀 구분 색과 겹치지 않는다', () => {
+  // 유닛/건물은 카드 색으로 칠하고 팀 색으로 테두리를 두른다. 카드 색이 팀 색과
+  // 같으면 적 건물이 아군 건물처럼 보인다 (실제로 '빛기둥'에서 발생했던 버그).
+  for (const id of CARD_IDS) {
+    const c = getCard(id);
+    assert.notEqual(c.color, TEAM_COLOR_ME, `카드 '${id}'의 색이 아군 팀 색과 같다`);
+    assert.notEqual(c.color, TEAM_COLOR_FOE, `카드 '${id}'의 색이 적군 팀 색과 같다`);
+  }
 });

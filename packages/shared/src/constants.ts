@@ -39,6 +39,16 @@ export const HAND_SIZE = 4;
 /** 덱 크기 */
 export const DECK_SIZE = 8;
 
+/**
+ * 렌더러가 아군/적군 구분에 쓰는 색.
+ *
+ * 유닛·건물은 카드 색으로 칠하고 팀 색으로 테두리를 두르기 때문에, 카드 색이
+ * 팀 색과 같으면 적 건물이 아군 건물처럼 보인다. 카드 색은 이 값들과 반드시
+ * 달라야 하며, 그 규칙은 테스트로 고정되어 있다.
+ */
+export const TEAM_COLOR_ME = 0x38bdf8;
+export const TEAM_COLOR_FOE = 0xf87171;
+
 /** 유닛 충돌 반경 (밀리타일) — 서로 밀어내는 기준 */
 export const UNIT_RADIUS = 400;
 /** 건물/타워 반경 (밀리타일) — 사거리 계산에 더해진다 */

@@ -52,8 +52,9 @@ const MIN_PLAYS = 3;
 /* ── 헤드리스 클라이언트 ───────────────────────────────────────────────── */
 
 class HeadlessClient {
-  constructor(name) {
+  constructor(name, deckId) {
     this.name = name;
+    this.deckId = deckId;
     this.state = null;
     this.team = 0;
     this.startWallMs = 0;
@@ -70,7 +71,7 @@ class HeadlessClient {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
       this.ws.on('open', () => {
-        this.ws.send(JSON.stringify({ t: 'hello', name: this.name }));
+        this.ws.send(JSON.stringify({ t: 'hello', name: this.name, deckId: this.deckId }));
         resolve();
       });
       this.ws.on('error', reject);
@@ -89,6 +90,7 @@ class HeadlessClient {
       case 'match':
         this.team = msg.team;
         this.startWallMs = msg.startWallMs;
+        this.matchDeckIds = msg.deckIds;
         this.state = createState(msg.seed, msg.decks);
         break;
       case 'cmd': {
@@ -207,8 +209,10 @@ async function main() {
     await waitForServer(proc);
     console.log('▶ 클라이언트 2개 접속…');
 
-    a = new HeadlessClient('A');
-    b = new HeadlessClient('B');
+    // 서로 다른 덱으로 붙인다. 비대칭 덱은 양쪽 시뮬이 서로 다른 카드 테이블을
+    // 참조한다는 뜻이라, 미러전보다 훨씬 깨지기 쉬운 조건이다.
+    a = new HeadlessClient('A', 'steel');
+    b = new HeadlessClient('B', 'swarmhive');
     await a.connect();
     await b.connect();
 
@@ -217,7 +221,23 @@ async function main() {
     while ((!a.state || !b.state) && Date.now() < matchDeadline) await sleep(50);
     assert.ok(a.state && b.state, '5초 안에 매치가 성립하지 않았다');
     assert.notEqual(a.team, b.team, '두 클라이언트가 같은 팀을 배정받았다');
-    console.log(`▶ 매치 성립 (A=team${a.team}, B=team${b.team}). 시뮬 진행…`);
+
+    // 양쪽이 같은 덱 구성을 받아야 한다 — 여기가 어긋나면 시뮬이 시작부터 갈라진다
+    assert.deepEqual(
+      a.state.players.map((p) => p.cycle),
+      b.state.players.map((p) => p.cycle),
+      '두 클라이언트가 서로 다른 덱 구성으로 시작했다',
+    );
+    assert.deepEqual(a.matchDeckIds, b.matchDeckIds, 'deckIds가 양쪽에 다르게 전달됐다');
+    assert.notEqual(
+      a.matchDeckIds[0],
+      a.matchDeckIds[1],
+      '비대칭 덱을 요청했는데 같은 덱으로 매칭됐다',
+    );
+    console.log(
+      `▶ 매치 성립 (A=team${a.team}, B=team${b.team}, ` +
+        `덱=${a.matchDeckIds[0]} vs ${a.matchDeckIds[1]}). 시뮬 진행…`,
+    );
 
     // 시뮬 루프 + 주기적 카드 배치
     const started = Date.now();

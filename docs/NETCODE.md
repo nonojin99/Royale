@@ -145,7 +145,7 @@ for (const e of state.entities) { ... }   // 항상 id 순 정렬 유지
 ### 클라이언트 → 서버
 
 ```ts
-{ t:'hello', name: string }
+{ t:'hello', name: string, deckId?: string }
 { t:'play',  reqTick: number, handIndex: 0|1|2|3, x: number, y: number }  // x,y는 밀리타일
 { t:'hash',  tick: number, hash: number }
 { t:'ping',  ts: number }
@@ -155,7 +155,10 @@ for (const e of state.entities) { ... }   // 항상 id 순 정렬 유지
 
 ```ts
 { t:'queued' }
-{ t:'match', matchId, seed, team: 0|1, decks: [string[], string[]], startWallMs }
+{ t:'match', matchId, seed, team: 0|1,
+  decks: [string[], string[]],     // 실제 카드 목록 — 시뮬 초기화에 쓰인다
+  deckIds: [string, string],       // 고른 덱 id (UI 표시용)
+  opponent, startWallMs }
 { t:'cmd',   execTick, team, card, x, y }     // 확정된 커맨드 (양쪽에 동일 브로드캐스트)
 { t:'reject', reqTick, reason }               // 본인에게만
 { t:'pong',  ts, serverTick }
@@ -173,6 +176,10 @@ for (const e of state.entities) { ... }   // 항상 id 순 정렬 유지
 | **M1** | 아레나·타워·엘릭서·유닛 AI가 도는 헤드리스 시뮬 | ✅ |
 | **M2** | WS 서버 + 룸/매치메이킹 + 커맨드 예약·브로드캐스트 | ✅ |
 | **M3** | PixiJS 클라이언트, 손패 UI, 클럭 동기화, 데스싱크 계기판 | ✅ |
-| **M4** | 카드 밸런싱, 연장전, 배치구역 확장, 리플레이 저장 | ⬜ |
-| **M5** | 스프라이트·이펙트·사운드 (포롱이/밍뚜/뿌비 아트 적용) | ⬜ |
-| **M6** | 랭킹·시즌, 관전, Fly.io 다중 리전 | ⬜ |
+| **M4** | 덱 선택 시스템, 4덱 32장, 공중/대공 메커니즘 | ✅ |
+| **M5** | 리플레이 저장, 자동 대전 밸런싱 도구, 덱 편집 | ⬜ |
+| **M6** | 스프라이트·이펙트·사운드 | ⬜ |
+| **M7** | 랭킹·시즌, 관전, Fly.io 다중 리전 | ⬜ |
+
+M5의 리플레이가 먼저인 이유: `시드 + 커맨드 목록`만 저장하면 경기 전체가 재현되고
+그 크기가 수백 바이트다. 그게 자동 대전 밸런싱 도구의 전제이기도 하다.

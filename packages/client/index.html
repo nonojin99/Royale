@@ -108,7 +108,8 @@
       padding: 8px 6px;
       transition: transform 90ms ease, border-color 90ms ease;
     }
-    .card .cname { font-size: 13px; font-weight: 700; }
+    /* '전투비행선' 같은 긴 이름이 두 줄로 깨지지 않도록 살짝 줄인다 */
+    .card .cname { font-size: 12px; font-weight: 700; letter-spacing: -0.4px; line-height: 1.25; }
     .card .ccost {
       align-self: flex-end;
       font-size: 12px;
@@ -174,6 +175,58 @@
     #start:disabled { opacity: .5; cursor: default; }
     #status { color: var(--muted); font-size: 13px; min-height: 18px; }
 
+    /* 덱 선택 */
+    #deck-picker {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      width: min(360px, 88vw);
+    }
+    .deck {
+      --deck-color: #64748b;
+      background: var(--panel);
+      border: 2px solid var(--line);
+      border-top: 4px solid var(--deck-color);
+      border-radius: 10px;
+      padding: 10px 8px;
+      color: var(--text);
+      font-family: inherit;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 90ms ease, transform 90ms ease;
+    }
+    .deck:hover { transform: translateY(-2px); }
+    /* 선택 여부가 한눈에 보여야 한다 — 색만으로는 4장이 다 비슷해 보인다 */
+    .deck:not(.selected) { opacity: .5; }
+    .deck.selected {
+      opacity: 1;
+      border-color: var(--deck-color);
+      background: #1b2740;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--deck-color) 35%, transparent);
+    }
+    .deck .dname { font-size: 14px; font-weight: 800; display: block; }
+    .deck .dtag { font-size: 11px; color: var(--muted); line-height: 1.4; display: block; margin-top: 3px; }
+
+    #deck-detail {
+      width: min(360px, 88vw);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+      min-height: 44px;
+    }
+    .chip {
+      font-size: 10.5px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #1b2740;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--chip-color, #64748b);
+      white-space: nowrap;
+    }
+    .chip .cc { color: var(--elixir); font-weight: 800; margin-left: 3px; }
+    .chip .air { color: #7dd3fc; margin-left: 2px; }
+
     /* 토스트 */
     #toast {
       position: fixed;
@@ -218,6 +271,8 @@
       엘릭서를 모아 카드를 배치하고 상대 타워를 부수세요.<br />
       카드를 고른 뒤 <strong>내 진영</strong>을 탭하면 배치됩니다. (숫자키 1~4)
     </p>
+    <div id="deck-picker"></div>
+    <div id="deck-detail"></div>
     <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
     <button id="start">시작</button>
     <div id="status"></div>

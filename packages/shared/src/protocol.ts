@@ -14,6 +14,8 @@ import type { GameState } from './sim.js';
 export interface CHello {
   t: 'hello';
   name: string;
+  /** 사용할 덱 id. 없거나 알 수 없는 값이면 서버가 기본 덱으로 떨어뜨린다. */
+  deckId?: string;
 }
 
 /** 카드 배치 요청. x,y는 밀리타일. reqTick은 클라 시뮬 기준 시각(진단용). */
@@ -51,7 +53,10 @@ export interface SMatch {
   seed: number;
   /** 이 클라이언트가 맡은 팀 */
   team: Team;
+  /** 양 팀의 실제 카드 목록 — 시뮬레이션은 이걸로 초기화된다 */
   decks: [string[], string[]];
+  /** 양 팀이 고른 덱 id (UI 표시용) */
+  deckIds: [string, string];
   opponent: string;
   /** 서버가 틱 0을 시작한 벽시계 시각 (ms) */
   startWallMs: number;

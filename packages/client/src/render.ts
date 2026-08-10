@@ -20,6 +20,8 @@ import {
   RIVER_BOT,
   RIVER_TOP,
   SCALE,
+  TEAM_COLOR_FOE,
+  TEAM_COLOR_ME,
   Team,
   getCard,
 } from '@royale/shared';
@@ -35,8 +37,9 @@ const COLORS = {
   groundAlt: 0x176034,
   river: 0x1d4ed8,
   bridge: 0x92602e,
-  teamMe: 0x38bdf8,
-  teamFoe: 0xf87171,
+  // 팀 색은 shared에 있다 — 카드 색이 팀 색과 겹치지 않는지 테스트가 검사한다
+  teamMe: TEAM_COLOR_ME,
+  teamFoe: TEAM_COLOR_FOE,
   hp: 0x22c55e,
   hpBg: 0x0f172a,
   deployRing: 0xfacc15,
@@ -175,24 +178,40 @@ export class Renderer {
         const size = PX_PER_TILE * 1.5;
         g.rect(sx - size / 2, sy - size / 2, size, size);
         g.fill(card.color);
+        // 소속 판별이 즉시 돼야 하므로 팀 테두리를 두껍게 두른다
         g.rect(sx - size / 2, sy - size / 2, size, size);
-        g.stroke({ width: 2, color: teamColor });
+        g.stroke({ width: 3.5, color: teamColor });
         this.hpBar(g, sx, sy - size / 2 - 6, size, e);
         continue;
       }
 
-      // 유닛
+      // 유닛. 공중 유닛은 그림자를 지면에 남기고 본체를 위로 띄워서,
+      // 지상 유닛과 한눈에 구분되게 한다 (대공 카드를 낼지 판단해야 하므로 중요).
       const r = PX_PER_TILE * 0.42;
-      g.circle(sx, sy, r);
+      const lift = e.flying ? PX_PER_TILE * 0.55 : 0;
+      const by = sy - lift;
+
+      if (e.flying) {
+        g.ellipse(sx, sy, r * 0.85, r * 0.4);
+        g.fill({ color: 0x000000, alpha: 0.28 });
+      }
+
+      g.circle(sx, by, r);
       g.fill(card.color);
-      g.circle(sx, sy, r);
+      g.circle(sx, by, r);
       g.stroke({ width: 2.5, color: teamColor });
 
+      if (e.flying) {
+        // 공중임을 알리는 링
+        g.circle(sx, by, r + 3);
+        g.stroke({ width: 1.5, color: 0xffffff, alpha: 0.55 });
+      }
+
       if (e.deploy > 0) {
-        g.circle(sx, sy, r + 4);
+        g.circle(sx, by, r + 4);
         g.stroke({ width: 2, color: COLORS.deployRing, alpha: 0.9 });
       }
-      this.hpBar(g, sx, sy - r - 6, PX_PER_TILE * 1.1, e);
+      this.hpBar(g, sx, by - r - 6, PX_PER_TILE * 1.1, e);
     }
   }
 

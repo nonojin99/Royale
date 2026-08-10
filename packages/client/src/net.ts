@@ -72,12 +72,12 @@ export class NetClient {
     private readonly events: NetEvents = {},
   ) {}
 
-  connect(name: string): void {
+  connect(name: string, deckId: string): void {
     const ws = new WebSocket(this.url);
     this.ws = ws;
 
     ws.onopen = () => {
-      this.send({ t: 'hello', name });
+      this.send({ t: 'hello', name, deckId });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
     };

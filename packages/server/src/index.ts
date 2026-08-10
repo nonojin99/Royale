@@ -11,7 +11,7 @@
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 
-import { ClientMsg, TICK_MS, Team } from '@royale/shared';
+import { ClientMsg, DECK_IDS, TICK_MS, Team, getDeck } from '@royale/shared';
 
 import { Conn } from './conn.js';
 import { Match } from './match.js';
@@ -76,9 +76,14 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
   switch (msg.t) {
     case 'hello': {
       conn.name = String(msg.name ?? '익명').slice(0, 20) || '익명';
+      // 알 수 없는 덱 id는 getDeck이 기본 덱으로 떨어뜨린다
+      conn.deckId = getDeck(msg.deckId).id;
       if (conn.match) return;
       if (solo) {
-        matches.add(new Match(conn, null));
+        // 연습 모드 봇은 플레이어와 다른 덱을 쓴다 — 같은 덱만 상대하면
+        // 대공 대응 같은 매치업 학습이 안 된다
+        const botDeck = DECK_IDS[Math.floor(Math.random() * DECK_IDS.length)];
+        matches.add(new Match(conn, null, botDeck));
         return;
       }
       queue.push(conn);

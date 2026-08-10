@@ -8,7 +8,6 @@
 import {
   COMMAND_SCHEDULE_AHEAD,
   Command,
-  DEFAULT_DECK,
   ELIXIR_SCALE,
   GameState,
   SIM_DELAY_TICKS,
@@ -17,6 +16,7 @@ import {
   Team,
   createState,
   getCard,
+  getDeck,
   hashState,
   sortCommands,
   step,
@@ -46,12 +46,19 @@ export class Match {
   private readonly hashes = new Map<number, number>();
   private ended = false;
 
-  constructor(a: Conn, b: Conn | null) {
+  constructor(a: Conn, b: Conn | null, botDeckId?: string) {
     this.id = `m${++matchSeq}-${Date.now().toString(36)}`;
     // 시드는 서버가 정해 양쪽에 동일하게 배포한다
     this.seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
     this.startWallMs = Date.now();
-    this.state = createState(this.seed, [DEFAULT_DECK, DEFAULT_DECK]);
+
+    // 각자 고른 덱으로 시작한다. 시뮬은 처음부터 비대칭 덱을 지원한다.
+    const deck0 = getDeck(a.deckId);
+    const deck1 = getDeck(b ? b.deckId : botDeckId);
+    const decks: [string[], string[]] = [deck0.cards.slice(), deck1.cards.slice()];
+    const deckIds: [string, string] = [deck0.id, deck1.id];
+
+    this.state = createState(this.seed, decks);
     this.conns = [a, b];
     this.bot = b === null ? new Bot(this.seed) : null;
 
@@ -62,7 +69,6 @@ export class Match {
       b.team = 1;
     }
 
-    const decks: [string[], string[]] = [DEFAULT_DECK.slice(), DEFAULT_DECK.slice()];
     for (const c of this.conns) {
       if (!c) continue;
       c.send({
@@ -71,7 +77,8 @@ export class Match {
         seed: this.seed,
         team: c.team as Team,
         decks,
-        opponent: b === null ? '연습 상대' : this.other(c)?.name ?? '???',
+        deckIds,
+        opponent: b === null ? `연습 상대 (${deck1.name})` : this.other(c)?.name ?? '???',
         startWallMs: this.startWallMs,
       });
     }

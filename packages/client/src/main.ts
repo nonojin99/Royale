@@ -8,6 +8,8 @@
  */
 
 import {
+  DECK_IDS,
+  DEFAULT_DECK_ID,
   ELIXIR_SCALE,
   GameState,
   HAND_SIZE,
@@ -16,6 +18,7 @@ import {
   TICK_RATE,
   canDeploy,
   getCard,
+  getDeck,
 } from '@royale/shared';
 
 import { NetClient } from './net.js';
@@ -48,6 +51,7 @@ function withSolo(url: string): string {
 /* ── 상태 ──────────────────────────────────────────────────────────────── */
 
 const renderer = new Renderer();
+let selectedDeck = new URLSearchParams(location.search).get('deck') ?? DEFAULT_DECK_ID;
 let selectedHand = -1;
 let cursor: [number, number] | null = null;
 /** 직전 틱의 엔티티 위치 — 렌더 보간용 */
@@ -106,9 +110,11 @@ async function boot(): Promise<void> {
   });
   canvas.addEventListener('pointerdown', onPointerDown);
 
+  buildDeckPicker();
+
   $('start').addEventListener('click', () => {
     const name = ($('name') as HTMLInputElement).value.trim() || '플레이어';
-    net.connect(name);
+    net.connect(name, selectedDeck);
     setStatus('접속 중…');
     ($('start') as HTMLButtonElement).disabled = true;
   });
@@ -135,6 +141,63 @@ function fitCanvas(): void {
   host.style.height = `${VIEW_H * scale}px`;
   renderer.canvas.style.width = `${VIEW_W * scale}px`;
   renderer.canvas.style.height = `${VIEW_H * scale}px`;
+}
+
+/* ── 덱 선택 ───────────────────────────────────────────────────────────── */
+
+function hex(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`;
+}
+
+function buildDeckPicker(): void {
+  const root = $('deck-picker');
+  root.replaceChildren();
+
+  for (const id of DECK_IDS) {
+    const deck = getDeck(id);
+    const el = document.createElement('button');
+    el.className = 'deck';
+    el.style.setProperty('--deck-color', hex(deck.color));
+    el.innerHTML = `<span class="dname"></span><span class="dtag"></span>`;
+    el.querySelector<HTMLElement>('.dname')!.textContent = deck.name;
+    el.querySelector<HTMLElement>('.dtag')!.textContent = deck.tagline;
+    el.addEventListener('click', () => {
+      selectedDeck = id;
+      refreshDeckPicker();
+    });
+    root.appendChild(el);
+  }
+  refreshDeckPicker();
+}
+
+function refreshDeckPicker(): void {
+  const buttons = $('deck-picker').children;
+  for (let i = 0; i < buttons.length; i++) {
+    buttons[i].classList.toggle('selected', DECK_IDS[i] === selectedDeck);
+  }
+
+  // 선택한 덱의 8장을 코스트와 함께 보여준다. 공중 유닛은 별도 표시 —
+  // 상대 덱에 공중이 있는데 내 덱에 대공이 없으면 그냥 진다.
+  const detail = $('deck-detail');
+  detail.replaceChildren();
+  for (const cardId of getDeck(selectedDeck).cards) {
+    const c = getCard(cardId);
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.setProperty('--chip-color', hex(c.color));
+    chip.textContent = c.name;
+    if (c.flying) {
+      const air = document.createElement('span');
+      air.className = 'air';
+      air.textContent = '✈';
+      chip.appendChild(air);
+    }
+    const cost = document.createElement('span');
+    cost.className = 'cc';
+    cost.textContent = String(c.cost);
+    chip.appendChild(cost);
+    detail.appendChild(chip);
+  }
 }
 
 /* ── 입력 ──────────────────────────────────────────────────────────────── */
