@@ -39,8 +39,8 @@ import {
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
 
-/** 기본 대전 구성 — 포밍뿌 미러전 */
-const MIRROR = [getDeck('pomingpu').cards, getDeck('pomingpu').cards];
+/** 기본 대전 구성 — 기갑단 미러전 */
+const MIRROR = [getDeck('steel').cards, getDeck('steel').cards];
 
 /**
  * 시드로부터 결정론적인 "플레이 대본"을 만든다 (Math.random 금지).
@@ -263,18 +263,21 @@ test('손패(덱 앞 4장)에 없는 카드는 낼 수 없다', () => {
 });
 
 test('유닛은 강을 건너지 않고 다리로만 넘어간다', () => {
-  // 'runner'를 손패 맨 앞에 두는 전용 덱으로 시작한다
-  const deck = ['runner', 'mingttu', 'pubi', 'archers', 'porongi', 'swarm', 'cannon', 'arrows'];
+  // 빠른 지상 유닛('정찰차')을 손패 맨 앞에 두는 전용 덱으로 시작한다
+  const deck = [
+    'scoutcar', 'rifleman', 'flamer', 'bulwark',
+    'ironwalker', 'carpetbomb', 'gunship', 'siegetank',
+  ];
   const s = createState(5, [deck, deck]);
   for (let i = 0; i < 100; i++) step(s, []);
   // 맵 한가운데(양쪽 다리에서 똑같이 먼 곳)에 빠른 유닛을 낸다
   const applied = step(s, [
-    { execTick: s.tick, team: 0, card: 'runner', x: 9000, y: 20000 },
+    { execTick: s.tick, team: 0, card: 'scoutcar', x: 9000, y: 20000 },
   ]);
   void applied;
   assert.ok(
-    s.entities.some((e) => e.card === 'runner'),
-    'runner가 배치되지 않았다',
+    s.entities.some((e) => e.card === 'scoutcar'),
+    'scoutcar가 배치되지 않았다',
   );
 
   let sawRiverRow = false;
@@ -282,7 +285,7 @@ test('유닛은 강을 건너지 않고 다리로만 넘어간다', () => {
   for (let i = 0; i < 400; i++) {
     step(s, []);
     for (const e of s.entities) {
-      if (e.card !== 'runner') continue;
+      if (e.card !== 'scoutcar') continue;
       if (e.y >= RIVER_TOP && e.y < RIVER_BOT) {
         sawRiverRow = true;
         // 강 구간에 있다면 반드시 다리 위여야 한다
@@ -313,7 +316,7 @@ test('킹타워가 파괴되면 즉시 종료되고 왕관 3개가 주어진다'
   s.entities.push({
     id: s.nextId++,
     team: 0,
-    card: 'porongi',
+    card: 'devourer',
     kind: 'unit',
     tower: 'none',
     lane: 0,
@@ -361,7 +364,7 @@ test('긴 경기(연장전 포함)를 끝까지 돌려도 예외 없이 종료�
 /* ── 덱 ────────────────────────────────────────────────────────────────── */
 
 test('모든 덱이 유효하다 (8장, 실존 카드, 중복 없음)', () => {
-  assert.ok(DECK_IDS.length >= 4, `덱이 ${DECK_IDS.length}개뿐이다`);
+  assert.ok(DECK_IDS.length >= 3, `덱이 ${DECK_IDS.length}개뿐이다`);
   for (const id of DECK_IDS) {
     const d = getDeck(id);
     assert.equal(d.cards.length, DECK_SIZE, `덱 '${id}'의 카드 수가 다르다`);
@@ -393,7 +396,7 @@ test('서로 다른 덱끼리 붙어도 결정론이 유지된다', () => {
     ['steel', 'swarmhive'],
     ['covenant', 'steel'],
     ['swarmhive', 'covenant'],
-    ['pomingpu', 'covenant'],
+    ['steel', 'steel'], // 미러전도 확인한다
   ];
   for (const [d0, d1] of pairs) {
     const decks = [getDeck(d0).cards, getDeck(d1).cards];
@@ -499,7 +502,7 @@ test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다'
     'gunship', 'rifleman', 'flamer', 'scoutcar',
     'bulwark', 'ironwalker', 'carpetbomb', 'siegetank',
   ];
-  const s = createState(5, [airFirst, getDeck('pomingpu').cards]);
+  const s = createState(5, [airFirst, getDeck('swarmhive').cards]);
   for (let i = 0; i < 200; i++) step(s, []); // 엘릭서 축적
 
   step(s, [{ execTick: s.tick, team: 0, card: 'gunship', x: 9000, y: 20000 }]);

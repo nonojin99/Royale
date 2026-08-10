@@ -37,7 +37,7 @@ const http = createServer((req, res) => {
     );
     return;
   }
-  res.writeHead(404).end('pomingpu-royale game server');
+  res.writeHead(404).end('royale game server');
 });
 
 const wss = new WebSocketServer({ server: http });
@@ -152,5 +152,5 @@ setInterval(() => {
 }, TICK_MS);
 
 http.listen(PORT, HOST, () => {
-  console.log(`pomingpu-royale server on ws://${HOST}:${PORT}  (tick ${1000 / TICK_MS}Hz)`);
+  console.log(`royale server on ws://${HOST}:${PORT}  (tick ${1000 / TICK_MS}Hz)`);
 });

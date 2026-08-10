@@ -84,50 +84,6 @@ function card(spec: CardSpec): CardDef {
 const BUILDING_LIFE = seconds(40, TICK_RATE);
 
 const defs: CardDef[] = [
-  /* ── 포밍뿌 (원년 덱) ─────────────────────────────────────────────────
-     캐릭터 IP 기반의 균형형 덱. 특수 메커니즘 없이 기본기만으로 구성된다. */
-  card({
-    id: 'porongi', name: '포롱이', cost: 5, kind: 'unit',
-    hp: 1400, damage: 160, hitSpeed: seconds(1.5, TICK_RATE),
-    range: tiles(0.8), speed: spd(0.6), targets: 'ground', color: 0x22c55e,
-  }),
-  card({
-    id: 'pubi', name: '뿌비', cost: 4, kind: 'unit',
-    hp: 800, damage: 120, hitSpeed: seconds(1.4, TICK_RATE),
-    range: tiles(1.2), speed: spd(0.9), splash: tiles(1.5),
-    targets: 'ground', color: 0x14b8a6,
-  }),
-  card({
-    id: 'mingttu', name: '밍뚜', cost: 3, kind: 'unit',
-    hp: 340, damage: 110, hitSpeed: seconds(1.1, TICK_RATE),
-    range: tiles(5.5), speed: spd(1.0), color: 0xf97316,
-  }),
-  card({
-    id: 'archers', name: '활잡이', cost: 3, kind: 'unit', count: 2,
-    hp: 250, damage: 70, hitSpeed: seconds(1.0, TICK_RATE),
-    range: tiles(5.0), speed: spd(1.0), color: 0xa855f7,
-  }),
-  card({
-    id: 'swarm', name: '꼬마떼', cost: 3, kind: 'unit', count: 4,
-    hp: 120, damage: 60, hitSpeed: seconds(0.9, TICK_RATE),
-    range: tiles(0.7), speed: spd(1.3), targets: 'ground', color: 0xeab308,
-  }),
-  card({
-    id: 'runner', name: '돌격병', cost: 2, kind: 'unit',
-    hp: 600, damage: 150, hitSpeed: seconds(1.2, TICK_RATE),
-    range: tiles(0.7), speed: spd(1.8), targets: 'buildings', color: 0xef4444,
-  }),
-  card({
-    id: 'cannon', name: '대포', cost: 3, kind: 'building',
-    hp: 700, damage: 90, hitSpeed: seconds(0.8, TICK_RATE),
-    range: tiles(5.5), speed: 0, lifetime: seconds(30, TICK_RATE), color: 0x64748b,
-  }),
-  card({
-    id: 'arrows', name: '화살비', cost: 3, kind: 'spell', count: 0,
-    hp: 0, damage: 220, hitSpeed: 0, range: 0, speed: 0,
-    splash: tiles(3.0), color: 0x0ea5e9,
-  }),
-
   /* ── 기갑단 ───────────────────────────────────────────────────────────
      방어선을 세우고 카운터친다. 건물이 강하고 원거리 유닛이 많다.
      느린 대신 사거리로 이득을 보는 종족. */

@@ -6,7 +6,7 @@
 # 리전은 플레이어와 가까울수록 좋다. 한국 대상이면 nrt(도쿄)가 현실적으로 가장 낮은 지연을 준다.
 # 시뮬레이션이 20Hz이고 커맨드에 300ms 여유를 두므로, 왕복 150ms까지는 체감이 없다.
 
-app = "pomingpu-royale"
+app = "royale"
 primary_region = "nrt"
 
 [build]

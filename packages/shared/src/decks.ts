@@ -25,23 +25,6 @@ export interface DeckDef {
 
 const defs: DeckDef[] = [
   {
-    id: 'pomingpu',
-    name: '포밍뿌',
-    tagline: '균형형 — 특수 능력 없이 기본기로 싸운다',
-    color: 0xec4899,
-    cards: [
-      // 시작 손패: 원거리 / 스웜 / 저가 압박 / 방어건물
-      'mingttu',
-      'swarm',
-      'runner',
-      'cannon',
-      'archers',
-      'pubi',
-      'arrows',
-      'porongi',
-    ],
-  },
-  {
     id: 'steel',
     name: '기갑단',
     tagline: '방어형 — 방어선을 세우고 사거리로 카운터친다',
@@ -111,7 +94,8 @@ export const DECKS: ReadonlyMap<string, DeckDef> = new Map(defs.map((d) => [d.id
 /** 순회 순서가 필요할 때 쓰는 정렬된 덱 ID 목록 */
 export const DECK_IDS: readonly string[] = defs.map((d) => d.id);
 
-export const DEFAULT_DECK_ID = 'pomingpu';
+/** 덱을 고르지 않은 클라이언트가 받는 덱. 원거리 위주라 입문용으로 무난하다. */
+export const DEFAULT_DECK_ID = 'steel';
 
 /** 알 수 없는 id는 기본 덱으로 떨어뜨린다 (구버전 클라이언트 대응) */
 export function getDeck(id: string | undefined): DeckDef {
