@@ -67,7 +67,15 @@ export interface SCmd {
   y: number;
 }
 
-/** 요청이 거부됨 (본인에게만) */
+/**
+ * 요청이 거부됨 (본인에게만).
+ *
+ * ⚠️ 현재 서버가 실제로 보내는 것은 'unknown-card' / 'not-playing' 뿐이다.
+ * 엘릭서·손패·배치구역 위반은 execTick에 도달했을 때 세 곳(서버+양 클라)의
+ * applyCommand가 각자 동일하게 무시하는 방식이라, 서버가 사후에 따로 알려주지
+ * 않는다. 클라이언트는 전송 **전에** 같은 조건을 미리 검사해 즉시 피드백을 준다.
+ * 경합으로 사후 실패한 경우의 피드백은 M4 과제. (docs/NETCODE.md §5)
+ */
 export interface SReject {
   t: 'reject';
   reqTick: number;

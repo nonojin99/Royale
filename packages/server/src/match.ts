@@ -11,7 +11,6 @@ import {
   DEFAULT_DECK,
   ELIXIR_SCALE,
   GameState,
-  HAND_SIZE,
   SIM_DELAY_TICKS,
   ServerMsg,
   TICK_MS,
@@ -205,10 +204,5 @@ export class Match {
 
   get isEnded(): boolean {
     return this.ended;
-  }
-
-  /** 디버그/관전용: 현재 손패 */
-  handOf(team: Team): string[] {
-    return this.state.players[team].cycle.slice(0, HAND_SIZE);
   }
 }
