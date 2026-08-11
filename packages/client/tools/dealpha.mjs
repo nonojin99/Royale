@@ -152,6 +152,51 @@ function processFile(file, opts) {
   }
   if (pockets) console.log(`  고립된 배경 웅덩이 ${pockets}곳 추가 제거`);
 
+  /*
+   * 바닥 그림자 제거 (--shadow).
+   *
+   * 생성 도구가 캐릭터 발밑에 부드러운 회색 그림자를 그려 넣는 경우가 있다.
+   * 게임은 발밑에 팀 색 링을 따로 그리므로 그림자가 남으면 지저분하고, 무엇보다
+   * 합집합 아래쪽을 "발"로 잡기 때문에 발 위치가 그림자만큼 아래로 밀린다.
+   *
+   * 그림자는 **채도가 낮고 어중간하게 밝다.** 장갑·갑주는 채도가 있거나 어둡다.
+   * 다만 그 조건만으로는 은색 하이라이트도 걸리므로, 여기서도 **이미 지워진
+   * 배경과 이어진 것만** 먹어 들어간다. 캐릭터 내부는 손대지 않는다.
+   */
+  if (opts.shadow) {
+    const [maxSat, minLum] = String(opts.shadow === true ? '20,120' : opts.shadow)
+      .split(',')
+      .map(Number);
+    const q = [];
+    for (let k = 0; k < bg.length; k++) if (bg[k]) q.push(k);
+    let eaten = 0;
+    const shadowLike = (i) => {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      return mx - mn <= maxSat && (r + g + b) / 3 >= minLum;
+    };
+    while (q.length) {
+      const k = q.pop();
+      const x = k % width;
+      const y = (k / width) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < y0 || nx >= width || ny >= y1) continue;
+        const nk = ny * width + nx;
+        if (bg[nk]) continue;
+        if (!shadowLike(nk * 4)) continue;
+        bg[nk] = 1;
+        eaten++;
+        q.push(nk);
+      }
+    }
+    console.log(`  그림자 제거 — 채도≤${maxSat} 밝기≥${minLum} 조건으로 ${eaten}px`);
+  }
+
   const out = new PNG({ width, height });
   let removed = 0;
   let kept = 0;

@@ -47,6 +47,10 @@
       "attack": {
         "frames": 5,
         "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
       }
     },
     "scoutcar": {
