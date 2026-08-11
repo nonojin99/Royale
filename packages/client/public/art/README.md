@@ -10,6 +10,10 @@
 원본 시트는 이 폴더가 아니라 저장소 최상위 [`art-src/`](../../../../art-src/)에 둔다 —
 이 폴더의 파일은 전부 브라우저로 배포되므로 게임이 안 쓰는 원본이 섞이면 안 된다.
 
+**반드시 투명 배경 PNG여야 한다.** JPG는 알파 채널이 없어서 배경을 투명하게 만들 수
+없고, JPG를 PNG로 변환만 해도 소용없다 — 변환은 알파 채널을 만들 뿐 배경을 지우지
+않으므로 미리보기의 체크무늬가 실제 픽셀로 남는다. 슬라이서가 둘 다 막아 준다.
+
 ```bash
 cd packages/client
 node tools/slice-sheet.mjs ../../art-src/받은시트.png --unit rifleman --anim walk --tier small

@@ -185,8 +185,42 @@ if (!TIERS[tierName]) {
 const fill = TIERS[tierName];
 const fps = args.fps ? Number(args.fps) : anim === 'attack' ? 14 : 10;
 
-const png = PNG.sync.read(readFileSync(srcPath));
+const raw = readFileSync(srcPath);
+
+// JPG에는 알파 채널이 없다. 여기서 막지 않으면 pngjs가 알아보기 어려운 오류를 낸다
+if (!(raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47)) {
+  const jpg = raw[0] === 0xff && raw[1] === 0xd8;
+  console.error(
+    jpg
+      ? 'JPG는 쓸 수 없다 — 알파 채널이 없어서 배경을 투명하게 만들 수 없다.\n' +
+          '   생성 도구에서 PNG로 다시 내보낼 것. 단순 변환(JPG→PNG)으로는 해결되지 않는다.'
+      : 'PNG가 아니다. 투명 배경 PNG로 내보낼 것',
+  );
+  process.exit(1);
+}
+
+const png = PNG.sync.read(raw);
 console.log(`시트 ${path.basename(srcPath)} — ${png.width}×${png.height}`);
+
+/**
+ * 실제로 투명한 곳이 있는지 확인한다.
+ *
+ * JPG를 PNG로 변환하면 알파 채널은 생기지만 전부 불투명이다. 미리보기의
+ * 체크무늬가 **진짜 픽셀로 구워진** 상태이므로, 자르면 유닛마다 회색 체크무늬
+ * 사각형이 따라붙는다. 확장자만 보고는 알 수 없어서 내용으로 판별한다.
+ */
+let transparent = 0;
+for (let i = 3; i < png.data.length; i += 4) if (png.data[i] < ALPHA_MIN) transparent++;
+const ratio = transparent / (png.width * png.height);
+if (ratio < 0.02) {
+  console.error(
+    `투명한 픽셀이 거의 없다 (${(ratio * 100).toFixed(1)}%).\n` +
+      '   JPG를 PNG로 변환만 한 파일일 가능성이 높다 — 변환은 알파 채널을 만들 뿐\n' +
+      '   배경을 지우지 않는다. 미리보기의 체크무늬가 실제 픽셀로 들어가 있다면\n' +
+      '   생성 도구에서 투명 배경 PNG로 다시 내보내야 한다.',
+  );
+  process.exit(1);
+}
 
 let spans = findFrameSpans(columnOccupancy(png));
 if (!spans.length) {
