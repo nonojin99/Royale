@@ -275,6 +275,7 @@ function buildPalette(): void {
       u.name + (u.flying ? ' <span class="air">✈</span>' : '');
     el.querySelector<HTMLElement>('.ucost')!.textContent = String(u.cost);
     el.addEventListener('click', () => selectUnit(node.unit));
+    attachTip(el, node.unit);
     root.appendChild(el);
     paletteEls.push({ el, unit: node.unit });
   }
@@ -341,6 +342,7 @@ function buildTechPanel(): void {
       el.innerHTML = `<span class="tname"></span><span class="tmeta"></span>`;
       el.querySelector<HTMLElement>('.tname')!.textContent = u.name;
       el.addEventListener('click', () => requestTech(node.unit));
+      attachTip(el, node.unit);
       row.appendChild(el);
     }
     root.appendChild(row);
@@ -362,6 +364,77 @@ function requestTech(unit: string): void {
     return;
   }
   net.act('tech', unit);
+}
+
+/* ── 유닛 툴팁 ─────────────────────────────────────────────────────────── */
+
+/**
+ * 유닛 스탯 툴팁 — 게임 안 어디에도 스탯이 없던 문제(REVIEW P1)의 답.
+ *
+ * 특히 "정찰차는 유닛을 못 때린다" 같은 대상 제한은 화면에서 알아낼 방법이
+ * 없었다. 팔레트와 테크 패널 양쪽에서 같은 툴팁을 쓴다.
+ */
+function unitTipHtml(id: string): string {
+  const u = getUnit(id);
+  const rows: string[] = [];
+  const tile = (mt: number) => (mt / 1000).toFixed(1).replace(/\.0$/, '');
+
+  if (u.kind === 'spell') {
+    rows.push(`즉발 광역 — 반경 ${tile(u.splash)}타일에 ${u.damage} 피해`);
+    rows.push(`<span class="tt-warn">기지에는 피해 없음</span>`);
+  } else {
+    rows.push(
+      `체력 ${u.hp}${u.count > 1 ? ` ×${u.count}` : ''}` +
+        (u.speed > 0 ? ` · 속도 ${((u.speed * TICK_RATE) / 1000).toFixed(1)}` : ' · 고정'),
+    );
+    const per = (u.hitSpeed / TICK_RATE).toFixed(1);
+    rows.push(
+      `공격 ${u.damage}${u.count > 1 ? ` ×${u.count}` : ''} / ${per}초 · 사거리 ${tile(u.range)}`,
+    );
+    const target =
+      u.targets === 'any' ? '지상+공중'
+      : u.targets === 'ground' ? '지상만'
+      : u.targets === 'air' ? '공중만'
+      : '건물만 (유닛 무시)';
+    rows.push(`대상 ${target}${u.splash > 0 ? ' · 광역' : ''}`);
+    if (u.siege !== 100) {
+      rows.push(
+        u.siege > 100
+          ? `<span class="tt-warn">건물 데미지 ${u.siege}% — 공성</span>`
+          : `건물 데미지 ${u.siege}%`,
+      );
+    }
+    if (u.kind === 'building' && u.lifetime > 0) {
+      rows.push(`수명 ${Math.round(u.lifetime / TICK_RATE)}초`);
+    }
+  }
+
+  return (
+    `<div class="tt-name">${u.name}${u.flying ? ' ✈' : ''} ` +
+    `<span class="tt-cost">${u.cost}</span></div>` +
+    rows.map((r) => `<div class="tt-row">${r}</div>`).join('')
+  );
+}
+
+function attachTip(el: HTMLElement, unitId: string): void {
+  const tip = $('tooltip');
+  const move = (ev: MouseEvent) => {
+    const pad = 14;
+    let x = ev.clientX + pad;
+    let y = ev.clientY + pad;
+    const r = tip.getBoundingClientRect();
+    if (x + r.width > window.innerWidth - 8) x = ev.clientX - r.width - pad;
+    if (y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - pad;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  };
+  el.addEventListener('mouseenter', (ev) => {
+    tip.innerHTML = unitTipHtml(unitId);
+    tip.classList.remove('hidden');
+    move(ev as MouseEvent);
+  });
+  el.addEventListener('mousemove', move);
+  el.addEventListener('mouseleave', () => tip.classList.add('hidden'));
 }
 
 /* ── 입력 ──────────────────────────────────────────────────────────────── */
@@ -414,7 +487,8 @@ function onPointerDown(ev: PointerEvent): void {
     return;
   }
   net.act('unit', selectedUnit, x, y);
-  selectedUnit = '';
+  // 선택을 유지한다 — 물량전에서 매번 다시 고르게 하면 클릭이 2배가 된다.
+  // 해제는 Esc 또는 카드 재클릭(토글).
 }
 
 function deployable(s: GameState, x: number, y: number): boolean {
