@@ -43,13 +43,16 @@ import {
   BASE_RADIUS,
   BUILDING_RADIUS,
   DEPLOY_TICKS,
-  INCOME_PER_TICK,
   MATCH_TICKS,
   MINERAL_MAX,
   MINERAL_SCALE,
   MINERAL_START,
   OVERTIME_TICKS,
+  START_WORKERS,
   UNIT_RADIUS,
+  WORKER_CAP_PER_BASE,
+  WORKER_COST,
+  WORKER_MINE_PER_TICK,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -107,6 +110,14 @@ export interface PlayerState {
   minerals: number;
   /** 누적 채굴량 — 동점 판정과 분석에 쓴다 */
   mined: number;
+  /**
+   * 보유 일꾼 수.
+   *
+   * 일꾼은 시뮬 엔티티가 아니라 **플레이어 단위 숫자 하나**다. 매 틱 기지들에
+   * id 오름차순으로 정원까지 배분되고, 배분된 만큼만 채굴한다. 정원을 넘는
+   * 일꾼은 그냥 논다 — 그게 "확장해야 한다"는 신호가 된다.
+   */
+  workers: number;
   /** 종족 id */
   faction: string;
   /** 해금된 유닛 id. **항상 오름차순 정렬** (해시 결정론) */
@@ -129,7 +140,7 @@ export interface GameState {
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech';
+export type CommandKind = 'unit' | 'base' | 'tech' | 'worker';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -139,7 +150,7 @@ export interface Command {
   execTick: number;
   team: Team;
   kind: CommandKind;
-  /** kind가 'unit'이면 생산할 유닛, 'tech'면 해금할 유닛, 'base'면 '' */
+  /** kind가 'unit'이면 생산할 유닛, 'tech'면 해금할 유닛, 'base'/'worker'면 '' */
   id: string;
   x: number;
   y: number;
@@ -152,6 +163,7 @@ function makePlayer(factionId: string): PlayerState {
   return {
     minerals: MINERAL_START,
     mined: 0,
+    workers: START_WORKERS,
     faction: f.id,
     unlocked: startingUnlocks(f),
     research: null,
@@ -219,6 +231,58 @@ function statsOf(e: Entity): { damage: number; hitSpeed: number; range: number; 
   }
   const u = getUnit(e.unit);
   return { damage: u.damage, hitSpeed: u.hitSpeed, range: u.range, splash: u.splash };
+}
+
+/**
+ * 팀의 일꾼 정원 — 가동 중이고 매장량이 남은 기지 수 × 기지당 정원.
+ *
+ * 기지가 고갈되거나 파괴되면 정원이 줄고, 초과분 일꾼은 논다.
+ */
+export function workerCapacity(s: GameState, team: Team): number {
+  let cap = 0;
+  for (const e of s.entities) {
+    if (e.kind === 'base' && e.team === team && e.deploy === 0 && e.reserve > 0) {
+      cap += WORKER_CAP_PER_BASE;
+    }
+  }
+  return cap;
+}
+
+/** 실제로 일하고 있는 일꾼 수 (정원을 넘는 분은 놀고 있다) */
+export function activeWorkers(s: GameState, team: Team): number {
+  const cap = workerCapacity(s, team);
+  const have = s.players[team].workers;
+  return have < cap ? have : cap;
+}
+
+/**
+ * 채굴 — 일꾼을 기지에 id 오름차순으로 정원까지 배분하고, 배분된 만큼 캔다.
+ *
+ * 배분 순서가 고정이라 결정론이 유지되고, 각 기지가 자기 몫만큼만 매장량을
+ * 소진하므로 "먼저 세운 기지부터 마른다"는 자연스러운 흐름이 나온다.
+ */
+function mine(s: GameState): void {
+  for (const team of [0, 1] as const) {
+    const p = s.players[team];
+    let left = p.workers;
+    if (left <= 0) continue;
+
+    for (const e of s.entities) {
+      if (left <= 0) break;
+      if (e.kind !== 'base' || e.team !== team) continue;
+      if (e.deploy > 0 || e.reserve <= 0) continue;
+
+      const assigned = left < WORKER_CAP_PER_BASE ? left : WORKER_CAP_PER_BASE;
+      left -= assigned;
+
+      const want = assigned * WORKER_MINE_PER_TICK;
+      const take = e.reserve < want ? e.reserve : want;
+      e.reserve -= take;
+      p.mined += take;
+      p.minerals += take;
+      if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
+    }
+  }
 }
 
 /** 살아 있고 가동 중인 팀 기지들의 좌표 */
@@ -319,6 +383,8 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
       return buildBase(s, cmd);
     case 'tech':
       return startResearch(s, cmd);
+    case 'worker':
+      return trainWorker(s, cmd);
     default:
       return false;
   }
@@ -361,6 +427,21 @@ function buildBase(s: GameState, cmd: Command): boolean {
 
   p.minerals -= BASE_BUILD_COST;
   s.entities.push(makeBase(s, cmd.team, site, false));
+  return true;
+}
+
+/**
+ * 일꾼 생산.
+ *
+ * 정원을 넘겨서는 살 수 없다 — 정원이 찼다는 것 자체가 "확장할 때"라는 신호이고,
+ * 쓸모없는 일꾼에 미네랄을 흘리는 것을 막는다.
+ */
+function trainWorker(s: GameState, cmd: Command): boolean {
+  const p = s.players[cmd.team];
+  if (p.minerals < WORKER_COST) return false;
+  if (p.workers >= workerCapacity(s, cmd.team)) return false;
+  p.minerals -= WORKER_COST;
+  p.workers++;
   return true;
 }
 
@@ -507,16 +588,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 1) 예약된 커맨드 실행
   for (const cmd of cmds) applyCommand(s, cmd);
 
-  // 2) 채굴 — 가동 중이고 매장량이 남은 기지마다 수입이 들어온다
-  for (const e of s.entities) {
-    if (e.kind !== 'base' || e.deploy > 0 || e.reserve <= 0) continue;
-    const take = e.reserve < INCOME_PER_TICK ? e.reserve : INCOME_PER_TICK;
-    e.reserve -= take;
-    const p = s.players[e.team];
-    p.mined += take;
-    p.minerals += take;
-    if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
-  }
+  // 2) 채굴
+  mine(s);
 
   // 3) 연구 진행
   for (const p of s.players) {
@@ -808,6 +881,7 @@ export function hashState(s: GameState): number {
   for (const p of s.players) {
     mix(p.minerals);
     mix(p.mined);
+    mix(p.workers);
     mixStr(p.faction);
     mix(p.unlocked.length);
     for (const u of p.unlocked) mixStr(u);

@@ -16,20 +16,47 @@ export const OVERTIME_TICKS = 60 * TICK_RATE;
 export const MINERAL_SCALE = 1000;
 /** 보유 상한 */
 export const MINERAL_MAX = 30 * MINERAL_SCALE;
-/** 시작 보유량 — 초반에 아무것도 못 하는 시간을 없앤다 */
-export const MINERAL_START = 8 * MINERAL_SCALE;
+/**
+ * 시작 보유량.
+ *
+ * ⚠️ 확장 비용(BASE_BUILD_COST)과 **같은 값으로 두면 안 된다.** 같으면
+ * "무조건 즉시 확장"이 유일한 최적해가 되어 오프닝에 선택지가 사라진다.
+ * 5는 일꾼 2기(4) 또는 값싼 유닛 하나를 살 수 있고, 확장은 조금 모자란 값이다.
+ */
+export const MINERAL_START = 5 * MINERAL_SCALE;
+
+/* ── 일꾼 ──────────────────────────────────────────────────────────────── */
 
 /**
- * 기지 하나가 틱당 캐는 양.
- * 20/틱 = 초당 0.4 = 2.5초에 1개. 기지가 둘이면 그 두 배가 된다.
- * 수입이 기지 수에 비례한다는 것이 이 게임의 핵심 축이다.
+ * 수입은 기지 수가 아니라 **일하는 일꾼 수**에서 나온다.
+ *
+ * 일꾼당 틱당 6 = 초당 0.12. 시작 2기면 초당 0.24로 아주 느리고,
+ * 정원(8기)을 채우면 초당 0.96이 된다.
  */
-export const INCOME_PER_TICK = 20;
+export const WORKER_MINE_PER_TICK = 6;
+/** 경기 시작 시 일꾼 수 */
+export const START_WORKERS = 2;
+/** 일꾼 한 기 생산 비용. 회수까지 약 16.7초 — 초반에는 확실한 이득이다 */
+export const WORKER_COST = 2 * MINERAL_SCALE;
 
-/** 기지 하나에 매장된 총량. 50 / (20/틱) = 2500틱 = 125초면 고갈된다 */
-export const BASE_MINERAL_RESERVE = 50 * MINERAL_SCALE;
-/** 기지당 미네랄 덩이 수 (표시용 — 잔량에 비례해 줄어든다) */
+/**
+ * 기지당 미네랄 덩이 수.
+ *
+ * 이 값의 진짜 의미는 매장량이 아니라 **일꾼 정원**이다.
+ * 정원이 차면 일꾼을 더 붙여도 소용없고, 그래서 확장이 강제된다.
+ */
 export const MINERAL_PATCHES = 4;
+/** 덩이 하나가 먹여살리는 일꾼 수 */
+export const WORKERS_PER_PATCH = 2;
+/** 기지 하나의 일꾼 정원 = 4 × 2 = 8 → 포화 수입 초당 0.96 */
+export const WORKER_CAP_PER_BASE = MINERAL_PATCHES * WORKERS_PER_PATCH;
+
+/**
+ * 기지 하나에 매장된 총량.
+ * 포화(초당 0.96) 기준 약 110초면 고갈된다 — 4분 경기의 중반이다.
+ * 한 기지로 버티면 말라죽는다는 것이 확장을 강제하는 두 번째 장치다.
+ */
+export const BASE_MINERAL_RESERVE = 100 * MINERAL_SCALE;
 
 /** 확장 기지 건설 비용 */
 export const BASE_BUILD_COST = 8 * MINERAL_SCALE;

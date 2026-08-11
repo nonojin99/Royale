@@ -24,6 +24,7 @@ import WebSocket from 'ws';
 import {
   BASE_BUILD_COST,
   BASE_SITES,
+  WORKER_COST,
   DEPLOY_RADIUS,
   HASH_INTERVAL,
   MINERAL_SCALE,
@@ -36,6 +37,7 @@ import {
   hashState,
   occupiedSites,
   ownBasePositions,
+  workerCapacity,
   sortCommands,
   step,
 } from '@royale/shared';
@@ -162,6 +164,13 @@ class HeadlessClient {
     const s = this.state;
     if (!s || s.over) return;
     const me = s.players[this.team];
+
+    // 일꾼 — 정원이 빌 때까지 최우선. 경제 없이는 아무것도 못 한다
+    if (me.minerals >= WORKER_COST && me.workers < workerCapacity(s, this.team)) {
+      this.ws.send(JSON.stringify({ t: 'act', reqTick: s.tick, kind: 'worker', id: '', x: 0, y: 0 }));
+      if (this.plays !== undefined) this.plays++;
+      return;
+    }
 
     // 확장 — 빈 지점이 있고 여유가 있으면
     if (me.minerals >= BASE_BUILD_COST * 2 && baseCount(s, this.team) < 3) {

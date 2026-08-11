@@ -12,12 +12,14 @@ import {
   DEFAULT_FACTION_ID,
   FACTION_IDS,
   GameState,
-  INCOME_PER_TICK,
   MATCH_TICKS,
   MINERAL_MAX,
   MINERAL_SCALE,
   OVERTIME_TICKS,
   TICK_RATE,
+  WORKER_COST,
+  WORKER_MINE_PER_TICK,
+  activeWorkers,
   baseCount,
   canDeployAt,
   canResearch,
@@ -27,6 +29,7 @@ import {
   nearestFreeSite,
   occupiedSites,
   ownBasePositions,
+  workerCapacity,
 } from '@royale/shared';
 
 import { NetClient } from './net.js';
@@ -145,6 +148,7 @@ async function boot(): Promise<void> {
     ($('start') as HTMLButtonElement).disabled = true;
   });
 
+  $('btn-worker').addEventListener('click', requestWorker);
   $('btn-base').addEventListener('click', toggleBaseMode);
   $('btn-tech').addEventListener('click', () => {
     techOpen = !techOpen;
@@ -155,6 +159,7 @@ async function boot(): Promise<void> {
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
+    if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
     if (e.key === 'Escape') {
       selectedUnit = '';
       baseMode = false;
@@ -264,6 +269,22 @@ function selectUnit(unit: string): void {
 function selectUnitByIndex(i: number): void {
   const entry = paletteEls[i];
   if (entry) selectUnit(entry.unit);
+}
+
+/** 일꾼 생산 — 정원이 차 있으면 확장하라는 뜻이므로 그렇게 알린다 */
+function requestWorker(): void {
+  const s = net.state;
+  if (!s) return;
+  const me = s.players[net.myTeam];
+  if (me.workers >= workerCapacity(s, net.myTeam)) {
+    flash('일꾼 정원이 찼습니다 — 확장하세요');
+    return;
+  }
+  if (me.minerals < WORKER_COST) {
+    flash('미네랄 부족');
+    return;
+  }
+  net.act('worker', '');
 }
 
 function toggleBaseMode(): void {
@@ -417,13 +438,14 @@ function updateHud(s: GameState): void {
   $('mineral-fill').style.width = `${(me.minerals / MINERAL_MAX) * 100}%`;
   $('mineral-num').textContent = `${Math.floor(minerals)} / ${MINERAL_MAX / MINERAL_SCALE}`;
 
-  // 초당 수입 = 가동 중이고 매장량이 남은 기지 수 × 틱당 수입 × 틱레이트
-  let active = 0;
-  for (const e of s.entities) {
-    if (e.kind === 'base' && e.team === net.myTeam && e.deploy === 0 && e.reserve > 0) active++;
-  }
-  const perSec = (active * INCOME_PER_TICK * TICK_RATE) / MINERAL_SCALE;
-  $('income').textContent = `+${perSec.toFixed(1)}/s`;
+  // 초당 수입 = 실제로 일하는 일꾼 수 × 일꾼당 채굴 × 틱레이트
+  const working = activeWorkers(s, net.myTeam);
+  const cap = workerCapacity(s, net.myTeam);
+  const perSec = (working * WORKER_MINE_PER_TICK * TICK_RATE) / MINERAL_SCALE;
+  $('income').textContent = `+${perSec.toFixed(2)}/s`;
+  // 정원이 찼다는 것은 곧 확장 신호다 — 색으로 알린다
+  $('workers').textContent = `⛏ ${me.workers}/${cap}`;
+  $('workers').classList.toggle('full', cap > 0 && me.workers >= cap);
 
   $('score').textContent = `🏠 ${baseCount(s, net.myTeam)} : ${baseCount(s, foe)}`;
 
@@ -441,6 +463,11 @@ function updateHud(s: GameState): void {
     el.classList.toggle('unaffordable', !unlocked || !affordable);
     el.title = unlocked ? '' : '테크트리에서 해금이 필요합니다';
   }
+
+  // 일꾼 버튼
+  const workerBtn = $('btn-worker') as HTMLButtonElement;
+  workerBtn.disabled = me.minerals < WORKER_COST || me.workers >= cap;
+  workerBtn.textContent = `일꾼 (${WORKER_COST / MINERAL_SCALE})`;
 
   // 기지 건설 버튼
   const baseBtn = $('btn-base') as HTMLButtonElement;

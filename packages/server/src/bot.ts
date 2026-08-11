@@ -7,9 +7,10 @@
  *
  * v1 전략은 매크로 게임의 기본 우선순위를 그대로 따른다:
  *
- *   1. 기지가 부족하면 확장한다        (수입이 모든 것의 기반)
- *   2. 연구 중이 아니면 테크를 올린다  (해금 없이는 후반에 밀린다)
- *   3. 남는 자원으로 병력을 뽑는다
+ *   1. 일꾼 정원이 남으면 채운다        (수입이 모든 것의 기반)
+ *   2. 정원이 찼으면 확장한다
+ *   3. 연구 중이 아니면 테크를 올린다  (해금 없이는 후반에 밀린다)
+ *   4. 남는 자원으로 병력을 뽑는다
  *
  * 강한 AI는 M6 이후의 과제다.
  */
@@ -17,6 +18,7 @@
 import {
   BASE_BUILD_COST,
   BASE_SITES,
+  WORKER_COST,
   CommandKind,
   DEPLOY_RADIUS,
   GameState,
@@ -33,6 +35,7 @@ import {
   nextInt,
   occupiedSites,
   ownBasePositions,
+  workerCapacity,
 } from '@royale/shared';
 
 /** 봇이 수를 두는 최소 간격 (틱) */
@@ -60,12 +63,20 @@ export class Bot {
     if (tick - this.lastTick < MIN_INTERVAL) return null;
 
     const me = s.players[1];
-    const move = this.expand(s) ?? this.research(s) ?? this.produce(s, me);
+    const move = this.train(s) ?? this.expand(s) ?? this.research(s) ?? this.produce(s, me);
     if (move) this.lastTick = tick;
     return move;
   }
 
-  /** 1순위: 확장 — 자기 진영에 가까운 빈 지점부터 채운다 */
+  /** 1순위: 일꾼 — 정원이 빌 때까지 채운다. 경제가 모든 것의 기반이다 */
+  private train(s: GameState): BotMove | null {
+    const me = s.players[1];
+    if (me.minerals < WORKER_COST) return null;
+    if (me.workers >= workerCapacity(s, 1)) return null;
+    return { kind: 'worker', id: '', x: 0, y: 0 };
+  }
+
+  /** 2순위: 확장 — 자기 진영에 가까운 빈 지점부터 채운다 */
   private expand(s: GameState): BotMove | null {
     if (s.players[1].minerals < BASE_BUILD_COST) return null;
     if (baseCount(s, 1) >= MAX_BASES) return null;
@@ -78,7 +89,7 @@ export class Bot {
     return { kind: 'base', id: '', x: site.x, y: site.y };
   }
 
-  /** 2순위: 테크 — 지금 시작할 수 있고 비용을 감당하는 것 중 가장 싼 것 */
+  /** 3순위: 테크 — 지금 시작할 수 있고 비용을 감당하는 것 중 가장 싼 것 */
   private research(s: GameState): BotMove | null {
     const me = s.players[1];
     if (me.research) return null;
@@ -101,7 +112,7 @@ export class Bot {
     return { kind: 'tech', id: best, x: 0, y: 0 };
   }
 
-  /** 3순위: 병력 — 해금된 것 중 가장 비싼 것을 자기 기지 앞에 낸다 */
+  /** 4순위: 병력 — 해금된 것 중 가장 비싼 것을 자기 기지 앞에 낸다 */
   private produce(s: GameState, me: GameState['players'][number]): BotMove | null {
     const bases = ownBasePositions(s, 1);
     if (bases.length === 0) return null;

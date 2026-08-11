@@ -19,7 +19,6 @@ import {
   BASE_SITES,
   DEPLOY_RADIUS,
   FACTION_IDS,
-  INCOME_PER_TICK,
   MATCH_TICKS,
   MINERAL_MAX,
   MINERAL_SCALE,
@@ -30,7 +29,12 @@ import {
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
   TICK_RATE,
+  START_WORKERS,
   UNIT_IDS,
+  WORKER_CAP_PER_BASE,
+  WORKER_COST,
+  WORKER_MINE_PER_TICK,
+  activeWorkers,
   baseCount,
   buildReplay,
   canDeployAt,
@@ -46,6 +50,7 @@ import {
   nextRange,
   ownBasePositions,
   playReplay,
+  workerCapacity,
   restore,
   snapshot,
   sortCommands,
@@ -217,77 +222,130 @@ test('해금 목록은 항상 정렬 상태를 유지한다 (해시 결정론의
 
 /* ── 경제 ──────────────────────────────────────────────────────────────── */
 
-test('시작 상태는 본진 하나씩, 시작 미네랄을 갖는다', () => {
+test('시작 상태는 본진 하나씩, 일꾼 2기, 시작 미네랄을 갖는다', () => {
   const s = createState(5, MIRROR);
   assert.equal(s.entities.length, 2, '시작 엔티티가 본진 2개가 아니다');
   for (const team of [0, 1]) {
     assert.equal(baseCount(s, team), 1);
     assert.equal(s.players[team].minerals, MINERAL_START);
+    assert.equal(s.players[team].workers, START_WORKERS);
     assert.equal(s.players[team].mined, 0);
     assert.ok(mainBase(s, team), `team${team} 본진이 없다`);
   }
 });
 
-test('기지가 매 틱 채굴해서 미네랄과 누적 채굴량이 늘어난다', () => {
+test('시작 미네랄은 확장 비용과 달라야 한다 (오프닝에 선택지를 만든다)', () => {
+  // 같으면 "무조건 즉시 확장"이 유일한 최적해가 되어 첫 판단이 사라진다.
+  assert.notEqual(MINERAL_START, BASE_BUILD_COST, '시작 미네랄이 확장 비용과 같다');
+  assert.ok(MINERAL_START < BASE_BUILD_COST, '시작부터 확장이 가능하면 안 된다');
+  assert.ok(MINERAL_START >= WORKER_COST * 2, '시작에 일꾼 2기도 못 사면 너무 빡빡하다');
+});
+
+test('수입은 기지 수가 아니라 일하는 일꾼 수에 비례한다', () => {
   const s = createState(5, MIRROR);
+  const perTick = START_WORKERS * WORKER_MINE_PER_TICK;
   step(s, []);
-  assert.equal(s.players[0].mined, INCOME_PER_TICK, '한 틱 채굴량이 기대와 다르다');
-  assert.equal(s.players[0].minerals, MINERAL_START + INCOME_PER_TICK);
+  assert.equal(s.players[0].mined, perTick, '시작 일꾼 수만큼 캐지 않았다');
+  assert.equal(s.players[0].minerals, MINERAL_START + perTick);
+});
+
+test('일꾼을 사면 그만큼 수입이 늘어난다', () => {
+  const s = createState(5, MIRROR);
+  step(s, [cmd(s.tick, 0, 'worker', '')]);
+  assert.equal(s.players[0].workers, START_WORKERS + 1, '일꾼이 늘지 않았다');
+
+  const before = s.players[0].mined;
+  step(s, []);
+  assert.equal(
+    s.players[0].mined - before,
+    (START_WORKERS + 1) * WORKER_MINE_PER_TICK,
+    '늘어난 일꾼이 채굴에 반영되지 않았다',
+  );
+});
+
+test('일꾼은 정원을 넘겨 살 수 없다', () => {
+  const s = createState(5, MIRROR);
+  assert.equal(workerCapacity(s, 0), WORKER_CAP_PER_BASE, '본진 하나의 정원이 기대와 다르다');
+
+  // 자원을 넉넉히 주고 정원보다 많이 사려고 해본다
+  s.players[0].minerals = MINERAL_MAX;
+  for (let i = 0; i < WORKER_CAP_PER_BASE + 5; i++) {
+    step(s, [cmd(s.tick, 0, 'worker', '')]);
+    s.players[0].minerals = MINERAL_MAX; // 자원 부족이 아니라 정원으로 막히는지 본다
+  }
+  assert.equal(s.players[0].workers, WORKER_CAP_PER_BASE, '정원을 넘겨 일꾼이 늘었다');
+});
+
+test('확장하면 정원이 늘고 그만큼 일꾼을 더 붙일 수 있다', () => {
+  const s = createState(5, MIRROR);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > RIVER_BOT);
+  s.players[0].minerals = MINERAL_MAX;
+  step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
+  for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
+
+  assert.equal(workerCapacity(s, 0), WORKER_CAP_PER_BASE * 2, '확장으로 정원이 늘지 않았다');
 });
 
 test('미네랄은 상한을 넘지 않는다', () => {
   const s = createState(5, MIRROR);
+  s.players[0].workers = WORKER_CAP_PER_BASE;
   for (let i = 0; i < 2000; i++) step(s, []);
-  for (const p of s.players) assert.equal(p.minerals, MINERAL_MAX);
+  assert.equal(s.players[0].minerals, MINERAL_MAX);
 });
 
-test('기지 매장량은 유한하고, 고갈되면 수입이 끊긴다', () => {
+test('기지 매장량은 유한하고, 고갈되면 수입도 정원도 사라진다', () => {
   const s = createState(5, MIRROR);
-  const expectedTicks = BASE_MINERAL_RESERVE / INCOME_PER_TICK;
+  s.players[0].workers = WORKER_CAP_PER_BASE; // 포화 상태로 만든다
+  const perTick = WORKER_CAP_PER_BASE * WORKER_MINE_PER_TICK;
+  const expectedTicks = BASE_MINERAL_RESERVE / perTick;
 
   for (let i = 0; i < expectedTicks; i++) step(s, []);
-  const base = mainBase(s, 0);
-  assert.equal(base.reserve, 0, '매장량이 예상 시점에 고갈되지 않았다');
+  assert.equal(mainBase(s, 0).reserve, 0, '매장량이 예상 시점에 고갈되지 않았다');
   assert.equal(s.players[0].mined, BASE_MINERAL_RESERVE, '누적 채굴량이 매장량과 다르다');
+
+  // 고갈된 기지는 정원에서 빠지고, 남은 일꾼은 논다
+  assert.equal(workerCapacity(s, 0), 0, '고갈된 기지가 여전히 정원을 제공한다');
+  assert.equal(activeWorkers(s, 0), 0, '고갈됐는데 일꾼이 일하고 있다');
 
   const minedBefore = s.players[0].mined;
   for (let i = 0; i < 100; i++) step(s, []);
   assert.equal(s.players[0].mined, minedBefore, '고갈된 기지가 계속 채굴하고 있다');
 });
 
-test('기지를 늘리면 수입이 비례해서 늘어난다', () => {
+test('일꾼이 정원을 넘으면 초과분은 놀고 수입에 잡히지 않는다', () => {
   const s = createState(5, MIRROR);
-  // 확장 하나를 즉시 세운다 (건설 시간 동안은 채굴하지 않는다)
-  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > RIVER_BOT);
-  for (let i = 0; i < 60; i++) step(s, []); // 건설비 확보
-  step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
-  assert.equal(baseCount(s, 0), 2, '확장 기지가 세워지지 않았다');
+  s.players[0].workers = WORKER_CAP_PER_BASE + 5;
+  assert.equal(activeWorkers(s, 0), WORKER_CAP_PER_BASE, '초과 일꾼이 일하고 있다');
 
-  // 건설 중에는 수입이 한 기지분
-  const beforeReady = s.players[0].mined;
+  const before = s.players[0].mined;
   step(s, []);
-  assert.equal(s.players[0].mined - beforeReady, INCOME_PER_TICK, '건설 중 기지가 채굴했다');
-
-  for (let i = 0; i < BASE_BUILD_TICKS; i++) step(s, []);
-  const a = s.players[0].mined;
-  step(s, []);
-  assert.equal(s.players[0].mined - a, INCOME_PER_TICK * 2, '기지 2개의 수입이 두 배가 아니다');
+  assert.equal(
+    s.players[0].mined - before,
+    WORKER_CAP_PER_BASE * WORKER_MINE_PER_TICK,
+    '정원을 넘는 일꾼이 채굴에 반영됐다',
+  );
 });
 
 test('미네랄이 모자라면 기지를 세울 수 없다', () => {
-  const s = createState(5, MIRROR); // 시작 8, 건설비 8 → 처음엔 딱 한 번만 가능
+  const s = createState(5, MIRROR);
   const free = BASE_SITES.filter((b) => b.startFor === -1);
+  // 시작 자원(5)은 확장 비용(8)에 못 미친다
+  step(s, [cmd(s.tick, 0, 'base', '', free[0].x, free[0].y)]);
+  assert.equal(baseCount(s, 0), 1, '자원이 모자란데 기지가 세워졌다');
+
+  s.players[0].minerals = BASE_BUILD_COST;
   step(s, [
     cmd(s.tick, 0, 'base', '', free[0].x, free[0].y),
     cmd(s.tick, 0, 'base', '', free[1].x, free[1].y),
   ]);
-  assert.equal(baseCount(s, 0), 2, '건설 가능 횟수가 자원과 맞지 않는다');
+  assert.equal(baseCount(s, 0), 2, '한 번치 자원으로 두 곳이 세워졌다');
 });
 
 test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
   const s = createState(5, MIRROR);
-  for (let i = 0; i < 400; i++) step(s, []);
   const site = BASE_SITES.find((b) => b.startFor === -1);
+  s.players[0].minerals = MINERAL_MAX;
+  s.players[1].minerals = MINERAL_MAX;
 
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   const after = baseCount(s, 0);
@@ -299,8 +357,8 @@ test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
 
 test('본진 자리는 상대도 시작부터 점유되어 있어 세울 수 없다', () => {
   const s = createState(5, MIRROR);
-  for (let i = 0; i < 400; i++) step(s, []);
   const enemyMain = BASE_SITES.find((b) => b.startFor === 1);
+  s.players[0].minerals = MINERAL_MAX;
   const before = baseCount(s, 0);
   step(s, [cmd(s.tick, 0, 'base', '', enemyMain.x, enemyMain.y)]);
   assert.equal(baseCount(s, 0), before, '상대 본진 자리에 기지를 세웠다');

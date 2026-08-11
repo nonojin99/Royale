@@ -84,6 +84,8 @@
       font-variant-numeric: tabular-nums;
     }
     #income { font-size: 11px; color: var(--mineral); font-weight: 700; white-space: nowrap; }
+    #workers { font-size: 11px; color: var(--base); font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #workers.full { color: #f87171; }
 
     /* 액션 행 */
     #actions { display: flex; gap: 6px; margin-top: 8px; }
@@ -99,6 +101,7 @@
       padding: 8px 6px;
       cursor: pointer;
     }
+    #btn-worker { border-color: var(--mineral); color: var(--mineral); }
     #btn-base { border-color: var(--base); color: var(--base); }
     #btn-base.active { background: var(--base); color: #1a1a1a; }
     #btn-tech.open { background: #2b2145; border-color: var(--tech); color: var(--tech); }
@@ -281,10 +284,12 @@
         <div id="mineral-fill"></div>
         <div id="mineral-num">8</div>
       </div>
+      <span id="workers">⛏ 2/8</span>
       <span id="income">+0.0/s</span>
     </div>
 
     <div id="actions">
+      <button id="btn-worker" type="button">일꾼 (2)</button>
       <button id="btn-base" type="button">기지 건설 (8)</button>
       <button id="btn-tech" type="button">테크트리</button>
     </div>

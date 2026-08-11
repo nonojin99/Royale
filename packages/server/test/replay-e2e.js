@@ -27,6 +27,7 @@ import WebSocket from 'ws';
 import {
   BASE_BUILD_COST,
   BASE_SITES,
+  WORKER_COST,
   DEPLOY_RADIUS,
   MINERAL_SCALE,
   SIM_DELAY_TICKS,
@@ -38,6 +39,7 @@ import {
   hashState,
   occupiedSites,
   ownBasePositions,
+  workerCapacity,
   sortCommands,
   step,
   summarizeReplay,
@@ -122,6 +124,12 @@ class Client {
     const s = this.state;
     if (!s || s.over) return;
     const me = s.players[this.team];
+
+    // 일꾼 — 정원이 빌 때까지 최우선. 경제 없이는 아무것도 못 한다
+    if (me.minerals >= WORKER_COST && me.workers < workerCapacity(s, this.team)) {
+      this.ws.send(JSON.stringify({ t: 'act', reqTick: s.tick, kind: 'worker', id: '', x: 0, y: 0 }));
+      return;
+    }
 
     if (me.minerals >= BASE_BUILD_COST * 2 && baseCount(s, this.team) < 3) {
       const taken = occupiedSites(s);
