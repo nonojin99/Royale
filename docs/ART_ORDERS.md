@@ -100,8 +100,9 @@
 - [ ] ~~`mindbreak` 정신붕괴~~ *(주문 — 유닛 아트 없음)*
 
 유닛 외
-- [ ] `bases/main` 본진 (종족별 3종)
-- [ ] `bases/expansion` 확장 기지 (종족별 3종)
+- [x] 기지 파이프라인 (종족별 로더·도구·도형 폴백) — 임시 이미지로 검증됨
+- [ ] `bases/<종족>.main` 본진 3종 — 확정본
+- [ ] `bases/<종족>.expansion` 확장 기지 3종 — 확정본
 - [ ] `worker` 일꾼
 - [ ] 미네랄 덩이
 - [ ] 이펙트 시트 (투사체 · 착탄 · 폭발 · 연기)
@@ -109,6 +110,26 @@
 **실제로 만들 유닛은 22종**이다. 주문 2종은 화면 효과라 유닛 스프라이트가 없다.
 
 ---
+
+## 2.5 기지 이미지
+
+유닛과 달리 **단일 이미지 한 장**이다 (시트 아님). 종족별로 본진·확장 두 장.
+
+- 원본: `art-src/<종족>_main.png` / `<종족>_expansion.png`
+  (steel / swarmhive / covenant)
+- 규격: 투명 배경, 3/4 탑다운, 광원 왼쪽 위. 본진이 확장보다 크고 화려하게 —
+  게임에서 본진 2.4타일 vs 확장 1.8타일로 그려지므로 원본에서도 위계가 보여야 한다
+- 바닥 그림자 금지 (팀 색 링을 게임이 그린다)
+
+처리:
+
+```bash
+node tools/dealpha.mjs ../../art-src/steel_main.png          # 배경이 구워졌으면
+node tools/base-art.mjs ../../art-src/clean/steel_main.png --faction steel --kind main
+```
+
+`public/art/bases/<종족>.<종류>.png` 로 저장되고, manifest의 `bases`에
+`{"steel": ["main"]}` 식으로 적으면 나온다. 없는 종족·종류는 도형 폴백.
 
 ## 3. 유닛 종류별 요령
 

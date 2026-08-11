@@ -90,6 +90,17 @@
       }
     }
   },
-  "bases": [],
+  "bases": {
+    "covenant": [
+      "expansion",
+      "main"
+    ],
+    "steel": [
+      "main"
+    ],
+    "swarmhive": [
+      "main"
+    ]
+  },
   "worker": false
 }

@@ -17,7 +17,7 @@
 
 import { Assets, Rectangle, Texture } from 'pixi.js';
 
-import { UNIT_IDS } from '@royale/shared';
+import { FACTION_IDS, UNIT_IDS } from '@royale/shared';
 
 /** 애니메이션 한 벌 — 균일 셀 스트립 한 장에 프레임이 가로로 늘어서 있다 */
 export interface AnimDef {
@@ -37,8 +37,14 @@ export interface ArtManifest {
    * 둘을 섞을 수는 없다. 애니메이션이 하나라도 있으면 객체 형태를 쓴다.
    */
   units?: string[] | Record<string, Record<string, AnimDef>>;
-  /** 기지 이미지 — 'main' | 'expansion' */
-  bases?: string[];
+  /**
+   * 기지 이미지 — 종족별.
+   *
+   * `{"steel": ["main", "expansion"], "covenant": ["main"]}` 형태.
+   * 파일은 `bases/<종족>.<종류>.png`. 없는 종족·종류는 도형으로 폴백한다.
+   * (옛 배열 형태 `["main","expansion"]`도 종족 무관 공용으로 읽는다)
+   */
+  bases?: string[] | Record<string, string[]>;
   /** 일꾼 이미지가 있는지 */
   worker?: boolean;
 }
@@ -113,8 +119,23 @@ class ArtLibrary {
       }
     }
 
-    const baseIds = probe ? ['main', 'expansion'] : (manifest?.bases ?? []);
-    for (const id of baseIds) wanted.push([`base:${id}`, artUrl(`bases/${id}.png`), null]);
+    const bases = manifest?.bases;
+    if (probe) {
+      for (const f of FACTION_IDS) {
+        for (const kind of ['main', 'expansion']) {
+          wanted.push([`base:${f}:${kind}`, artUrl(`bases/${f}.${kind}.png`), null]);
+        }
+      }
+    } else if (Array.isArray(bases)) {
+      // 옛 형태 — 종족 무관 공용
+      for (const kind of bases) wanted.push([`base:*:${kind}`, artUrl(`bases/${kind}.png`), null]);
+    } else if (bases) {
+      for (const [f, kinds] of Object.entries(bases)) {
+        for (const kind of kinds) {
+          wanted.push([`base:${f}:${kind}`, artUrl(`bases/${f}.${kind}.png`), null]);
+        }
+      }
+    }
 
     if (probe || manifest?.worker) wanted.push(['worker', artUrl('worker.png'), null]);
 
@@ -174,8 +195,9 @@ class ArtLibrary {
     return null;
   }
 
-  base(isMain: boolean): Texture | null {
-    return this.tex.get(isMain ? 'base:main' : 'base:expansion') ?? null;
+  base(faction: string, isMain: boolean): Texture | null {
+    const kind = isMain ? 'main' : 'expansion';
+    return this.tex.get(`base:${faction}:${kind}`) ?? this.tex.get(`base:*:${kind}`) ?? null;
   }
 
   worker(): Texture | null {

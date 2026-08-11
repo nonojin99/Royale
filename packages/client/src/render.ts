@@ -398,7 +398,7 @@ export class Renderer {
     const faction = getFaction(state.players[e.team].faction);
     const size = e.isMain ? PX_PER_TILE * 2.4 : PX_PER_TILE * 1.8;
     const building = e.deploy > 0;
-    const tex = art.base(e.isMain);
+    const tex = art.base(state.players[e.team].faction, e.isMain);
 
     if (tex) {
       this.groundRing(g, sx, sy, size * 0.5, teamColor);
