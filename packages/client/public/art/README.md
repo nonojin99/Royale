@@ -122,3 +122,37 @@ node tools/slice-sheet.mjs ~/공격시트.png --unit strider --anim attack --fra
 `--tier`가 이 비율을 맞춰 주므로 시트를 자를 때 등급만 제대로 지정하면 된다.
 
 전체 규격은 [docs/ART_PIPELINE.md](../../../../docs/ART_PIPELINE.md).
+
+## 새로 생성할 때 — 한 장에 walk + attack
+
+**동작을 따로 생성하면 캐릭터가 어긋난다.** 실제로 겪은 문제다:
+
+- `gnawer` — walk는 가느다란 거미, attack은 두꺼운 전갈. 아예 다른 생물
+- `mystic` — walk와 attack의 갑옷 디자인이 다름
+- `devourer` — 같은 생물이지만 **그려진 크기가 달라** 화면 크기가 튐
+
+그래서 **한 장에 2행으로** 뽑는 것을 권한다. 같은 생성에서 나오면 디자인도
+크기도 어긋날 수 없다.
+
+```
+1행: walk   프레임 5칸
+2행: attack 프레임 5칸
+```
+
+자를 때는 `--rows`로 행 이름을 준다:
+
+```bash
+node tools/slice-sheet.mjs ../../art-src/clean/gnawer.png \
+     --unit gnawer --rows walk,attack
+```
+
+배율은 **1행(walk)의 0번 프레임**으로 정하고 2행에도 같은 값을 쓴다. 그래서
+공격에 들어가도 몸 크기가 그대로다.
+
+### 생성 프롬프트에 넣을 것
+
+- 투명 배경 PNG (JPG 금지 — 체크무늬가 픽셀로 구워진다)
+- 2행 5열, 위 걷기 / 아래 공격
+- **두 행의 캐릭터 크기를 동일하게**
+- 프레임 라벨(Frame1, Frame2…) 넣지 말 것 — 이미지에 구워지면 잘라내야 한다
+- 3/4 탑다운, 광원 왼쪽 위, 화면 아래를 향한 자세

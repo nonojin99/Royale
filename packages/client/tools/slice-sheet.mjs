@@ -69,10 +69,10 @@ function parseArgs(argv) {
 /* ── 시트 분석 ───────────────────────────────────────────────────────── */
 
 /** 열마다 불투명 픽셀이 있는지 — 프레임 사이의 빈 열을 찾기 위해 */
-function columnOccupancy(png) {
+function columnOccupancy(png, yLo = 0, yHi = png.height - 1) {
   const cols = new Uint8Array(png.width);
   for (let x = 0; x < png.width; x++) {
-    for (let y = 0; y < png.height; y++) {
+    for (let y = yLo; y <= yHi; y++) {
       if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) {
         cols[x] = 1;
         break;
@@ -113,9 +113,9 @@ function evenCells(width, n) {
  * 유닛이 실제보다 작게 축소된다 — 실제로 230px짜리가 569px로 잡혔다.
  * 그래서 **본체에서 멀리 떨어진 얇은 띠는 버린다.**
  */
-function contentRange(png) {
+function contentRange(png, yLo = 0, yHi = png.height - 1) {
   const rows = new Uint8Array(png.height);
-  for (let y = 0; y < png.height; y++) {
+  for (let y = yLo; y <= yHi; y++) {
     let n = 0;
     for (let x = 0; x < png.width; x++) {
       if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) n++;
@@ -160,7 +160,34 @@ function verticalBounds(png, x0, x1, lo, hi) {
   return [top, bot];
 }
 
-function analyze(file, wantFrames) {
+/**
+ * 여러 동작이 **한 장에 행으로** 들어 있을 때 행을 나눈다.
+ *
+ * 동작마다 따로 생성하면 캐릭터 디자인이 어긋난다 — 실제로 물어뜯는것은
+ * walk와 attack이 아예 다른 생물로 나왔고, 거대포식자는 같은 생물이지만
+ * 그려진 크기가 달랐다. 한 장에 뽑으면 그런 어긋남이 원천적으로 없다.
+ */
+function rowRanges(png, n) {
+  const rows = new Uint8Array(png.height);
+  for (let y = 0; y < png.height; y++) {
+    let c = 0;
+    for (let x = 0; x < png.width; x++) {
+      if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) c++;
+    }
+    rows[y] = c >= MIN_ROW_PX ? 1 : 0;
+  }
+  const bands = findSpans(rows).filter((b) => b[1] - b[0] + 1 >= 16);
+  if (bands.length === n) return { ranges: bands, auto: true };
+
+  // 검출이 어긋나면 전체 높이를 균등 분할한다
+  const ranges = [];
+  for (let i = 0; i < n; i++) {
+    ranges.push([Math.round((png.height * i) / n), Math.round((png.height * (i + 1)) / n) - 1]);
+  }
+  return { ranges, auto: false };
+}
+
+function analyze(file, wantFrames, yRange) {
   const raw = readFileSync(file);
   if (!(raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47)) {
     const jpg = raw[0] === 0xff && raw[1] === 0xd8;
@@ -182,10 +209,14 @@ function analyze(file, wantFrames) {
     );
   }
 
-  const range = contentRange(png);
+  // 행 하나만 보도록 제한할 수 있다 (한 장에 여러 동작이 들어 있는 경우)
+  const yLo = yRange ? yRange[0] : 0;
+  const yHi = yRange ? yRange[1] : png.height - 1;
+
+  const range = contentRange(png, yLo, yHi);
   if (range.top < 0) throw new Error(`${path.basename(file)} 에서 그림을 찾지 못했다`);
 
-  let spans = findSpans(columnOccupancy(png));
+  let spans = findSpans(columnOccupancy(png, yLo, yHi));
   const specks = spans.filter((s) => s[1] - s[0] + 1 < MIN_SPAN).length;
   spans = spans.filter((s) => s[1] - s[0] + 1 >= MIN_SPAN);
   let grid = false;
@@ -282,7 +313,16 @@ if (!unit) {
   process.exit(1);
 }
 
-const tierName = typeof args.tier === 'string' ? args.tier : 'medium';
+// 등급은 tiers.json이 정한다 — 한 곳에서만 관리하려고 데이터로 뺐다
+const TIER_FILE = path.join(path.dirname(new URL(import.meta.url).pathname), 'tiers.json');
+let tierTable = {};
+try {
+  tierTable = JSON.parse(readFileSync(TIER_FILE, 'utf8'));
+} catch {
+  /* 없으면 medium */
+}
+const tierName =
+  typeof args.tier === 'string' ? args.tier : (tierTable[unit] ?? 'medium');
 if (!TIERS[tierName]) {
   console.error(`--tier 는 ${Object.keys(TIERS).join(' | ')} 중 하나여야 한다`);
   process.exit(1);
@@ -290,36 +330,44 @@ if (!TIERS[tierName]) {
 const fill = TIERS[tierName];
 const wantFrames = args.frames ? Number(args.frames) : 0;
 
-// anim=file 형태가 하나라도 있으면 다중 모드
-const pairs = [];
-for (const a of args._) {
-  const eq = a.indexOf('=');
-  if (eq > 0) pairs.push([a.slice(0, eq), a.slice(eq + 1)]);
-}
-if (!pairs.length) {
-  const file = args._[0];
-  if (!file) {
-    console.error('시트 파일을 지정할 것');
-    process.exit(1);
-  }
-  pairs.push([typeof args.anim === 'string' ? args.anim : 'walk', file]);
-}
+/* ── 입력 해석 ───────────────────────────────────────────────────────── */
 
 const sheets = [];
-for (const [anim, file] of pairs) {
-  try {
-    const s = analyze(file, wantFrames);
-    sheets.push({ anim, file, ...s });
-  } catch (err) {
-    console.error(`❌ ${err.message}`);
-    process.exit(1);
+try {
+  if (typeof args.rows === 'string') {
+    // 한 장에 동작이 행으로 들어 있는 경우 — 권장 방식
+    const names = args.rows.split(',').map((s) => s.trim()).filter(Boolean);
+    const file = args._[0];
+    if (!file) throw new Error('--rows 를 쓸 때는 시트 파일 하나를 지정할 것');
+    const probe = PNG.sync.read(readFileSync(file));
+    const { ranges, auto } = rowRanges(probe, names.length);
+    if (!auto) console.log(`  행 자동 검출 실패 — 높이를 ${names.length}등분한다`);
+    names.forEach((anim, i) => {
+      sheets.push({ anim, file, row: i, ...analyze(file, wantFrames, ranges[i]) });
+    });
+  } else {
+    // anim=file 형태가 하나라도 있으면 다중 파일 모드
+    const pairs = [];
+    for (const a of args._) {
+      const eq = a.indexOf('=');
+      if (eq > 0) pairs.push([a.slice(0, eq), a.slice(eq + 1)]);
+    }
+    if (!pairs.length) {
+      const file = args._[0];
+      if (!file) throw new Error('시트 파일을 지정할 것');
+      pairs.push([typeof args.anim === 'string' ? args.anim : 'walk', file]);
+    }
+    for (const [anim, file] of pairs) sheets.push({ anim, file, ...analyze(file, wantFrames) });
   }
+} catch (err) {
+  console.error(`❌ ${err.message}`);
+  process.exit(1);
 }
 
 console.log(`유닛 ${unit} · 등급 ${tierName}(${Math.round(fill * 100)}%)`);
 for (const s of sheets) {
   console.log(
-    `  ${s.anim.padEnd(7)} ${path.basename(s.file).padEnd(26)} ` +
+    `  ${s.anim.padEnd(7)} ${(s.row !== undefined ? `${path.basename(s.file)}#${s.row}` : path.basename(s.file)).padEnd(28)} ` +
       `프레임 ${s.frames.length}개 · 높이 ${s.unionH}px · 폭 ${s.maxW}px` +
       (s.grid ? ' (균등 격자)' : '') +
       (s.specks ? ` · 잡티 ${s.specks}개 무시` : '') +

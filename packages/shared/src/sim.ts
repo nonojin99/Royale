@@ -22,13 +22,11 @@ import {
   ARENA_W,
   BASE_SITES,
   BaseSite,
-  Lane,
   Team,
+  blockedAt,
   canDeployAt,
   getSite,
-  inRiver,
   nearestFreeSite,
-  nearestLane,
 } from './arena.js';
 import { navStep } from './nav.js';
 import {
@@ -88,8 +86,6 @@ export interface Entity {
   target: number;
   /** 공중 유닛인가 */
   flying: boolean;
-  /** 지상 유닛이 강을 건널 때 쓰는 레인 */
-  lane: Lane;
 
   /* ── 기지 전용 ── */
   /** 기지가 선 지점 id. 기지가 아니면 -1 */
@@ -182,7 +178,6 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     life: -1,
     target: -1,
     flying: false,
-    lane: nearestLane(site.x),
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -375,7 +370,6 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     life: u.lifetime,
     target: -1,
     flying: u.flying,
-    lane: nearestLane(x),
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -697,9 +691,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     nx[i] = e.x + Math.trunc((dx * stepLen) / d);
     ny[i] = e.y + Math.trunc((dy * stepLen) / d);
 
-    if (!e.flying && inRiver(nx[i], ny[i])) {
-      if (!inRiver(e.x, ny[i])) nx[i] = e.x;
-      else if (!inRiver(nx[i], e.y)) ny[i] = e.y;
+    if (!e.flying && blockedAt(nx[i], ny[i])) {
+      if (!blockedAt(e.x, ny[i])) nx[i] = e.x;
+      else if (!blockedAt(nx[i], e.y)) ny[i] = e.y;
       else {
         nx[i] = e.x;
         ny[i] = e.y;
@@ -775,7 +769,7 @@ function separate(s: GameState): void {
     const e = s.entities[i];
     const cx = clamp(e.x + px[i], 0, ARENA_W - 1);
     const cy = clamp(e.y + py[i], 0, ARENA_H - 1);
-    if (e.flying || !inRiver(cx, cy)) {
+    if (e.flying || !blockedAt(cx, cy)) {
       e.x = cx;
       e.y = cy;
     }

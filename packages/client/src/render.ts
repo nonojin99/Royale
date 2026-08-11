@@ -18,15 +18,12 @@ import {
   ARENA_W,
   BASE_MINERAL_RESERVE,
   BASE_SITES,
-  BRIDGE_HALF_W,
-  BRIDGE_X,
   DEPLOY_RADIUS,
   Entity,
   GameState,
   MINERAL_PATCHES,
-  RIVER_BOT,
-  RIVER_TOP,
   SCALE,
+  WALLS,
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
   Team,
@@ -54,8 +51,8 @@ const COLORS = {
   bg: 0x0d1b12,
   ground: 0x1a6b3a,
   groundAlt: 0x176034,
-  river: 0x1d4ed8,
-  bridge: 0x92602e,
+  wall: 0x3f3f46,
+  wallEdge: 0x71717a,
   teamMe: TEAM_COLOR_ME,
   teamFoe: TEAM_COLOR_FOE,
   hp: 0x22c55e,
@@ -177,18 +174,21 @@ export class Renderer {
       }
     }
 
-    const [, ry0] = this.toScreen(0, RIVER_TOP, myTeam);
-    const [, ry1] = this.toScreen(0, RIVER_BOT, myTeam);
-    const top = Math.min(ry0, ry1);
-    const h = Math.abs(ry1 - ry0);
-    g.rect(0, top, VIEW_W, h);
-    g.fill({ color: COLORS.river, alpha: 0.85 });
+    // 벽 — 지상 유닛이 못 지나가는 지형. 아래쪽에 그림자를 깔아 높이를 준다
+    for (const [x0, y0, x1, y1] of WALLS) {
+      const [ax, ay] = this.toScreen(x0 * SCALE, y0 * SCALE, myTeam);
+      const [bx, by] = this.toScreen((x1 + 1) * SCALE, (y1 + 1) * SCALE, myTeam);
+      const rx = Math.min(ax, bx);
+      const ry = Math.min(ay, by);
+      const rw = Math.abs(bx - ax);
+      const rh = Math.abs(by - ay);
 
-    for (const bx of BRIDGE_X) {
-      const [sx0] = this.toScreen(bx - BRIDGE_HALF_W, 0, myTeam);
-      const [sx1] = this.toScreen(bx + BRIDGE_HALF_W, 0, myTeam);
-      g.rect(Math.min(sx0, sx1), top, Math.abs(sx1 - sx0), h);
-      g.fill(COLORS.bridge);
+      g.rect(rx + 3, ry + 4, rw, rh);
+      g.fill({ color: 0x000000, alpha: 0.35 });
+      g.rect(rx, ry, rw, rh);
+      g.fill(COLORS.wall);
+      g.rect(rx, ry, rw, rh);
+      g.stroke({ width: 2, color: COLORS.wallEdge, alpha: 0.9 });
     }
   }
 

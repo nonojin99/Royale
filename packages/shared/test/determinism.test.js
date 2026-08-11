@@ -24,8 +24,9 @@ import {
   MINERAL_SCALE,
   MINERAL_START,
   ReplayPlayer,
-  RIVER_BOT,
-  RIVER_TOP,
+  WALLS,
+  blockedAt,
+  blockedTile,
   navDistance,
   navStep,
   walkable,
@@ -106,8 +107,8 @@ function genCommands(seed, ticks, factions = MIRROR) {
       const x = nextRange(rng, 1000, ARENA_W - 1000);
       const y =
         team === 0
-          ? nextRange(rng, RIVER_BOT + 500, ARENA_H - 2000)
-          : nextRange(rng, 2000, RIVER_TOP - 500);
+          ? nextRange(rng, ARENA_H / 2, ARENA_H - 2000)
+          : nextRange(rng, 2000, ARENA_H / 2);
       cmds.push(cmd(t, team, 'unit', id, x, y));
     }
   }
@@ -281,7 +282,7 @@ test('일꾼은 정원을 넘겨 살 수 없다', () => {
 
 test('확장하면 정원이 늘고 그만큼 일꾼을 더 붙일 수 있다', () => {
   const s = createState(5, MIRROR);
-  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > RIVER_BOT);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > ARENA_H / 2);
   s.players[0].minerals = MINERAL_MAX;
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
@@ -461,7 +462,7 @@ test('기지 반경 안에만 유닛을 배치할 수 있다', () => {
 
 test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다', () => {
   const s = createState(5, MIRROR);
-  const forward = BASE_SITES.find((b) => b.label === '아래 전진');
+  const forward = BASE_SITES.find((b) => b.label === '중앙 아래');
 
   // 기지가 없을 때는 배치 불가
   assert.equal(canDeployAt(forward.x, forward.y, ownBasePositions(s, 0)), false);
@@ -479,7 +480,7 @@ test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다'
 
 test('건설 중인 기지는 아직 배치 거점이 되지 않는다', () => {
   const s = createState(5, MIRROR);
-  const forward = BASE_SITES.find((b) => b.label === '아래 전진');
+  const forward = BASE_SITES.find((b) => b.label === '중앙 아래');
   for (let i = 0; i < 400; i++) step(s, []);
   step(s, [cmd(s.tick, 0, 'base', '', forward.x, forward.y)]);
   assert.equal(
@@ -491,14 +492,31 @@ test('건설 중인 기지는 아직 배치 거점이 되지 않는다', () => {
 
 test('강 위에는 배치할 수 없다', () => {
   const s = createState(5, MIRROR);
-  const forward = BASE_SITES.find((b) => b.label === '아래 전진');
+  const forward = BASE_SITES.find((b) => b.label === '중앙 아래');
   for (let i = 0; i < 400; i++) step(s, []);
   step(s, [cmd(s.tick, 0, 'base', '', forward.x, forward.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
 
-  // 전진 기지에서 강까지는 DEPLOY_RADIUS 안이지만 강 위는 막혀야 한다
-  assert.ok(forward.y - RIVER_BOT < DEPLOY_RADIUS, '테스트 전제(강이 반경 안)가 깨졌다');
-  assert.equal(canDeployAt(9000, 16000, ownBasePositions(s, 0)), false, '강 위 배치가 허용됐다');
+  // 중앙 기지 반경 안에 벽이 있어야 이 테스트가 의미를 갖는다
+  const own = ownBasePositions(s, 0);
+  const wallPt = (() => {
+    for (const [x0, y0, x1, y1] of WALLS) {
+      for (let ty = y0; ty <= y1; ty++) {
+        for (let tx = x0; tx <= x1; tx++) {
+          const px = tx * 1000 + 500;
+          const py = ty * 1000 + 500;
+          for (const [bx, by] of own) {
+            const dx = px - bx;
+            const dy = py - by;
+            if (dx * dx + dy * dy <= DEPLOY_RADIUS * DEPLOY_RADIUS) return [px, py];
+          }
+        }
+      }
+    }
+    return null;
+  })();
+  assert.ok(wallPt, '테스트 전제(배치 반경 안에 벽이 있다)가 깨졌다');
+  assert.equal(canDeployAt(wallPt[0], wallPt[1], own), false, '벽 위 배치가 허용됐다');
 });
 
 /* ── 승패 ──────────────────────────────────────────────────────────────── */
@@ -523,7 +541,6 @@ test('본진이 파괴되면 즉시 상대가 승리한다', () => {
     life: -1,
     target: -1,
     flying: false,
-    lane: 0,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -550,7 +567,7 @@ test('확장 기지가 파괴되어도 경기는 계속된다', () => {
 
 test('시간이 다 되면 기지 수로 승패를 가린다', () => {
   const s = createState(13, MIRROR);
-  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > RIVER_BOT);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > ARENA_H / 2);
   for (let i = 0; i < 400; i++) step(s, []);
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
 
@@ -657,7 +674,6 @@ function place(s, team, unitId, x, y) {
     life: -1,
     target: -1,
     flying: u.flying,
-    lane: 0,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -727,54 +743,97 @@ test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다'
   const air = place(s, 0, 'gunship', 9000, 20000);
   void air;
 
-  let crossedOffBridge = false;
+  let flewOverWall = false;
   for (let i = 0; i < 300; i++) {
     step(s, []);
     for (const e of s.entities) {
       if (e.unit !== 'gunship') continue;
-      if (e.y >= RIVER_TOP && e.y < RIVER_BOT) {
-        const onBridge = (e.x >= 3000 && e.x <= 5000) || (e.x >= 13000 && e.x <= 15000);
-        if (!onBridge) crossedOffBridge = true;
-      }
+      if (blockedAt(e.x, e.y)) flewOverWall = true;
     }
   }
-  assert.ok(crossedOffBridge, '공중 유닛이 다리로 우회했다 — 지형을 무시해야 한다');
+  assert.ok(flewOverWall, '공중 유닛이 벽을 피해 돌아갔다 — 지형을 무시해야 한다');
 });
 
-test('지상 유닛은 강을 건너지 않고 다리로만 넘어간다', () => {
+test('지상 유닛은 벽을 통과하지 못하고 돌아간다', () => {
   const s = createState(5, MIRROR);
-  place(s, 0, 'scoutcar', 9000, 20000);
+  place(s, 0, 'scoutcar', 18000, 18000);
 
-  let sawRiver = false;
+  let moved = 0;
+  let lastX = 18000;
+  let lastY = 18000;
   for (let i = 0; i < 400; i++) {
     step(s, []);
     for (const e of s.entities) {
       if (e.unit !== 'scoutcar') continue;
-      if (e.y >= RIVER_TOP && e.y < RIVER_BOT) {
-        sawRiver = true;
-        const onBridge = (e.x >= 3000 && e.x <= 5000) || (e.x >= 13000 && e.x <= 15000);
-        assert.ok(onBridge, `유닛이 다리 밖 강 위에 있다: x=${e.x}, y=${e.y}`);
-      }
+      assert.equal(blockedAt(e.x, e.y), false, `유닛이 벽 위에 있다: x=${e.x}, y=${e.y}`);
+      if (e.x !== lastX || e.y !== lastY) moved++;
+      lastX = e.x;
+      lastY = e.y;
     }
   }
-  assert.ok(sawRiver, '유닛이 400틱 동안 강에 도달조차 못했다');
+  assert.ok(moved > 50, '유닛이 400틱 동안 거의 움직이지 않았다 (길이 막혔을 수 있다)');
 });
 
-test('길찾기는 지형 데이터만 보고 결정된다 (하드코딩된 다리가 아니라)', () => {
-  // 강 한복판의 다리 밖 지점은 통행 불가여야 한다
-  assert.equal(walkable(9, 16), false, '다리 밖 강이 통행 가능으로 잡혔다');
-  assert.equal(walkable(4, 16), true, '왼쪽 다리가 통행 불가로 잡혔다');
-  assert.equal(walkable(14, 16), true, '오른쪽 다리가 통행 불가로 잡혔다');
+test('길찾기는 지형 데이터만 보고 결정된다 (하드코딩된 지형이 아니라)', () => {
+  // 벽 정의(WALLS)와 통행 판정(walkable)이 같은 것을 말해야 한다
+  for (const [x0, y0, x1, y1] of WALLS) {
+    assert.equal(walkable(x0, y0), false, `벽 (${x0},${y0}) 이 통행 가능으로 잡혔다`);
+    assert.equal(walkable(x1, y1), false, `벽 (${x1},${y1}) 이 통행 가능으로 잡혔다`);
+  }
 
-  // 강 건너로 가는 길은 반드시 다리를 지나므로, 직선 거리보다 멀어야 한다.
-  // 이게 성립해야 "지형을 실제로 돌아간다"고 말할 수 있다.
-  const across = navDistance(9000, 25000, 9000, 5000);
-  assert.ok(across > 0, '강 건너가 도달 불가로 잡혔다');
-  const straightTiles = 20; // 25 → 5 타일
+  // 모든 기지 자리는 서로 도달 가능해야 한다 — 하나라도 고립되면 맵이 망가진 것
+  for (const a of BASE_SITES) {
+    for (const b of BASE_SITES) {
+      if (a.id >= b.id) continue;
+      assert.ok(
+        navDistance(a.x, a.y, b.x, b.y) > 0,
+        `${a.label} → ${b.label} 이 도달 불가다`,
+      );
+    }
+  }
+
+  // 본진끼리는 벽을 우회해야 하므로 직선 대각선보다 멀어야 한다.
+  // 이게 성립해야 "벽이 실제로 진격로를 막는다"고 말할 수 있다.
+  const m0 = BASE_SITES.find((b) => b.startFor === 0);
+  const m1 = BASE_SITES.find((b) => b.startFor === 1);
+  const path = navDistance(m0.x, m0.y, m1.x, m1.y);
+  const dx = Math.abs(m0.x - m1.x) / 1000;
+  const dy = Math.abs(m0.y - m1.y) / 1000;
+  const straight = Math.min(dx, dy) * 14 + Math.abs(dx - dy) * 10;
   assert.ok(
-    across > straightTiles * 10,
-    `우회 없이 직선으로 가로지른다 (거리 ${across}, 직선 ${straightTiles * 10})`,
+    path > straight,
+    `본진 간 경로(${path})가 무장애 직선(${straight})과 같다 — 벽이 주 진격로를 막지 못한다`,
   );
+});
+
+test('맵은 점대칭이다 (한쪽만 유리한 지형이 없다)', () => {
+  // 벽을 절반만 적고 자동 복제하므로, 그 복제가 실제로 맞는지 확인한다.
+  for (let ty = 0; ty < 24; ty++) {
+    for (let tx = 0; tx < 24; tx++) {
+      assert.equal(
+        blockedTile(tx, ty),
+        blockedTile(23 - tx, 23 - ty),
+        `(${tx},${ty}) 와 대칭점의 지형이 다르다`,
+      );
+    }
+  }
+  // 기지 자리도 대칭이어야 한다
+  for (const a of BASE_SITES) {
+    const mx = 23000 - a.x;
+    const my = 23000 - a.y;
+    assert.ok(
+      BASE_SITES.some((b) => Math.abs(b.x - mx) <= 1000 && Math.abs(b.y - my) <= 1000),
+      `${a.label} 의 대칭 자리가 없다`,
+    );
+  }
+  // 기지 자리가 벽 위에 있으면 안 된다
+  for (const a of BASE_SITES) {
+    assert.equal(
+      blockedTile(Math.floor(a.x / 1000), Math.floor(a.y / 1000)),
+      false,
+      `${a.label} 이 벽 위에 있다`,
+    );
+  }
 });
 
 test('길찾기 결과는 호출 순서와 무관하다 (캐시가 결과를 바꾸지 않는다)', () => {

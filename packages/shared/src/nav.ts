@@ -21,7 +21,7 @@
  * `DIRS` 순서로 먼저 나온 방향을 택한다. 부동소수점도 없고 순서 의존도 없다.
  */
 
-import { ARENA_H_TILES, ARENA_W_TILES, inRiver, onBridge } from './arena.js';
+import { ARENA_H_TILES, ARENA_W_TILES, blockedTile } from './arena.js';
 import { SCALE } from './fixed.js';
 
 const W = ARENA_W_TILES;
@@ -45,16 +45,14 @@ const COST: readonly number[] = [10, 10, 10, 10, 14, 14, 14, 14];
 /**
  * 통행 불가 지형. 0 = 통행 가능, 1 = 막힘.
  *
- * 현재 맵에서는 다리를 뺀 강이 유일한 장애물이다. 새 맵을 넣을 때는 이 배열을
- * 만드는 방식만 바꾸면 되고, 아래 길찾기는 그대로 쓴다.
+ * 지형 정의는 `arena.ts`의 `WALLS`가 전부 갖고 있다. 여기서는 그걸 격자로
+ * 펼치기만 한다 — 맵을 바꾸는 일이 길찾기 코드를 건드리는 일이 되면 안 된다.
  */
 export const TERRAIN: Uint8Array = (() => {
   const g = new Uint8Array(W * H);
   for (let ty = 0; ty < H; ty++) {
     for (let tx = 0; tx < W; tx++) {
-      const cx = tx * SCALE + SCALE / 2;
-      const cy = ty * SCALE + SCALE / 2;
-      if (inRiver(cx, cy) && !onBridge(cx)) g[ty * W + tx] = 1;
+      if (blockedTile(tx, ty)) g[ty * W + tx] = 1;
     }
   }
   return g;

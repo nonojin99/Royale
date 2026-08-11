@@ -1,0 +1,32 @@
+{
+  "_": "유닛별 크기 등급. small 55% · medium 70% · large 90% (ART_PIPELINE §3.3)",
+  "_note": "실루엣이 가는 유닛은 같은 높이여도 작아 보인다. 높이만이 아니라 화면에서 보이는 무게로 판단할 것.",
+
+  "gnawer": "small",
+  "scoutcar": "medium",
+
+  "rifleman": "medium",
+  "flamer": "medium",
+  "spitter": "medium",
+  "zealot": "medium",
+  "spinetentacle": "medium",
+  "lightpylon": "medium",
+  "burrower": "medium",
+  "strider": "medium",
+  "shade": "medium",
+  "tunneler": "medium",
+  "sporetentacle": "medium",
+  "bulwark": "medium",
+
+  "mystic": "medium",
+  "skiff": "medium",
+  "fusionite": "large",
+  "mindbreak": "medium",
+
+  "siegetank": "large",
+  "devourer": "large",
+  "wingswarm": "large",
+  "ironwalker": "large",
+  "gunship": "large",
+  "carpetbomb": "large"
+}
