@@ -10,90 +10,109 @@
  *   3. 순회는 항상 id 오름차순 배열로 (Map/Set 순서 의존 금지)
  *   4. 서로를 참조하는 계산은 "전부 읽고 → 전부 쓰기" 2단계로 분리
  *   5. DOM / Date.now() / performance.now() 참조 금지
+ *
+ * ── 게임 구조 ────────────────────────────────────────────────────────────
+ * 자원(미네랄)은 시간이 아니라 **기지 수**에서 나온다. 기지의 매장량은 유한해서
+ * 한 기지로 버티면 후반에 말라죽는다. 그래서 매 순간 선택이 생긴다:
+ * 병력을 뽑을까, 확장할까, 테크를 올릴까.
  */
 
 import {
   ARENA_H,
   ARENA_W,
+  BASE_SITES,
   BRIDGE_HALF_W,
   BRIDGE_X,
+  BaseSite,
   Lane,
   RIVER_BOT,
   RIVER_MID,
   RIVER_TOP,
-  TOWER_SPOTS,
   Team,
-  canDeploy,
+  canDeployAt,
+  getSite,
   inRiver,
   mustCross,
+  nearestFreeSite,
   nearestLane,
 } from './arena.js';
 import {
-  CardDef,
-  KING_STATS,
-  PRINCESS_STATS,
-  TargetPref,
-  getCard,
-} from './cards.js';
-import { DEFAULT_DECK } from './decks.js';
-import {
+  BASE_BUILD_COST,
+  BASE_BUILD_TICKS,
+  BASE_MINERAL_RESERVE,
+  BASE_RADIUS,
   BUILDING_RADIUS,
   DEPLOY_TICKS,
-  DOUBLE_ELIXIR_TICK,
-  ELIXIR_MAX,
-  ELIXIR_PER_TICK,
-  ELIXIR_SCALE,
-  ELIXIR_START,
-  HAND_SIZE,
+  INCOME_PER_TICK,
   MATCH_TICKS,
+  MINERAL_MAX,
+  MINERAL_SCALE,
+  MINERAL_START,
   OVERTIME_TICKS,
   UNIT_RADIUS,
 } from './constants.js';
+import {
+  DEFAULT_FACTION_ID,
+  FactionDef,
+  findTech,
+  getFaction,
+  startingUnlocks,
+} from './factions.js';
+import {
+  EXPANSION_BASE_STATS,
+  MAIN_BASE_STATS,
+  TargetPref,
+  UnitDef,
+  getUnit,
+} from './units.js';
 import { Rng, createRng } from './rng.js';
 import { clamp, dist2, isqrt, tiles } from './fixed.js';
 
-export type EntityKind = 'unit' | 'building' | 'tower';
-export type TowerKind = 'none' | 'princess' | 'king';
+export type EntityKind = 'unit' | 'building' | 'base';
 
 export interface Entity {
   id: number;
   team: Team;
-  /** 카드 id, 또는 타워면 '__princess' / '__king' */
-  card: string;
+  /** 유닛 id, 또는 기지면 '__base' */
+  unit: string;
   kind: EntityKind;
-  tower: TowerKind;
-  /** 타워일 때 소속 레인 (킹은 -1) */
-  lane: Lane | -1;
   x: number;
   y: number;
   hp: number;
   maxHp: number;
   /** 남은 공격 쿨다운 (틱) */
   cd: number;
-  /** 남은 배치 경직 (틱) */
+  /** 남은 배치/건설 경직 (틱) — 0이 되어야 행동하고 채굴한다 */
   deploy: number;
   /** 남은 수명 (틱). -1이면 무한 */
   life: number;
   /** 현재 타겟 엔티티 id. 없으면 -1 */
   target: number;
-  /** 킹타워 활성화 여부 (킹 외에는 항상 true) */
-  active: boolean;
-  /**
-   * 공중 유닛인가.
-   * 공중은 강·다리를 무시하고 직선으로 날아가며 지상 엔티티와 충돌하지 않는다.
-   * 대신 targets가 'ground'인 공격에는 맞지 않는다.
-   */
+  /** 공중 유닛인가 */
   flying: boolean;
+  /** 지상 유닛이 강을 건널 때 쓰는 레인 */
+  lane: Lane;
+
+  /* ── 기지 전용 ── */
+  /** 기지가 선 지점 id. 기지가 아니면 -1 */
+  siteId: number;
+  /** 본진인가 (파괴되면 패배) */
+  isMain: boolean;
+  /** 남은 매장량 (미네랄 정수 단위). 기지가 아니면 0 */
+  reserve: number;
 }
 
 export interface PlayerState {
-  /** 1/1000 단위 정수 */
-  elixir: number;
-  /** 8장 순환 큐. 0~3번이 손패, 4번이 "다음 카드" */
-  cycle: string[];
-  crowns: number;
-  /** 이 팀의 좌/우 공주탑이 파괴되었는가 */
-  princessDown: [boolean, boolean];
+  /** 보유 미네랄 (1/1000 단위 정수) */
+  minerals: number;
+  /** 누적 채굴량 — 동점 판정과 분석에 쓴다 */
+  mined: number;
+  /** 종족 id */
+  faction: string;
+  /** 해금된 유닛 id. **항상 오름차순 정렬** (해시 결정론) */
+  unlocked: string[];
+  /** 연구 중인 유닛과 남은 틱. 동시에 하나만 */
+  research: { unit: string; ticks: number } | null;
 }
 
 export interface GameState {
@@ -109,62 +128,79 @@ export interface GameState {
   winner: Team | -1;
 }
 
+/** 커맨드 종류 */
+export type CommandKind = 'unit' | 'base' | 'tech';
+
+/**
+ * 플레이어 입력. 세 종류를 한 모양에 담는다 —
+ * 평평한 구조라야 정렬·직렬화·해시가 단순해진다.
+ */
 export interface Command {
   execTick: number;
   team: Team;
-  card: string;
+  kind: CommandKind;
+  /** kind가 'unit'이면 생산할 유닛, 'tech'면 해금할 유닛, 'base'면 '' */
+  id: string;
   x: number;
   y: number;
 }
 
 /* ── 상태 생성 ─────────────────────────────────────────────────────────── */
 
-function makePlayer(deck: readonly string[]): PlayerState {
+function makePlayer(factionId: string): PlayerState {
+  const f = getFaction(factionId);
   return {
-    elixir: ELIXIR_START,
-    cycle: deck.slice(),
-    crowns: 0,
-    princessDown: [false, false],
+    minerals: MINERAL_START,
+    mined: 0,
+    faction: f.id,
+    unlocked: startingUnlocks(f),
+    research: null,
+  };
+}
+
+function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Entity {
+  const isMain = site.startFor === team;
+  const stats = isMain ? MAIN_BASE_STATS : EXPANSION_BASE_STATS;
+  return {
+    id: s.nextId++,
+    team,
+    unit: '__base',
+    kind: 'base',
+    x: site.x,
+    y: site.y,
+    hp: stats.hp,
+    maxHp: stats.hp,
+    cd: 0,
+    deploy: ready ? 0 : BASE_BUILD_TICKS,
+    life: -1,
+    target: -1,
+    flying: false,
+    lane: nearestLane(site.x),
+    siteId: site.id,
+    isMain,
+    reserve: BASE_MINERAL_RESERVE,
   };
 }
 
 export function createState(
   seed: number,
-  decks: readonly [readonly string[], readonly string[]] = [DEFAULT_DECK, DEFAULT_DECK],
+  factions: readonly [string, string] = [DEFAULT_FACTION_ID, DEFAULT_FACTION_ID],
 ): GameState {
   const s: GameState = {
     tick: 0,
     rng: createRng(seed),
     nextId: 1,
     entities: [],
-    players: [makePlayer(decks[0]), makePlayer(decks[1])],
+    players: [makePlayer(factions[0]), makePlayer(factions[1])],
     overtime: false,
     over: false,
     winner: -1,
   };
 
-  // 타워는 TOWER_SPOTS 순서대로 생성 → id가 결정론적으로 고정된다
-  for (const spot of TOWER_SPOTS) {
-    const stats = spot.kind === 'king' ? KING_STATS : PRINCESS_STATS;
-    s.entities.push({
-      id: s.nextId++,
-      team: spot.team,
-      card: spot.kind === 'king' ? '__king' : '__princess',
-      kind: 'tower',
-      tower: spot.kind,
-      lane: spot.lane,
-      x: spot.x,
-      y: spot.y,
-      hp: stats.hp,
-      maxHp: stats.hp,
-      cd: 0,
-      deploy: 0,
-      life: -1,
-      target: -1,
-      // 킹타워는 비활성으로 시작한다
-      active: spot.kind !== 'king',
-      flying: false,
-    });
+  // 본진은 BASE_SITES 순서대로 생성 → id가 결정론적으로 고정된다
+  for (const site of BASE_SITES) {
+    if (site.startFor === -1) continue;
+    s.entities.push(makeBase(s, site.startFor, site, true));
   }
   return s;
 }
@@ -172,42 +208,55 @@ export function createState(
 /* ── 조회 헬퍼 ─────────────────────────────────────────────────────────── */
 
 export function radiusOf(e: Entity): number {
+  if (e.kind === 'base') return BASE_RADIUS;
   return e.kind === 'unit' ? UNIT_RADIUS : BUILDING_RADIUS;
 }
 
 function statsOf(e: Entity): { damage: number; hitSpeed: number; range: number; splash: number } {
-  if (e.tower === 'king') {
-    return { ...KING_STATS, splash: 0 };
+  if (e.kind === 'base') {
+    const b = e.isMain ? MAIN_BASE_STATS : EXPANSION_BASE_STATS;
+    return { ...b, splash: 0 };
   }
-  if (e.tower === 'princess') {
-    return { ...PRINCESS_STATS, splash: 0 };
+  const u = getUnit(e.unit);
+  return { damage: u.damage, hitSpeed: u.hitSpeed, range: u.range, splash: u.splash };
+}
+
+/** 살아 있고 가동 중인 팀 기지들의 좌표 */
+export function ownBasePositions(s: GameState, team: Team): [number, number][] {
+  const out: [number, number][] = [];
+  for (const e of s.entities) {
+    if (e.kind === 'base' && e.team === team && e.deploy === 0) out.push([e.x, e.y]);
   }
-  const c = getCard(e.card);
-  return { damage: c.damage, hitSpeed: c.hitSpeed, range: c.range, splash: c.splash };
+  return out;
 }
 
-/** 손패(0~3번)에 해당 카드가 있으면 그 인덱스, 없으면 -1 */
-export function handIndexOf(p: PlayerState, card: string): number {
-  for (let i = 0; i < HAND_SIZE; i++) {
-    if (p.cycle[i] === card) return i;
+/** 이미 누군가 차지한 기지 지점 id 집합 */
+export function occupiedSites(s: GameState): Set<number> {
+  const out = new Set<number>();
+  for (const e of s.entities) {
+    if (e.kind === 'base') out.add(e.siteId);
   }
-  return -1;
+  return out;
 }
 
-export function hand(p: PlayerState): string[] {
-  return p.cycle.slice(0, HAND_SIZE);
+export function baseCount(s: GameState, team: Team): number {
+  let n = 0;
+  for (const e of s.entities) if (e.kind === 'base' && e.team === team) n++;
+  return n;
 }
 
-export function nextCard(p: PlayerState): string {
-  return p.cycle[HAND_SIZE];
+export function isUnlocked(p: PlayerState, unit: string): boolean {
+  return p.unlocked.includes(unit);
 }
 
-/** 카드를 손패에서 빼고 큐 맨 뒤로 보낸다 (셔플 없는 순환 덱) */
-function cycleCard(p: PlayerState, handIdx: number): void {
-  const played = p.cycle[handIdx];
-  p.cycle[handIdx] = p.cycle[HAND_SIZE];
-  p.cycle.splice(HAND_SIZE, 1);
-  p.cycle.push(played);
+/** 지금 해금을 시작할 수 있는가 (비용은 별도로 확인) */
+export function canResearch(p: PlayerState, unit: string): boolean {
+  if (p.research !== null) return false;
+  if (isUnlocked(p, unit)) return false;
+  const node = findTech(getFaction(p.faction), unit);
+  if (!node || node.cost <= 0) return false;
+  if (node.requires && !isUnlocked(p, node.requires)) return false;
+  return true;
 }
 
 /* ── 배치 ──────────────────────────────────────────────────────────────── */
@@ -232,75 +281,123 @@ function formationOffset(count: number, i: number): readonly [number, number] {
   return FORMATION[i % FORMATION.length];
 }
 
-function spawnUnit(s: GameState, team: Team, c: CardDef, x: number, y: number): void {
+function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): void {
   s.entities.push({
     id: s.nextId++,
     team,
-    card: c.id,
-    kind: c.kind === 'building' ? 'building' : 'unit',
-    tower: 'none',
-    lane: nearestLane(x),
+    unit: u.id,
+    kind: u.kind === 'building' ? 'building' : 'unit',
     x: clamp(x, 0, ARENA_W - 1),
     y: clamp(y, 0, ARENA_H - 1),
-    hp: c.hp,
-    maxHp: c.hp,
+    hp: u.hp,
+    maxHp: u.hp,
     cd: 0,
     deploy: DEPLOY_TICKS,
-    life: c.lifetime,
+    life: u.lifetime,
     target: -1,
-    active: true,
-    flying: c.flying,
+    flying: u.flying,
+    lane: nearestLane(x),
+    siteId: -1,
+    isMain: false,
+    reserve: 0,
   });
 }
 
 /**
- * 커맨드를 적용한다. 검증 실패(엘릭서 부족 / 손패에 없음 / 배치구역 위반)는
- * 조용히 무시된다 — 서버와 두 클라 모두 같은 상태로 같은 판정을 내리므로
- * 결정론이 깨지지 않는다.
+ * 커맨드를 적용한다. 검증 실패(자원 부족 / 미해금 / 배치구역 위반)는 조용히
+ * 무시된다 — 서버와 두 클라 모두 같은 상태로 같은 판정을 내리므로 결정론이
+ * 깨지지 않는다. 즉 결정론이 곧 치팅 방지 장치다.
  *
  * @returns 실제로 적용되었으면 true
  */
 export function applyCommand(s: GameState, cmd: Command): boolean {
   if (s.over) return false;
+  switch (cmd.kind) {
+    case 'unit':
+      return produceUnit(s, cmd);
+    case 'base':
+      return buildBase(s, cmd);
+    case 'tech':
+      return startResearch(s, cmd);
+    default:
+      return false;
+  }
+}
+
+function produceUnit(s: GameState, cmd: Command): boolean {
   const p = s.players[cmd.team];
+  if (!isUnlocked(p, cmd.id)) return false;
 
-  const hi = handIndexOf(p, cmd.card);
-  if (hi < 0) return false;
-
-  const c = getCard(cmd.card);
-  const cost = c.cost * ELIXIR_SCALE;
-  if (p.elixir < cost) return false;
-
-  const enemy = s.players[cmd.team === 0 ? 1 : 0];
-  if (!canDeploy(cmd.team, cmd.x, cmd.y, enemy.princessDown)) return false;
-
-  p.elixir -= cost;
-  cycleCard(p, hi);
-
-  if (c.kind === 'spell') {
-    applySpell(s, cmd.team, c, cmd.x, cmd.y);
-    return true;
+  let u: UnitDef;
+  try {
+    u = getUnit(cmd.id);
+  } catch {
+    return false;
   }
 
-  for (let i = 0; i < c.count; i++) {
-    const [ox, oy] = formationOffset(c.count, i);
-    spawnUnit(s, cmd.team, c, cmd.x + ox, cmd.y + oy);
+  const cost = u.cost * MINERAL_SCALE;
+  if (p.minerals < cost) return false;
+  if (!canDeployAt(cmd.x, cmd.y, ownBasePositions(s, cmd.team))) return false;
+
+  p.minerals -= cost;
+
+  if (u.kind === 'spell') {
+    applySpell(s, cmd.team, u, cmd.x, cmd.y);
+    return true;
+  }
+  for (let i = 0; i < u.count; i++) {
+    const [ox, oy] = formationOffset(u.count, i);
+    spawnUnit(s, cmd.team, u, cmd.x + ox, cmd.y + oy);
   }
   return true;
 }
 
-/** 주문은 즉발 광역. 타워에는 피해를 주지 않는다 (설계 결정 — GAME_DESIGN.md 참조) */
-function applySpell(s: GameState, team: Team, c: CardDef, x: number, y: number): void {
-  const r2 = c.splash * c.splash;
+function buildBase(s: GameState, cmd: Command): boolean {
+  const p = s.players[cmd.team];
+  if (p.minerals < BASE_BUILD_COST) return false;
+
+  const site = nearestFreeSite(cmd.x, cmd.y, occupiedSites(s));
+  if (!site) return false;
+
+  p.minerals -= BASE_BUILD_COST;
+  s.entities.push(makeBase(s, cmd.team, site, false));
+  return true;
+}
+
+function startResearch(s: GameState, cmd: Command): boolean {
+  const p = s.players[cmd.team];
+  if (!canResearch(p, cmd.id)) return false;
+
+  const node = findTech(getFaction(p.faction), cmd.id);
+  if (!node) return false;
+
+  const cost = node.cost * MINERAL_SCALE;
+  if (p.minerals < cost) return false;
+
+  p.minerals -= cost;
+  if (node.researchTicks <= 0) {
+    unlock(p, cmd.id);
+  } else {
+    p.research = { unit: cmd.id, ticks: node.researchTicks };
+  }
+  return true;
+}
+
+function unlock(p: PlayerState, unit: string): void {
+  if (p.unlocked.includes(unit)) return;
+  p.unlocked.push(unit);
+  p.unlocked.sort(); // 해시 결정론을 위해 항상 정렬 상태를 유지한다
+}
+
+/** 주문은 즉발 광역. 기지에는 피해를 주지 않는다 (설계 결정) */
+function applySpell(s: GameState, team: Team, u: UnitDef, x: number, y: number): void {
+  const r2 = u.splash * u.splash;
   for (const e of s.entities) {
     if (e.team === team) continue;
-    if (e.kind === 'tower') continue;
-    // 지상 전용 주문은 공중을 때리지 못한다 (현재 주문은 모두 'any')
-    if (c.targets === 'ground' && e.flying) continue;
-    if (c.targets === 'air' && !e.flying) continue;
-    if (dist2(e.x, e.y, x, y) <= r2) {
-      e.hp -= c.damage;
-    }
+    if (e.kind === 'base') continue;
+    if (u.targets === 'ground' && e.flying) continue;
+    if (u.targets === 'air' && !e.flying) continue;
+    if (dist2(e.x, e.y, x, y) <= r2) e.hp -= u.damage;
   }
   reap(s);
 }
@@ -313,13 +410,9 @@ function aggroRange(range: number): number {
   return range > base ? range : base;
 }
 
-/**
- * 이 엔티티가 무엇을 때릴 수 있는가.
- * 타워는 지상·공중을 모두 때린다 — 그러지 않으면 공중 유닛만으로 타워를
- * 무한정 부술 수 있어 게임이 성립하지 않는다.
- */
+/** 이 엔티티가 무엇을 때릴 수 있는가. 기지는 지상·공중 모두 때린다. */
 function targetsOf(e: Entity): TargetPref {
-  return e.tower !== 'none' ? 'any' : getCard(e.card).targets;
+  return e.kind === 'base' ? 'any' : getUnit(e.unit).targets;
 }
 
 function canAttack(e: Entity, target: Entity): boolean {
@@ -346,38 +439,31 @@ function pickTarget(s: GameState, e: Entity): number {
 
   let bestUnit = -1;
   let bestUnitD2 = Infinity;
-  let bestBuilding = -1;
-  let bestBuildingD2 = Infinity;
+  let bestStruct = -1;
+  let bestStructD2 = Infinity;
 
   for (const o of s.entities) {
     if (o.team === e.team || o.hp <= 0) continue;
     if (!canAttack(e, o)) continue;
-    // 비활성 킹타워는 공격받기 전까지도 타겟이 될 수 있다 (그래야 게임이 끝난다)
     const d2 = dist2(e.x, e.y, o.x, o.y);
 
     if (o.kind === 'unit') {
-      // 감지 범위 안의 유닛만
       if (d2 > aggro2) continue;
       if (d2 < bestUnitD2) {
         bestUnitD2 = d2;
         bestUnit = o.id;
       }
-      // d2 동률이면 먼저 만난 쪽(= id 작은 쪽)을 유지 → 배열이 id순이므로 자동
-    } else {
-      if (d2 < bestBuildingD2) {
-        bestBuildingD2 = d2;
-        bestBuilding = o.id;
-      }
+    } else if (d2 < bestStructD2) {
+      bestStructD2 = d2;
+      bestStruct = o.id;
     }
   }
 
-  // 타워/건물 유닛은 건물만, 그 외에는 유닛 우선
   if (bestUnit >= 0) return bestUnit;
-  return bestBuilding;
+  return bestStruct;
 }
 
 function findById(s: GameState, id: number): Entity | undefined {
-  // entities는 id 오름차순이므로 이진탐색 가능
   let lo = 0;
   let hi = s.entities.length - 1;
   while (lo <= hi) {
@@ -394,20 +480,15 @@ function findById(s: GameState, id: number): Entity | undefined {
 
 /** 목표까지 가기 위해 지금 향해야 할 지점 (강을 건너야 하면 다리를 경유) */
 function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
-  // 공중 유닛은 지형을 무시하고 직선으로 난다. 다리를 우회하지 않는 것이
-  // 공중의 핵심 이점이자, 대공 수단을 반드시 덱에 넣어야 하는 이유다.
+  // 공중 유닛은 지형을 무시하고 직선으로 난다.
   if (e.flying) return [tx, ty];
   if (!mustCross(e.y, ty)) return [tx, ty];
 
-  const lane = e.lane === -1 ? nearestLane(e.x) : e.lane;
-  const bx = BRIDGE_X[lane];
+  const bx = BRIDGE_X[e.lane];
   const onBridgeColumn = Math.abs(e.x - bx) <= BRIDGE_HALF_W;
-
   if (!onBridgeColumn) {
-    // 아직 다리 앞이 아니면 우선 다리 입구로
     return [bx, e.y < RIVER_MID ? RIVER_TOP - 500 : RIVER_BOT + 500];
   }
-  // 다리 위 — 반대편으로 건넌다
   return [bx, e.y < RIVER_MID ? RIVER_BOT + 500 : RIVER_TOP - 500];
 }
 
@@ -415,7 +496,7 @@ function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
 
 /**
  * 한 틱을 진행한다. `cmds`는 **이 틱에 실행되도록 예약된** 커맨드 목록이며,
- * 호출자가 execTick 오름차순(동률이면 team 오름차순)으로 정렬해서 넘겨야 한다.
+ * 호출자가 sortCommands로 정규화해서 넘겨야 한다.
  */
 export function step(s: GameState, cmds: readonly Command[]): void {
   if (s.over) {
@@ -424,18 +505,30 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   }
 
   // 1) 예약된 커맨드 실행
-  for (const cmd of cmds) {
-    applyCommand(s, cmd);
+  for (const cmd of cmds) applyCommand(s, cmd);
+
+  // 2) 채굴 — 가동 중이고 매장량이 남은 기지마다 수입이 들어온다
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.deploy > 0 || e.reserve <= 0) continue;
+    const take = e.reserve < INCOME_PER_TICK ? e.reserve : INCOME_PER_TICK;
+    e.reserve -= take;
+    const p = s.players[e.team];
+    p.mined += take;
+    p.minerals += take;
+    if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
   }
 
-  // 2) 엘릭서 회복
-  const rate = s.tick >= DOUBLE_ELIXIR_TICK || s.overtime ? ELIXIR_PER_TICK * 2 : ELIXIR_PER_TICK;
+  // 3) 연구 진행
   for (const p of s.players) {
-    p.elixir = p.elixir + rate;
-    if (p.elixir > ELIXIR_MAX) p.elixir = ELIXIR_MAX;
+    if (!p.research) continue;
+    p.research.ticks--;
+    if (p.research.ticks <= 0) {
+      unlock(p, p.research.unit);
+      p.research = null;
+    }
   }
 
-  // 3) 수명 감소
+  // 4) 수명·쿨다운·경직
   for (const e of s.entities) {
     if (e.life > 0) {
       e.life--;
@@ -446,23 +539,23 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   }
   reap(s);
 
-  // 4) 타겟 선정 (읽기 전용 패스)
+  // 5) 타겟 선정 (읽기 전용 패스)
   const n = s.entities.length;
   const targets = new Array<number>(n);
   for (let i = 0; i < n; i++) {
     const e = s.entities[i];
-    targets[i] = e.deploy > 0 || !e.active ? -1 : pickTarget(s, e);
+    targets[i] = e.deploy > 0 ? -1 : pickTarget(s, e);
   }
   for (let i = 0; i < n; i++) s.entities[i].target = targets[i];
 
-  // 5) 공격 판정 — 피해를 누적만 하고 즉시 적용하지 않는다 (순서 독립성)
+  // 6) 공격 — 피해를 누적만 하고 즉시 적용하지 않는다 (순서 독립성)
   const dmg = new Array<number>(n).fill(0);
   const indexById = new Map<number, number>();
   for (let i = 0; i < n; i++) indexById.set(s.entities[i].id, i);
 
   for (let i = 0; i < n; i++) {
     const e = s.entities[i];
-    if (e.deploy > 0 || !e.active || e.target < 0) continue;
+    if (e.deploy > 0 || e.target < 0) continue;
     const ti = indexById.get(e.target);
     if (ti === undefined) continue;
     const t = s.entities[ti];
@@ -477,7 +570,6 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       for (let j = 0; j < n; j++) {
         const o = s.entities[j];
         if (o.team === e.team) continue;
-        // 지상 전용 광역은 범위 안이어도 공중을 때리지 못한다
         if (!canAttack(e, o)) continue;
         if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += st.damage;
       }
@@ -486,7 +578,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     }
   }
 
-  // 6) 이동 — 현재 위치 스냅샷을 읽고 전부 계산한 뒤 한꺼번에 적용
+  // 7) 이동 — 현재 위치 스냅샷을 읽고 전부 계산한 뒤 한꺼번에 적용
   const nx = new Array<number>(n);
   const ny = new Array<number>(n);
   for (let i = 0; i < n; i++) {
@@ -495,8 +587,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     ny[i] = e.y;
     if (e.kind !== 'unit' || e.deploy > 0) continue;
 
-    const c = getCard(e.card);
-    if (c.speed <= 0) continue;
+    const u = getUnit(e.unit);
+    if (u.speed <= 0) continue;
 
     let gx: number;
     let gy: number;
@@ -504,7 +596,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       const t = findById(s, e.target);
       if (!t) continue;
       const st = statsOf(e);
-      if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue; // 사거리 안이면 정지
+      if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
     } else {
       // 타겟이 없으면 적 진영 방향으로 전진
@@ -515,12 +607,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     const dy = gy - e.y;
     const d = isqrt(dx * dx + dy * dy);
     if (d === 0) continue;
-    const stepLen = c.speed < d ? c.speed : d;
-    // (dx/d) * stepLen 을 정수로. dx*stepLen 은 최대 ~3.2e4 * 1e2 = 3.2e6 이라 안전.
+    const stepLen = u.speed < d ? u.speed : d;
     nx[i] = e.x + Math.trunc((dx * stepLen) / d);
     ny[i] = e.y + Math.trunc((dy * stepLen) / d);
 
-    // 강 위로는 못 간다 (다리 밖). 축별로 되돌린다. 공중은 해당 없음.
     if (!e.flying && inRiver(nx[i], ny[i])) {
       if (!inRiver(e.x, ny[i])) nx[i] = e.x;
       else if (!inRiver(nx[i], e.y)) ny[i] = e.y;
@@ -537,40 +627,23 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     s.entities[i].y = ny[i];
   }
 
-  // 7) 겹침 해소 — 역시 읽기 패스 후 일괄 적용
+  // 8) 겹침 해소
   separate(s);
 
-  // 8) 피해 적용 + 사망 처리
-  let kingHit0 = false;
-  let kingHit1 = false;
+  // 9) 피해 적용 + 사망 처리
   for (let i = 0; i < n; i++) {
-    if (dmg[i] <= 0) continue;
-    const e = s.entities[i];
-    e.hp -= dmg[i];
-    if (e.tower === 'king') {
-      if (e.team === 0) kingHit0 = true;
-      else kingHit1 = true;
-    }
+    if (dmg[i] > 0) s.entities[i].hp -= dmg[i];
   }
-  // 킹타워는 피격당하면 활성화된다
-  for (const e of s.entities) {
-    if (e.tower === 'king' && !e.active) {
-      if ((e.team === 0 && kingHit0) || (e.team === 1 && kingHit1)) e.active = true;
-    }
-  }
-
   resolveDeaths(s);
 
-  // 9) 종료 조건
+  // 10) 종료 조건
   s.tick++;
   checkEnd(s);
 }
 
 /**
  * 유닛끼리 겹치면 서로 밀어낸다. 읽기 → 쓰기 2단계라 순회 순서에 의존하지 않는다.
- *
- * 공중과 지상은 서로 다른 층에 있다 — 겹쳐도 밀어내지 않고, 공중 유닛은
- * 건물·타워 위를 그대로 지나간다.
+ * 공중과 지상은 서로 다른 층이라 밀어내지 않는다.
  */
 function separate(s: GameState): void {
   const n = s.entities.length;
@@ -583,8 +656,6 @@ function separate(s: GameState): void {
     for (let j = i + 1; j < n; j++) {
       const b = s.entities[j];
       if (b.deploy > 0) continue;
-      if (b.kind !== 'unit' && b.kind !== 'building' && b.kind !== 'tower') continue;
-      // 층이 다르면 충돌하지 않는다 (공중 vs 지상, 공중 vs 건물)
       if (a.flying !== b.flying) continue;
 
       const minD = radiusOf(a) + radiusOf(b);
@@ -601,7 +672,6 @@ function separate(s: GameState): void {
         d = 100;
       }
       const overlap = minD - d;
-      // 유닛-유닛이면 절반씩, 유닛-정적물이면 유닛만 전부 밀린다
       const bMovable = b.kind === 'unit';
       const aShare = bMovable ? Math.trunc(overlap / 2) : overlap;
       px[i] += Math.trunc((dx * aShare) / d);
@@ -619,7 +689,6 @@ function separate(s: GameState): void {
     const e = s.entities[i];
     const cx = clamp(e.x + px[i], 0, ARENA_W - 1);
     const cy = clamp(e.y + py[i], 0, ARENA_H - 1);
-    // 밀려나다가 강에 빠지지는 않는다 (공중은 예외)
     if (e.flying || !inRiver(cx, cy)) {
       e.x = cx;
       e.y = cy;
@@ -627,78 +696,64 @@ function separate(s: GameState): void {
   }
 }
 
-/** hp<=0 인 비(非)타워 엔티티만 즉시 제거한다 (주문 등 즉발 피해 처리용) */
+/** hp<=0 인 비(非)기지 엔티티만 즉시 제거한다 (주문 등 즉발 피해 처리용) */
 function reap(s: GameState): void {
   let hasDead = false;
   for (const e of s.entities) {
-    if (e.hp <= 0 && e.kind !== 'tower') {
+    if (e.hp <= 0 && e.kind !== 'base') {
       hasDead = true;
       break;
     }
   }
   if (!hasDead) return;
-  s.entities = s.entities.filter((e) => e.hp > 0 || e.kind === 'tower');
+  s.entities = s.entities.filter((e) => e.hp > 0 || e.kind === 'base');
 }
 
-/** 사망 처리 + 타워 파괴에 따른 왕관/활성화 갱신 */
+/** 사망 처리 + 본진 파괴 판정 */
 function resolveDeaths(s: GameState): void {
   const survivors: Entity[] = [];
+  let changed = false;
   for (const e of s.entities) {
     if (e.hp > 0) {
       survivors.push(e);
       continue;
     }
-    if (e.kind === 'tower') {
-      const attacker: Team = e.team === 0 ? 1 : 0;
-      s.players[attacker].crowns += e.tower === 'king' ? 3 : 1;
-      if (e.tower === 'princess' && e.lane !== -1) {
-        s.players[e.team].princessDown[e.lane] = true;
-      }
-      if (e.tower === 'king') {
-        s.over = true;
-        s.winner = attacker;
-      }
-    }
-    // 타워든 유닛이든 hp<=0이면 사라진다
-  }
-  if (survivors.length !== s.entities.length) {
-    s.entities = survivors;
-    // 공주탑이 하나라도 무너진 팀의 킹타워를 활성화한다
-    for (const e of s.entities) {
-      if (e.tower === 'king' && !e.active) {
-        const p = s.players[e.team];
-        if (p.princessDown[0] || p.princessDown[1]) e.active = true;
-      }
+    changed = true;
+    if (e.kind === 'base' && e.isMain) {
+      s.over = true;
+      s.winner = e.team === 0 ? 1 : 0;
     }
   }
+  if (changed) s.entities = survivors;
 }
 
 function checkEnd(s: GameState): void {
   if (s.over) return;
-  const [a, b] = s.players;
 
+  const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
+  if (s.tick < limit) return;
+
+  // 시간 초과 — 기지 수로 가리고, 같으면 누적 채굴량으로 가린다
+  const b0 = baseCount(s, 0);
+  const b1 = baseCount(s, 1);
+  if (b0 !== b1) {
+    s.over = true;
+    s.winner = b0 > b1 ? 0 : 1;
+    return;
+  }
+  const m0 = s.players[0].mined;
+  const m1 = s.players[1].mined;
+  if (m0 !== m1) {
+    s.over = true;
+    s.winner = m0 > m1 ? 0 : 1;
+    return;
+  }
   if (!s.overtime) {
-    if (s.tick >= MATCH_TICKS) {
-      if (a.crowns !== b.crowns) {
-        s.over = true;
-        s.winner = a.crowns > b.crowns ? 0 : 1;
-      } else {
-        s.overtime = true;
-      }
-    }
+    s.overtime = true;
     return;
   }
-
-  // 연장전: 왕관 차이가 생기는 순간 종료
-  if (a.crowns !== b.crowns) {
-    s.over = true;
-    s.winner = a.crowns > b.crowns ? 0 : 1;
-    return;
-  }
-  if (s.tick >= MATCH_TICKS + OVERTIME_TICKS) {
-    s.over = true;
-    s.winner = -1; // 무승부
-  }
+  s.over = true;
+  s.winner = -1;
 }
 
 /* ── 스냅샷 / 해시 ─────────────────────────────────────────────────────── */
@@ -729,6 +784,9 @@ export function hashState(s: GameState): number {
     h ^= v | 0;
     h = Math.imul(h, 0x01000193) >>> 0;
   };
+  const mixStr = (str: string): void => {
+    for (let i = 0; i < str.length; i++) mix(str.charCodeAt(i));
+  };
 
   mix(s.tick);
   mix(s.rng.s);
@@ -744,15 +802,20 @@ export function hashState(s: GameState): number {
     mix(e.deploy);
     mix(e.life);
     mix(e.target);
-    mix(e.active ? 1 : 0);
+    mix(e.reserve);
+    mix(e.siteId);
   }
   for (const p of s.players) {
-    mix(p.elixir);
-    mix(p.crowns);
-    mix(p.princessDown[0] ? 1 : 0);
-    mix(p.princessDown[1] ? 1 : 0);
-    for (const c of p.cycle) {
-      for (let i = 0; i < c.length; i++) mix(c.charCodeAt(i));
+    mix(p.minerals);
+    mix(p.mined);
+    mixStr(p.faction);
+    mix(p.unlocked.length);
+    for (const u of p.unlocked) mixStr(u);
+    if (p.research) {
+      mixStr(p.research.unit);
+      mix(p.research.ticks);
+    } else {
+      mix(-1);
     }
   }
   mix(s.overtime ? 1 : 0);
@@ -761,13 +824,19 @@ export function hashState(s: GameState): number {
   return h >>> 0;
 }
 
-/** 편의: 커맨드 목록을 execTick 기준으로 안정 정렬한다 (동률이면 team, 그다음 card) */
+/** 커맨드 목록을 안정 정렬한다 — 같은 틱 안의 순서까지 완전히 결정한다 */
 export function sortCommands(cmds: Command[]): Command[] {
   return cmds.slice().sort((a, b) => {
     if (a.execTick !== b.execTick) return a.execTick - b.execTick;
     if (a.team !== b.team) return a.team - b.team;
-    if (a.card !== b.card) return a.card < b.card ? -1 : 1;
+    if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1;
+    if (a.id !== b.id) return a.id < b.id ? -1 : 1;
     if (a.x !== b.x) return a.x - b.x;
     return a.y - b.y;
   });
 }
+
+/* ── 편의 ──────────────────────────────────────────────────────────────── */
+
+export { canDeployAt, getSite, nearestFreeSite };
+export type { BaseSite, FactionDef };

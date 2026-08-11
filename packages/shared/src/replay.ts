@@ -21,6 +21,7 @@ import type { Team } from './arena.js';
 import {
   Command,
   GameState,
+  baseCount,
   createState,
   hashState,
   restore,
@@ -30,7 +31,7 @@ import {
 } from './sim.js';
 
 /** 포맷 버전. 시뮬 규칙이 바뀌어 과거 리플레이가 재현 불가능해지면 올린다. */
-export const REPLAY_VERSION = 1;
+export const REPLAY_VERSION = 2;
 
 /** 경기가 진행될 수 있는 최대 틱 (정규 + 연장) */
 export const MAX_MATCH_TICKS = MATCH_TICKS + OVERTIME_TICKS;
@@ -42,7 +43,10 @@ const CHECKPOINT_INTERVAL = 600;
 
 export interface ReplayResult {
   winner: Team | -1;
-  crowns: [number, number];
+  /** 종료 시점 팀별 기지 수 */
+  bases: [number, number];
+  /** 종료 시점 팀별 누적 채굴량 */
+  mined: [number, number];
   /** 경기가 끝난 틱 */
   ticks: number;
 }
@@ -57,10 +61,8 @@ export interface Replay {
   v: number;
   matchId: string;
   seed: number;
-  /** 양 팀의 실제 카드 목록 — 재생은 이걸로 상태를 초기화한다 */
-  decks: [string[], string[]];
-  /** 표시용 덱 id */
-  deckIds: [string, string];
+  /** 양 팀의 종족 id — 재생은 이걸로 상태를 초기화한다 */
+  factions: [string, string];
   /** 표시용 플레이어 이름 */
   players: [string, string];
   /** 기록 시각 (벽시계 ms). 메타데이터일 뿐 시뮬에는 영향이 없다 */
@@ -91,7 +93,7 @@ function indexCommands(cmds: readonly Command[]): Map<number, Command[]> {
  * @param untilTick 이 틱에 도달하면 멈춘다 (기본: 경기 끝까지)
  */
 export function playReplay(r: Replay, untilTick: number = MAX_MATCH_TICKS): GameState {
-  const s = createState(r.seed, r.decks);
+  const s = createState(r.seed, r.factions);
   const byTick = indexCommands(r.commands);
   const limit = Math.min(untilTick, MAX_MATCH_TICKS);
   while (s.tick < limit && !s.over) {
@@ -117,7 +119,7 @@ export interface VerifyResult {
  * 체크포인트를 함께 대조해 **어느 지점부터** 갈라졌는지 알려준다.
  */
 export function verifyReplay(r: Replay): VerifyResult {
-  const s = createState(r.seed, r.decks);
+  const s = createState(r.seed, r.factions);
   const byTick = indexCommands(r.commands);
   const checkpoints = new Map(r.checkpoints.map((c) => [c.tick, c.hash]));
 
@@ -133,15 +135,18 @@ export function verifyReplay(r: Replay): VerifyResult {
   const actualHash = hashState(s);
   const actual: ReplayResult = {
     winner: s.winner,
-    crowns: [s.players[0].crowns, s.players[1].crowns],
+    bases: [baseCount(s, 0), baseCount(s, 1)],
+    mined: [s.players[0].mined, s.players[1].mined],
     ticks: s.tick,
   };
   const ok =
     actualHash === r.finalHash &&
     actual.winner === r.result.winner &&
     actual.ticks === r.result.ticks &&
-    actual.crowns[0] === r.result.crowns[0] &&
-    actual.crowns[1] === r.result.crowns[1];
+    actual.bases[0] === r.result.bases[0] &&
+    actual.bases[1] === r.result.bases[1] &&
+    actual.mined[0] === r.result.mined[0] &&
+    actual.mined[1] === r.result.mined[1];
 
   if (!ok && divergedAtTick < 0) divergedAtTick = s.tick;
 
@@ -160,8 +165,7 @@ export function verifyReplay(r: Replay): VerifyResult {
 export interface BuildReplayInput {
   matchId: string;
   seed: number;
-  decks: [string[], string[]];
-  deckIds: [string, string];
+  factions: [string, string];
   players: [string, string];
   commands: readonly Command[];
   createdAt?: number;
@@ -177,7 +181,7 @@ export interface BuildReplayInput {
  */
 export function buildReplay(input: BuildReplayInput): Replay {
   const commands = sortCommands(input.commands.slice());
-  const s = createState(input.seed, input.decks);
+  const s = createState(input.seed, input.factions);
   const byTick = indexCommands(commands);
   const checkpoints: ReplayCheckpoint[] = [];
 
@@ -192,14 +196,14 @@ export function buildReplay(input: BuildReplayInput): Replay {
     v: REPLAY_VERSION,
     matchId: input.matchId,
     seed: input.seed,
-    decks: input.decks,
-    deckIds: input.deckIds,
+    factions: input.factions,
     players: input.players,
     createdAt: input.createdAt ?? Date.now(),
     commands,
     result: {
       winner: s.winner,
-      crowns: [s.players[0].crowns, s.players[1].crowns],
+      bases: [baseCount(s, 0), baseCount(s, 1)],
+      mined: [s.players[0].mined, s.players[1].mined],
       ticks: s.tick,
     },
     checkpoints,
@@ -232,7 +236,7 @@ export class ReplayPlayer {
     this.byTick = indexCommands(replay.commands);
 
     // 전체를 한 번 돌면서 키프레임을 남긴다
-    const s = createState(replay.seed, replay.decks);
+    const s = createState(replay.seed, replay.factions);
     this.keyframes.set(0, snapshot(s));
     while (s.tick < MAX_MATCH_TICKS && !s.over) {
       step(s, this.byTick.get(s.tick) ?? []);
@@ -240,7 +244,7 @@ export class ReplayPlayer {
     }
     this.totalTicks = s.tick;
 
-    this.work = createState(replay.seed, replay.decks);
+    this.work = createState(replay.seed, replay.factions);
   }
 
   /**
@@ -271,33 +275,43 @@ export class ReplayPlayer {
 
 export interface ReplaySummary {
   matchId: string;
-  deckIds: [string, string];
+  factions: [string, string];
   players: [string, string];
   winner: Team | -1;
-  crowns: [number, number];
+  bases: [number, number];
+  mined: [number, number];
   /** 경기 길이 (초) */
   durationSec: number;
-  /** 팀별 카드 사용 횟수 */
+  /** 팀별 커맨드 수 (유닛 생산 / 기지 건설 / 테크 해금) */
   playCounts: [number, number];
-  /** 팀별 "카드 id → 사용 횟수" */
-  cardUsage: [Record<string, number>, Record<string, number>];
+  baseBuilds: [number, number];
+  techUnlocks: [number, number];
+  /** 팀별 "유닛 id → 생산 횟수" */
+  unitUsage: [Record<string, number>, Record<string, number>];
 }
 
 export function summarizeReplay(r: Replay, tickRate = 20): ReplaySummary {
   const usage: [Record<string, number>, Record<string, number>] = [{}, {}];
   const counts: [number, number] = [0, 0];
+  const bases: [number, number] = [0, 0];
+  const techs: [number, number] = [0, 0];
   for (const c of r.commands) {
     counts[c.team]++;
-    usage[c.team][c.card] = (usage[c.team][c.card] ?? 0) + 1;
+    if (c.kind === 'base') bases[c.team]++;
+    else if (c.kind === 'tech') techs[c.team]++;
+    else usage[c.team][c.id] = (usage[c.team][c.id] ?? 0) + 1;
   }
   return {
     matchId: r.matchId,
-    deckIds: r.deckIds,
+    factions: r.factions,
     players: r.players,
     winner: r.result.winner,
-    crowns: r.result.crowns,
+    bases: r.result.bases,
+    mined: r.result.mined,
     durationSec: Math.round(r.result.ticks / tickRate),
     playCounts: counts,
-    cardUsage: usage,
+    baseBuilds: bases,
+    techUnlocks: techs,
+    unitUsage: usage,
   };
 }

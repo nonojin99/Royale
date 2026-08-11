@@ -2,23 +2,24 @@
  * 매치 — 권위 시뮬레이션 + 커맨드 예약/브로드캐스트.
  *
  * 서버는 메시지를 중계만 하지 않고 클라이언트와 **동일한 시뮬레이션**을 직접 돌린다.
- * 이유는 NETCODE.md §4 참조: 권위, 치팅 방지, 데스싱크 판정, 재접속, 리플레이.
+ * 이유는 NETCODE.md 참조: 권위, 치팅 방지, 데스싱크 판정, 재접속, 리플레이.
  */
 
 import {
   COMMAND_SCHEDULE_AHEAD,
   Command,
-  ELIXIR_SCALE,
+  CommandKind,
   GameState,
   Replay,
   SIM_DELAY_TICKS,
   ServerMsg,
   TICK_MS,
   Team,
+  baseCount,
   buildReplay,
   createState,
-  getCard,
-  getDeck,
+  getFaction,
+  getUnit,
   hashState,
   sortCommands,
   step,
@@ -41,8 +42,10 @@ export class Match {
   readonly state: GameState;
   readonly conns: (Conn | null)[];
   readonly bot: Bot | null;
-  /** 양 팀의 카드 목록 — 리플레이 재현에 필요하다 */
-  private readonly decks: [string[], string[]];
+
+  /** 양 팀 종족 id — 리플레이 재현에 필요하다 */
+  private readonly factions: [string, string];
+  private readonly playerNames: [string, string];
 
   /** execTick → 그 틱에 실행될 커맨드들 */
   private readonly scheduled = new Map<number, Command[]>();
@@ -50,15 +53,12 @@ export class Match {
   private readonly hashes = new Map<number, number>();
   /** 리플레이용 — 확정된 모든 커맨드를 순서대로 누적한다 */
   private readonly recorded: Command[] = [];
-  /** 표시용 메타데이터 (경기 도중 연결이 끊겨도 남아야 하므로 복사해 둔다) */
-  private readonly deckIds: [string, string];
-  private readonly playerNames: [string, string];
   private ended = false;
 
   constructor(
     a: Conn,
     b: Conn | null,
-    botDeckId?: string,
+    botFactionId?: string,
     /** 경기가 정상 종료되면 리플레이를 넘겨받는 콜백 */
     private readonly onReplay?: (r: Replay) => void,
   ) {
@@ -67,16 +67,12 @@ export class Match {
     this.seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
     this.startWallMs = Date.now();
 
-    // 각자 고른 덱으로 시작한다. 시뮬은 처음부터 비대칭 덱을 지원한다.
-    const deck0 = getDeck(a.deckId);
-    const deck1 = getDeck(b ? b.deckId : botDeckId);
-    const decks: [string[], string[]] = [deck0.cards.slice(), deck1.cards.slice()];
-    const deckIds: [string, string] = [deck0.id, deck1.id];
-    this.deckIds = deckIds;
-    this.decks = decks;
-    this.playerNames = [a.name, b ? b.name : `봇 (${deck1.name})`];
+    const f0 = getFaction(a.factionId);
+    const f1 = getFaction(b ? b.factionId : botFactionId);
+    this.factions = [f0.id, f1.id];
+    this.playerNames = [a.name, b ? b.name : `봇 (${f1.name})`];
 
-    this.state = createState(this.seed, decks);
+    this.state = createState(this.seed, this.factions);
     this.conns = [a, b];
     this.bot = b === null ? new Bot(this.seed) : null;
 
@@ -94,9 +90,8 @@ export class Match {
         matchId: this.id,
         seed: this.seed,
         team: c.team as Team,
-        decks,
-        deckIds,
-        opponent: b === null ? `연습 상대 (${deck1.name})` : this.other(c)?.name ?? '???',
+        factions: this.factions,
+        opponent: b === null ? this.playerNames[1] : this.other(c)?.name ?? '???',
         startWallMs: this.startWallMs,
       });
     }
@@ -115,40 +110,60 @@ export class Match {
     return Math.floor((Date.now() - this.startWallMs) / TICK_MS);
   }
 
-  serverTick(): number {
-    return this.state.tick;
-  }
-
   /**
-   * 카드 배치 요청을 미래 틱에 예약하고 양쪽에 브로드캐스트한다.
+   * 행동 요청을 미래 틱에 예약하고 양쪽에 브로드캐스트한다.
    *
-   * 여기서는 엘릭서/손패를 검증하지 **않는다.** 검증은 execTick에 도달했을 때
+   * 여기서는 자원·해금·배치구역을 검증하지 **않는다.** 검증은 execTick에 도달했을 때
    * applyCommand가 서버와 두 클라이언트에서 각각 동일하게 수행하므로, 부정한
    * 요청은 세 곳 모두에서 똑같이 무시된다. 즉 결정론이 곧 치팅 방지 장치다.
    */
-  schedulePlay(team: Team, card: string, x: number, y: number, reqTick: number): void {
+  scheduleAct(
+    team: Team,
+    kind: CommandKind,
+    id: string,
+    x: number,
+    y: number,
+    reqTick: number,
+  ): void {
     if (this.ended) return;
 
-    // 알 수 없는 카드 id는 시뮬이 예외를 던지므로 여기서만은 미리 거른다
-    try {
-      getCard(card);
-    } catch {
-      this.conns[team]?.send({ t: 'reject', reqTick, reason: 'unknown-card' });
-      return;
+    // 알 수 없는 유닛 id는 시뮬이 예외를 던질 수 있으므로 여기서만은 미리 거른다
+    if (kind === 'unit' || kind === 'tech') {
+      try {
+        getUnit(id);
+      } catch {
+        this.conns[team]?.send({ t: 'reject', reqTick, reason: 'unknown-unit' });
+        return;
+      }
     }
 
     const execTick = Math.max(
       this.nowTick() + COMMAND_SCHEDULE_AHEAD,
       this.state.tick + 1,
     );
-    const cmd: Command = { execTick, team, card, x: Math.round(x), y: Math.round(y) };
+    const cmd: Command = {
+      execTick,
+      team,
+      kind,
+      id: kind === 'base' ? '' : id,
+      x: Math.round(x),
+      y: Math.round(y),
+    };
 
     const arr = this.scheduled.get(execTick);
     if (arr) arr.push(cmd);
     else this.scheduled.set(execTick, [cmd]);
     this.recorded.push(cmd);
 
-    this.broadcast({ t: 'cmd', execTick, team, card, x: cmd.x, y: cmd.y });
+    this.broadcast({
+      t: 'cmd',
+      execTick,
+      team,
+      kind: cmd.kind,
+      id: cmd.id,
+      x: cmd.x,
+      y: cmd.y,
+    });
   }
 
   /** 벽시계를 따라 시뮬레이션을 진행시킨다 */
@@ -169,7 +184,6 @@ export class Match {
 
       this.hashes.set(this.state.tick, hashState(this.state));
       if (this.hashes.size > HASH_HISTORY) {
-        // 가장 오래된 항목 제거 (Map은 삽입 순서를 유지한다)
         const oldest = this.hashes.keys().next();
         if (!oldest.done) this.hashes.delete(oldest.value);
       }
@@ -186,15 +200,13 @@ export class Match {
     if (!this.bot) return;
     const move = this.bot.decide(this.state, tick);
     if (!move) return;
-    const p = this.state.players[1];
-    if (p.elixir < getCard(move.card).cost * ELIXIR_SCALE) return;
-    this.schedulePlay(1, move.card, move.x, move.y, tick);
+    this.scheduleAct(1, move.kind, move.id, move.x, move.y, tick);
   }
 
   /** 클라가 보고한 해시를 서버 것과 대조한다. 어긋나면 스냅샷으로 리싱크시킨다. */
   checkHash(c: Conn, tick: number, hash: number): void {
     const mine = this.hashes.get(tick);
-    if (mine === undefined) return; // 너무 오래됐거나 아직 도달 전 — 판정 불가
+    if (mine === undefined) return;
     if (mine === hash) {
       c.desyncs = 0;
       return;
@@ -203,7 +215,11 @@ export class Match {
     console.warn(
       `[desync] match=${this.id} team=${c.team} tick=${tick} client=${hash} server=${mine}`,
     );
-    c.send({ t: 'resync', tick: this.state.tick, state: JSON.parse(JSON.stringify(this.state)) });
+    c.send({
+      t: 'resync',
+      tick: this.state.tick,
+      state: JSON.parse(JSON.stringify(this.state)),
+    });
   }
 
   private finish(): void {
@@ -212,7 +228,8 @@ export class Match {
     this.broadcast({
       t: 'over',
       winner: this.state.winner,
-      crowns: [this.state.players[0].crowns, this.state.players[1].crowns],
+      bases: [baseCount(this.state, 0), baseCount(this.state, 1)],
+      mined: [this.state.players[0].mined, this.state.players[1].mined],
     });
     for (const c of this.conns) {
       if (c) c.match = null;
@@ -230,8 +247,7 @@ export class Match {
       const replay = buildReplay({
         matchId: this.id,
         seed: this.seed,
-        decks: this.decks,
-        deckIds: this.deckIds,
+        factions: this.factions,
         players: this.playerNames,
         commands: this.recorded,
         createdAt: this.startWallMs,

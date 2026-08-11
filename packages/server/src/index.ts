@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import { WebSocketServer } from 'ws';
 
-import { ClientMsg, DECK_IDS, Replay, TICK_MS, Team, getDeck } from '@royale/shared';
+import { ClientMsg, FACTION_IDS, Replay, TICK_MS, Team, getFaction } from '@royale/shared';
 
 import { Conn } from './conn.js';
 import { Match } from './match.js';
@@ -123,14 +123,14 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
   switch (msg.t) {
     case 'hello': {
       conn.name = String(msg.name ?? '익명').slice(0, 20) || '익명';
-      // 알 수 없는 덱 id는 getDeck이 기본 덱으로 떨어뜨린다
-      conn.deckId = getDeck(msg.deckId).id;
+      // 알 수 없는 종족 id는 getFaction이 기본 종족으로 떨어뜨린다
+      conn.factionId = getFaction(msg.factionId).id;
       if (conn.match) return;
       if (solo) {
-        // 연습 모드 봇은 플레이어와 다른 덱을 쓴다 — 같은 덱만 상대하면
-        // 대공 대응 같은 매치업 학습이 안 된다
-        const botDeck = DECK_IDS[Math.floor(Math.random() * DECK_IDS.length)];
-        matches.add(new Match(conn, null, botDeck, saveReplay));
+        // 연습 모드 봇은 무작위 종족을 쓴다 — 같은 종족만 상대하면
+        // 매치업 감각이 생기지 않는다
+        const botFaction = FACTION_IDS[Math.floor(Math.random() * FACTION_IDS.length)];
+        matches.add(new Match(conn, null, botFaction, saveReplay));
         return;
       }
       queue.push(conn);
@@ -139,13 +139,13 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
       return;
     }
 
-    case 'play': {
+    case 'act': {
       const m = conn.match;
       if (!m || m.isEnded) {
         conn.send({ t: 'reject', reqTick: msg.reqTick, reason: 'not-playing' });
         return;
       }
-      m.schedulePlay(conn.team as Team, msg.card, msg.x, msg.y, msg.reqTick);
+      m.scheduleAct(conn.team as Team, msg.kind, msg.id, msg.x, msg.y, msg.reqTick);
       return;
     }
 
@@ -166,7 +166,7 @@ function saveReplay(r: Replay): void {
   replays.save(r);
   const bytes = JSON.stringify(r).length;
   console.log(
-    `[replay] ${r.matchId} 저장 — ${r.deckIds[0]} vs ${r.deckIds[1]}, ` +
+    `[replay] ${r.matchId} 저장 — ${r.factions[0]} vs ${r.factions[1]}, ` +
       `승자 ${r.result.winner === -1 ? '무승부' : `team${r.result.winner}`}, ` +
       `커맨드 ${r.commands.length}개, ${(bytes / 1024).toFixed(1)}KB`,
   );

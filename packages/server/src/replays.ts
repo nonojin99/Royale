@@ -17,10 +17,10 @@ import type { Replay, Team } from '@royale/shared';
 export interface ReplayIndexEntry {
   id: string;
   createdAt: number;
-  deckIds: [string, string];
+  factions: [string, string];
   players: [string, string];
   winner: Team | -1;
-  crowns: [number, number];
+  bases: [number, number];
   ticks: number;
   /** 바이트 단위 대략 크기 — "경기 하나가 수 KB"를 눈으로 확인하기 위한 값 */
   bytes: number;
@@ -86,10 +86,10 @@ export class ReplayStore {
       out.push({
         id: r.matchId,
         createdAt: r.createdAt,
-        deckIds: r.deckIds,
+        factions: r.factions,
         players: r.players,
         winner: r.result.winner,
-        crowns: r.result.crowns,
+        bases: r.result.bases,
         ticks: r.result.ticks,
         bytes: JSON.stringify(r).length,
       });

@@ -2,7 +2,7 @@
  * 종단간 넷코드 검증.
  *
  * 진짜 서버 프로세스를 띄우고, 서로 다른 두 개의 WebSocket 클라이언트가 각자
- * 독립적으로 시뮬레이션을 돌리게 한다. 양쪽이 카드를 마구 내는 동안:
+ * 독립적으로 시뮬레이션을 돌리게 한다. 양쪽이 확장하고 병력을 뽑는 동안:
  *
  *   1. 두 클라이언트의 상태 해시가 같은 틱에서 일치하는가?
  *   2. 서버가 리싱크를 한 번이라도 보냈는가? (보냈다면 시뮬에 버그가 있다)
@@ -22,19 +22,22 @@ import assert from 'node:assert/strict';
 
 import WebSocket from 'ws';
 import {
+  BASE_BUILD_COST,
+  BASE_SITES,
+  DEPLOY_RADIUS,
   HASH_INTERVAL,
+  MINERAL_SCALE,
   SIM_DELAY_TICKS,
   TICK_MS,
+  baseCount,
+  canDeployAt,
   createState,
-  getCard,
+  getUnit,
   hashState,
+  occupiedSites,
+  ownBasePositions,
   sortCommands,
   step,
-  ELIXIR_SCALE,
-  HAND_SIZE,
-  RIVER_BOT,
-  ARENA_H,
-  ARENA_W,
 } from '@royale/shared';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -43,18 +46,18 @@ const PORT = 8899;
 
 /**
  * 이 틱에서 두 클라이언트의 해시를 비교한다.
- * 20초(400틱)면 엘릭서 경제상 양쪽이 6~7장을 낼 수 있어 교전이 충분히 벌어진다.
+ * 20초(400틱)면 채굴 수입으로 확장 한 번 + 병력 여러 기를 낼 수 있다.
  */
 const COMPARE_TICK = 400;
-/** 엘릭서 수급으로 이 시간 안에 낼 수 있는 최소 장수 (5 + 400*18/1000 ≈ 12 엘릭서) */
+/** 이 시간 안에 최소한 이만큼은 행동해야 검증이 의미 있다 */
 const MIN_PLAYS = 3;
 
 /* ── 헤드리스 클라이언트 ───────────────────────────────────────────────── */
 
 class HeadlessClient {
-  constructor(name, deckId) {
+  constructor(name, factionId) {
     this.name = name;
-    this.deckId = deckId;
+    this.factionId = factionId;
     this.state = null;
     this.team = 0;
     this.startWallMs = 0;
@@ -71,7 +74,7 @@ class HeadlessClient {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
       this.ws.on('open', () => {
-        this.ws.send(JSON.stringify({ t: 'hello', name: this.name, deckId: this.deckId }));
+        this.ws.send(JSON.stringify({ t: 'hello', name: this.name, factionId: this.factionId }));
         resolve();
       });
       this.ws.on('error', reject);
@@ -90,14 +93,15 @@ class HeadlessClient {
       case 'match':
         this.team = msg.team;
         this.startWallMs = msg.startWallMs;
-        this.matchDeckIds = msg.deckIds;
-        this.state = createState(msg.seed, msg.decks);
+        this.matchFactions = msg.factions;
+        this.state = createState(msg.seed, msg.factions);
         break;
       case 'cmd': {
         const cmd = {
           execTick: msg.execTick,
           team: msg.team,
-          card: msg.card,
+          kind: msg.kind,
+          id: msg.id,
           x: msg.x,
           y: msg.y,
         };
@@ -150,25 +154,47 @@ class HeadlessClient {
     }
   }
 
-  /** 손패에서 낼 수 있는 카드를 아무거나 내 진영에 배치한다 */
+  /**
+   * 매크로 게임의 기본 우선순위를 따라 행동한다:
+   * 자원이 충분하면 확장하고, 아니면 해금된 유닛을 기지 앞에 뽑는다.
+   */
   tryPlay() {
     const s = this.state;
-    if (!s) return;
+    if (!s || s.over) return;
     const me = s.players[this.team];
-    const affordable = me.cycle
-      .slice(0, HAND_SIZE)
-      .filter((id) => me.elixir >= getCard(id).cost * ELIXIR_SCALE);
-    if (affordable.length === 0) return;
 
-    const card = affordable[Math.floor(Math.random() * affordable.length)];
-    const x = 1000 + Math.floor(Math.random() * (ARENA_W - 2000));
-    const y =
-      this.team === 0
-        ? RIVER_BOT + 500 + Math.floor(Math.random() * (ARENA_H - RIVER_BOT - 3000))
-        : 2000 + Math.floor(Math.random() * 10000);
+    // 확장 — 빈 지점이 있고 여유가 있으면
+    if (me.minerals >= BASE_BUILD_COST * 2 && baseCount(s, this.team) < 3) {
+      const taken = occupiedSites(s);
+      const free = BASE_SITES.filter((b) => !taken.has(b.id));
+      if (free.length) {
+        const site = free[Math.floor(Math.random() * free.length)];
+        this.ws.send(
+          JSON.stringify({ t: 'act', reqTick: s.tick, kind: 'base', id: '', x: site.x, y: site.y }),
+        );
+        this.plays++;
+        return;
+      }
+    }
 
-    this.ws.send(JSON.stringify({ t: 'play', reqTick: s.tick, card, x, y }));
-    this.plays++;
+    // 병력 — 해금된 것 중 낼 수 있는 것을 기지 반경 안에 낸다
+    const bases = ownBasePositions(s, this.team);
+    if (!bases.length) return;
+    const affordable = me.unlocked.filter(
+      (id) => me.minerals >= getUnit(id).cost * MINERAL_SCALE,
+    );
+    if (!affordable.length) return;
+
+    const id = affordable[Math.floor(Math.random() * affordable.length)];
+    const base = bases[Math.floor(Math.random() * bases.length)];
+    for (let i = 0; i < 8; i++) {
+      const x = base[0] + Math.floor(Math.random() * DEPLOY_RADIUS) - DEPLOY_RADIUS / 2;
+      const y = base[1] + Math.floor(Math.random() * DEPLOY_RADIUS) - DEPLOY_RADIUS / 2;
+      if (!canDeployAt(x, y, bases)) continue;
+      this.ws.send(JSON.stringify({ t: 'act', reqTick: s.tick, kind: 'unit', id, x, y }));
+      this.plays++;
+      return;
+    }
   }
 
   close() {
@@ -209,8 +235,8 @@ async function main() {
     await waitForServer(proc);
     console.log('▶ 클라이언트 2개 접속…');
 
-    // 서로 다른 덱으로 붙인다. 비대칭 덱은 양쪽 시뮬이 서로 다른 카드 테이블을
-    // 참조한다는 뜻이라, 미러전보다 훨씬 깨지기 쉬운 조건이다.
+    // 서로 다른 종족으로 붙인다. 비대칭 대전은 양쪽 시뮬이 서로 다른 테크트리와
+    // 유닛 테이블을 참조한다는 뜻이라, 미러전보다 훨씬 깨지기 쉬운 조건이다.
     a = new HeadlessClient('A', 'steel');
     b = new HeadlessClient('B', 'swarmhive');
     await a.connect();
@@ -222,21 +248,21 @@ async function main() {
     assert.ok(a.state && b.state, '5초 안에 매치가 성립하지 않았다');
     assert.notEqual(a.team, b.team, '두 클라이언트가 같은 팀을 배정받았다');
 
-    // 양쪽이 같은 덱 구성을 받아야 한다 — 여기가 어긋나면 시뮬이 시작부터 갈라진다
+    // 양쪽이 같은 종족 구성을 받아야 한다 — 어긋나면 시뮬이 시작부터 갈라진다
     assert.deepEqual(
-      a.state.players.map((p) => p.cycle),
-      b.state.players.map((p) => p.cycle),
-      '두 클라이언트가 서로 다른 덱 구성으로 시작했다',
+      a.state.players.map((p) => p.unlocked),
+      b.state.players.map((p) => p.unlocked),
+      '두 클라이언트가 서로 다른 해금 상태로 시작했다',
     );
-    assert.deepEqual(a.matchDeckIds, b.matchDeckIds, 'deckIds가 양쪽에 다르게 전달됐다');
+    assert.deepEqual(a.matchFactions, b.matchFactions, 'factions가 양쪽에 다르게 전달됐다');
     assert.notEqual(
-      a.matchDeckIds[0],
-      a.matchDeckIds[1],
-      '비대칭 덱을 요청했는데 같은 덱으로 매칭됐다',
+      a.matchFactions[0],
+      a.matchFactions[1],
+      '이종족을 요청했는데 같은 종족으로 매칭됐다',
     );
     console.log(
       `▶ 매치 성립 (A=team${a.team}, B=team${b.team}, ` +
-        `덱=${a.matchDeckIds[0]} vs ${a.matchDeckIds[1]}). 시뮬 진행…`,
+        `종족=${a.matchFactions[0]} vs ${a.matchFactions[1]}). 시뮬 진행…`,
     );
 
     // 시뮬 루프 + 주기적 카드 배치
@@ -275,10 +301,10 @@ async function main() {
       a.plays >= MIN_PLAYS && b.plays >= MIN_PLAYS,
       `카드를 충분히 내지 못해 검증이 의미 없다 (A=${a.plays}, B=${b.plays})`,
     );
-    // 타워 6개 외에 실제 유닛이 존재해야 교전을 검증한 것이다
+    // 본진 2개 외에 실제 유닛/기지가 생겨야 교전을 검증한 것이다
     assert.ok(
-      a.state.entities.length > 6,
-      '유닛이 하나도 살아남지 않아 교전 검증이 되지 않았다',
+      a.state.entities.length > 2,
+      '엔티티가 늘지 않아 검증이 의미 없다',
     );
 
     // 여러 틱에서 교차 검증

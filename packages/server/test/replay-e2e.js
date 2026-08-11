@@ -10,9 +10,9 @@
  * 되면 아무 의미가 없다.
  *
  * 경기가 자연 종료되어야 리플레이가 저장되므로 끝까지 돌려야 하는데, 양쪽이
- * 무작위로 카드를 내면 서로 막느라 0:0 무승부로 연장전까지 간다(= 4분 이상).
- * 그래서 **A만 공격하고 B는 아무것도 하지 않게** 한다. 무방비인 쪽의 타워가
- * 빠르게 무너져 경기가 일찍 끝난다.
+ * 무작위로 행동하면 서로 막느라 정규 시간을 다 쓴다(= 4분 이상).
+ * 그래서 **A만 확장·생산하고 B는 아무것도 하지 않게** 한다. 무방비인 쪽의
+ * 본진이 빠르게 무너져 경기가 일찍 끝난다.
  *
  * 실행: pnpm --filter @royale/server test:replay
  */
@@ -25,16 +25,19 @@ import assert from 'node:assert/strict';
 
 import WebSocket from 'ws';
 import {
-  ARENA_H,
-  ARENA_W,
-  ELIXIR_SCALE,
-  HAND_SIZE,
-  RIVER_BOT,
+  BASE_BUILD_COST,
+  BASE_SITES,
+  DEPLOY_RADIUS,
+  MINERAL_SCALE,
   SIM_DELAY_TICKS,
   TICK_MS,
+  baseCount,
+  canDeployAt,
   createState,
-  getCard,
+  getUnit,
   hashState,
+  occupiedSites,
+  ownBasePositions,
   sortCommands,
   step,
   summarizeReplay,
@@ -48,9 +51,9 @@ const PORT = 8901;
 const MATCH_TIMEOUT_MS = 240_000;
 
 class Client {
-  constructor(name, deckId) {
+  constructor(name, factionId) {
     this.name = name;
-    this.deckId = deckId;
+    this.factionId = factionId;
     this.state = null;
     this.team = 0;
     this.startWallMs = 0;
@@ -63,7 +66,7 @@ class Client {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
       this.ws.on('open', () => {
-        this.ws.send(JSON.stringify({ t: 'hello', name: this.name, deckId: this.deckId }));
+        this.ws.send(JSON.stringify({ t: 'hello', name: this.name, factionId: this.factionId }));
         resolve();
       });
       this.ws.on('error', reject);
@@ -77,10 +80,17 @@ class Client {
         this.team = msg.team;
         this.startWallMs = msg.startWallMs;
         this.matchId = msg.matchId;
-        this.state = createState(msg.seed, msg.decks);
+        this.state = createState(msg.seed, msg.factions);
         break;
       case 'cmd': {
-        const cmd = { execTick: msg.execTick, team: msg.team, card: msg.card, x: msg.x, y: msg.y };
+        const cmd = {
+          execTick: msg.execTick,
+          team: msg.team,
+          kind: msg.kind,
+          id: msg.id,
+          x: msg.x,
+          y: msg.y,
+        };
         const arr = this.scheduled.get(cmd.execTick);
         if (arr) arr.push(cmd);
         else this.scheduled.set(cmd.execTick, [cmd]);
@@ -107,25 +117,42 @@ class Client {
     }
   }
 
-  /** 엘릭서가 차는 대로 계속 낸다 — 경기를 빨리 끝내기 위해 */
+  /** 확장하고 병력을 계속 뽑는다 — 경기를 빨리 끝내기 위해 */
   tryPlay() {
     const s = this.state;
     if (!s || s.over) return;
     const me = s.players[this.team];
-    const affordable = me.cycle
-      .slice(0, HAND_SIZE)
-      .filter((id) => me.elixir >= getCard(id).cost * ELIXIR_SCALE);
+
+    if (me.minerals >= BASE_BUILD_COST * 2 && baseCount(s, this.team) < 3) {
+      const taken = occupiedSites(s);
+      const free = BASE_SITES.filter((b) => !taken.has(b.id));
+      if (free.length) {
+        const site = free[Math.floor(Math.random() * free.length)];
+        this.ws.send(
+          JSON.stringify({ t: 'act', reqTick: s.tick, kind: 'base', id: '', x: site.x, y: site.y }),
+        );
+        return;
+      }
+    }
+
+    const bases = ownBasePositions(s, this.team);
+    if (!bases.length) return;
+    const affordable = me.unlocked.filter((id) => me.minerals >= getUnit(id).cost * MINERAL_SCALE);
     if (!affordable.length) return;
-    const card = affordable[Math.floor(Math.random() * affordable.length)];
-    // 다리 근처에 몰아서 내면 교전이 빨리 붙는다
-    const x = Math.random() < 0.5 ? 4000 : 14000;
-    const y =
-      this.team === 0
-        ? RIVER_BOT + 500 + Math.floor(Math.random() * 2000)
-        : 12000 + Math.floor(Math.random() * 2000);
-    void ARENA_W;
-    void ARENA_H;
-    this.ws.send(JSON.stringify({ t: 'play', reqTick: s.tick, card, x, y }));
+
+    const id = affordable[Math.floor(Math.random() * affordable.length)];
+    // 가장 앞선 기지에서 낸다 — 전선을 밀어야 경기가 끝난다
+    let front = bases[0];
+    for (const b of bases) {
+      if (this.team === 0 ? b[1] < front[1] : b[1] > front[1]) front = b;
+    }
+    for (let i = 0; i < 8; i++) {
+      const x = front[0] + Math.floor(Math.random() * DEPLOY_RADIUS) - DEPLOY_RADIUS / 2;
+      const y = front[1] + Math.floor(Math.random() * DEPLOY_RADIUS) - DEPLOY_RADIUS / 2;
+      if (!canDeployAt(x, y, bases)) continue;
+      this.ws.send(JSON.stringify({ t: 'act', reqTick: s.tick, kind: 'unit', id, x, y }));
+      return;
+    }
   }
 
   close() {
@@ -191,9 +218,20 @@ async function main() {
       await sleep(10);
     }
     assert.ok(a.over, `경기가 ${MATCH_TIMEOUT_MS / 1000}초 안에 끝나지 않았다`);
+
+    // 서버의 'over' 메시지가 도착한 시점에도 클라 시뮬은 SIM_DELAY_TICKS 만큼
+    // 과거에 있다(설계상 의도된 지연). 최종 상태를 비교하려면 클라가 스스로
+    // 마지막 틱까지 시뮬레이션을 마치도록 기다려야 한다.
+    const drainUntil = Date.now() + 5000;
+    while (!a.state.over && Date.now() < drainUntil) {
+      a.update();
+      b.update();
+      await sleep(10);
+    }
+    assert.ok(a.state.over, '클라이언트 시뮬이 스스로 종료 상태에 도달하지 못했다');
     console.log(
       `▶ 경기 종료 — 승자 ${a.over.winner === -1 ? '무승부' : `team${a.over.winner}`}, ` +
-        `왕관 ${a.over.crowns[0]}:${a.over.crowns[1]}, tick ${a.state.tick}`,
+        `기지 ${a.over.bases[0]}:${a.over.bases[1]}, tick ${a.state.tick}`,
     );
 
     // 서버가 리플레이를 저장할 틈을 준다
@@ -227,14 +265,15 @@ async function main() {
       '리플레이 최종 해시가 클라이언트가 본 경기 상태와 다르다',
     );
     assert.equal(replay.result.winner, a.over.winner, '리플레이 승자가 실제와 다르다');
-    assert.deepEqual(replay.result.crowns, a.over.crowns, '리플레이 왕관 수가 실제와 다르다');
-    assert.deepEqual(replay.deckIds, ['steel', 'covenant'], '덱 id가 잘못 기록됐다');
+    assert.deepEqual(replay.result.bases, a.over.bases, '리플레이 기지 수가 실제와 다르다');
+    assert.deepEqual(replay.factions, ['steel', 'covenant'], '종족 id가 잘못 기록됐다');
     assert.equal(a.resyncs + b.resyncs, 0, '경기 중 리싱크가 발생했다');
 
     const s = summarizeReplay(replay);
     console.log(
-      `  요약 — ${s.deckIds[0]} ${s.playCounts[0]}장 vs ${s.deckIds[1]} ${s.playCounts[1]}장, ` +
-        `${s.durationSec}초`,
+      `  요약 — ${s.factions[0]} vs ${s.factions[1]}, ` +
+        `행동 ${s.playCounts[0]}:${s.playCounts[1]}, ` +
+        `확장 ${s.baseBuilds[0]}:${s.baseBuilds[1]}, ${s.durationSec}초`,
     );
 
     /* ── 4. 없는 리플레이는 404 ── */

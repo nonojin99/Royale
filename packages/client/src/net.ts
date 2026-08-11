@@ -13,6 +13,7 @@
 
 import {
   Command,
+  CommandKind,
   GameState,
   HASH_INTERVAL,
   SIM_DELAY_TICKS,
@@ -32,9 +33,7 @@ const RTT_SAMPLES = 9;
 
 export interface NetStats {
   rttMs: number;
-  /** 클라 시뮬 틱 */
   simTick: number;
-  /** 추정한 서버 선두 틱 */
   leadTick: number;
   desyncs: number;
   connected: boolean;
@@ -43,7 +42,7 @@ export interface NetStats {
 export interface NetEvents {
   onMatch?: (team: Team, opponent: string) => void;
   onQueued?: () => void;
-  onOver?: (winner: Team | -1, crowns: [number, number]) => void;
+  onOver?: (winner: Team | -1, bases: [number, number], mined: [number, number]) => void;
   onOpponentLeft?: () => void;
   onReject?: (reason: string) => void;
   /** 시뮬이 한 틱 진행되기 직전에 호출 (보간용 이전 위치 스냅샷) */
@@ -54,6 +53,7 @@ export class NetClient {
   state: GameState | null = null;
   myTeam: Team = 0;
   opponent = '';
+  factions: [string, string] = ['steel', 'steel'];
   desyncs = 0;
 
   private ws: WebSocket | null = null;
@@ -61,10 +61,10 @@ export class NetClient {
   /** 로컬 시계 → 서버 시계 보정치 (틱 단위) */
   private tickOffset = 0;
   private rttSamples: number[] = [];
+  private offsetSamples: number[] = [];
   private scheduled = new Map<number, Command[]>();
   private lastHashSent = -1;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  /** 마지막 step()이 끝난 벽시계 시각 — 렌더 보간에 쓴다 */
   lastStepWallMs = 0;
 
   constructor(
@@ -72,12 +72,12 @@ export class NetClient {
     private readonly events: NetEvents = {},
   ) {}
 
-  connect(name: string, deckId: string): void {
+  connect(name: string, factionId: string): void {
     const ws = new WebSocket(this.url);
     this.ws = ws;
 
     ws.onopen = () => {
-      this.send({ t: 'hello', name, deckId });
+      this.send({ t: 'hello', name, factionId });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
     };
@@ -115,11 +115,12 @@ export class NetClient {
       case 'match': {
         this.myTeam = msg.team;
         this.opponent = msg.opponent;
+        this.factions = msg.factions;
         this.startWallMs = msg.startWallMs;
         this.scheduled.clear();
         this.lastHashSent = -1;
         this.desyncs = 0;
-        this.state = createState(msg.seed, msg.decks);
+        this.state = createState(msg.seed, msg.factions);
         this.lastStepWallMs = Date.now();
         this.events.onMatch?.(msg.team, msg.opponent);
         return;
@@ -129,7 +130,8 @@ export class NetClient {
         const cmd: Command = {
           execTick: msg.execTick,
           team: msg.team,
-          card: msg.card,
+          kind: msg.kind,
+          id: msg.id,
           x: msg.x,
           y: msg.y,
         };
@@ -150,13 +152,10 @@ export class NetClient {
         if (this.rttSamples.length > RTT_SAMPLES) this.rttSamples.shift();
 
         if (this.startWallMs > 0) {
-          // pong이 도착한 지금, 서버의 선두 틱은 대략 serverTick + (편도 지연)
           const oneWayTicks = rtt / 2 / TICK_MS;
           const observed = msg.serverTick + oneWayTicks;
           const localRaw = (Date.now() - this.startWallMs) / TICK_MS;
-          const sample = observed - localRaw;
-          // 스파이크 한 번에 오염되지 않도록 중앙값을 쓴다
-          this.offsetSamples.push(sample);
+          this.offsetSamples.push(observed - localRaw);
           if (this.offsetSamples.length > RTT_SAMPLES) this.offsetSamples.shift();
           this.tickOffset = median(this.offsetSamples);
         }
@@ -168,7 +167,6 @@ export class NetClient {
         console.warn('[net] 리싱크 수신 — 시뮬 상태를 서버 스냅샷으로 덮어씀');
         restore(this.state, msg.state);
         this.desyncs++;
-        // 이미 지나간 예약은 버린다 (스냅샷에 반영되어 있다)
         for (const k of [...this.scheduled.keys()]) {
           if (k <= this.state.tick) this.scheduled.delete(k);
         }
@@ -180,7 +178,7 @@ export class NetClient {
         return;
 
       case 'over':
-        this.events.onOver?.(msg.winner, msg.crowns);
+        this.events.onOver?.(msg.winner, msg.bases, msg.mined);
         return;
 
       case 'opponent-left':
@@ -189,18 +187,23 @@ export class NetClient {
     }
   }
 
-  private offsetSamples: number[] = [];
-
   /** 서버 기준 "선두 틱" 추정치 */
   leadTick(): number {
     if (this.startWallMs === 0) return 0;
     return Math.floor((Date.now() - this.startWallMs) / TICK_MS + this.tickOffset);
   }
 
-  /** 카드 배치 요청 */
-  play(card: string, x: number, y: number): void {
+  /** 행동 요청 — 유닛 생산 / 기지 건설 / 테크 해금 */
+  act(kind: CommandKind, id: string, x = 0, y = 0): void {
     if (!this.state) return;
-    this.send({ t: 'play', reqTick: this.state.tick, card, x: Math.round(x), y: Math.round(y) });
+    this.send({
+      t: 'act',
+      reqTick: this.state.tick,
+      kind,
+      id,
+      x: Math.round(x),
+      y: Math.round(y),
+    });
   }
 
   /**

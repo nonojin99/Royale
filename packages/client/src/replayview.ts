@@ -15,7 +15,7 @@ import {
   TICK_MS,
   TICK_RATE,
   Team,
-  getDeck,
+  getFaction,
 } from '@royale/shared';
 
 export interface ReplayViewCallbacks {
@@ -114,8 +114,8 @@ export class ReplayView {
   }
 
   private emitStatus(): void {
-    const d0 = safeDeckName(this.replay.deckIds[0]);
-    const d1 = safeDeckName(this.replay.deckIds[1]);
+    const d0 = safeFactionName(this.replay.factions[0]);
+    const d1 = safeFactionName(this.replay.factions[1]);
     this.cb.onStatus({
       tick: this.tick,
       totalTicks: this.totalTicks,
@@ -127,10 +127,10 @@ export class ReplayView {
   }
 }
 
-/** 삭제된 덱의 과거 리플레이면 id를 그대로 보여준다 */
-function safeDeckName(id: string): string {
-  const d = getDeck(id);
-  return d.id === id ? d.name : id;
+/** 삭제된 종족의 과거 리플레이면 id를 그대로 보여준다 */
+function safeFactionName(id: string): string {
+  const f = getFaction(id);
+  return f.id === id ? f.name : id;
 }
 
 function fmt(tick: number): string {
@@ -157,10 +157,10 @@ export async function fetchReplay(serverWsUrl: string, id: string): Promise<Repl
 export interface ReplayIndexEntry {
   id: string;
   createdAt: number;
-  deckIds: [string, string];
+  factions: [string, string];
   players: [string, string];
   winner: Team | -1;
-  crowns: [number, number];
+  bases: [number, number];
   ticks: number;
   bytes: number;
 }

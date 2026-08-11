@@ -18,7 +18,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { TICK_RATE, getCard, summarizeReplay, verifyReplay } from '@royale/shared';
+import { MINERAL_SCALE, TICK_RATE, getUnit, summarizeReplay, verifyReplay } from '@royale/shared';
 
 const args = process.argv.slice(2);
 if (args.length === 0) {
@@ -67,7 +67,7 @@ function printUsage(label, usage) {
     .map(([id, n]) => {
       let name = id;
       try {
-        name = getCard(id).name;
+        name = getUnit(id).name;
       } catch {
         /* 삭제된 카드의 과거 리플레이 — id를 그대로 보여준다 */
       }
@@ -86,14 +86,19 @@ for (const r of replays) {
   const bytes = JSON.stringify(r).length;
 
   const winner =
-    s.winner === -1 ? '무승부' : `${s.players[s.winner]} (${s.deckIds[s.winner]})`;
+    s.winner === -1 ? '무승부' : `${s.players[s.winner]} (${s.factions[s.winner]})`;
 
   console.log(`\n── ${r.matchId} ${'─'.repeat(Math.max(0, 44 - r.matchId.length))}`);
-  console.log(`  ${s.players[0]} (${s.deckIds[0]})  vs  ${s.players[1]} (${s.deckIds[1]})`);
-  console.log(`  승자: ${winner}   왕관 ${s.crowns[0]}:${s.crowns[1]}   길이 ${fmtDuration(s.durationSec)}`);
+  console.log(`  ${s.players[0]} (${s.factions[0]})  vs  ${s.players[1]} (${s.factions[1]})`);
+  console.log(
+    `  승자: ${winner}   기지 ${s.bases[0]}:${s.bases[1]}   ` +
+      `채굴 ${Math.floor(s.mined[0] / MINERAL_SCALE)}:${Math.floor(s.mined[1] / MINERAL_SCALE)}   ` +
+      `길이 ${fmtDuration(s.durationSec)}`,
+  );
   console.log(`  커맨드 ${r.commands.length}개 · ${(bytes / 1024).toFixed(1)}KB · 체크포인트 ${r.checkpoints.length}개`);
-  printUsage(`team0 (${s.playCounts[0]}장)`, s.cardUsage[0]);
-  printUsage(`team1 (${s.playCounts[1]}장)`, s.cardUsage[1]);
+  console.log(`  확장 ${s.baseBuilds[0]}:${s.baseBuilds[1]}   테크 ${s.techUnlocks[0]}:${s.techUnlocks[1]}`);
+  printUsage(`team0 유닛 (${s.playCounts[0]}행동)`, s.unitUsage[0]);
+  printUsage(`team1 유닛 (${s.playCounts[1]}행동)`, s.unitUsage[1]);
 
   if (v.ok) {
     console.log(`  ✅ 재현 검증 통과 (해시 ${v.actualHash})`);

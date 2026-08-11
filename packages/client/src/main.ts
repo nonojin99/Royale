@@ -8,17 +8,25 @@
  */
 
 import {
-  DECK_IDS,
-  DEFAULT_DECK_ID,
-  ELIXIR_SCALE,
+  BASE_BUILD_COST,
+  DEFAULT_FACTION_ID,
+  FACTION_IDS,
   GameState,
-  HAND_SIZE,
+  INCOME_PER_TICK,
   MATCH_TICKS,
+  MINERAL_MAX,
+  MINERAL_SCALE,
   OVERTIME_TICKS,
   TICK_RATE,
-  canDeploy,
-  getCard,
-  getDeck,
+  baseCount,
+  canDeployAt,
+  canResearch,
+  getFaction,
+  getUnit,
+  isUnlocked,
+  nearestFreeSite,
+  occupiedSites,
+  ownBasePositions,
 } from '@royale/shared';
 
 import { NetClient } from './net.js';
@@ -31,6 +39,8 @@ const $ = <T extends HTMLElement>(id: string): T => {
   return el as T;
 };
 
+const hex = (color: number): string => `#${color.toString(16).padStart(6, '0')}`;
+
 /* ── 서버 주소 ─────────────────────────────────────────────────────────── */
 
 function serverUrl(): string {
@@ -42,7 +52,6 @@ function serverUrl(): string {
   return `${proto}//${location.hostname}:8787`;
 }
 
-/** ?solo=1 이면 서버가 봇과 즉시 매칭해준다 */
 function withSolo(url: string): string {
   const solo = new URLSearchParams(location.search).get('solo');
   if (!solo) return url;
@@ -52,25 +61,34 @@ function withSolo(url: string): string {
 /* ── 상태 ──────────────────────────────────────────────────────────────── */
 
 const renderer = new Renderer();
-let selectedDeck = new URLSearchParams(location.search).get('deck') ?? DEFAULT_DECK_ID;
-let selectedHand = -1;
+let selectedFaction = new URLSearchParams(location.search).get('faction') ?? DEFAULT_FACTION_ID;
+/** 선택된 유닛 id. 없으면 '' */
+let selectedUnit = '';
+/** 기지 건설 모드 */
+let baseMode = false;
+let techOpen = false;
 let cursor: [number, number] | null = null;
-/** 직전 틱의 엔티티 위치 — 렌더 보간용 */
 const prevPos = new Map<number, [number, number]>();
+let lastFrameMs = performance.now();
 
 const net = new NetClient(withSolo(serverUrl()), {
   onQueued: () => setStatus('상대를 찾는 중…'),
-  onMatch: (team, opponent) => {
+  onMatch: (_team, opponent) => {
     setStatus('');
     $('overlay').classList.add('hidden');
     $('opponent').textContent = `vs ${opponent}`;
-    void team;
+    buildPalette();
+    buildTechPanel();
   },
-  onOver: (winner, crowns) => {
+  onOver: (winner, bases, mined) => {
     const me = net.myTeam;
-    const text =
-      winner === -1 ? '무승부' : winner === me ? '승리!' : '패배';
-    showOverlay(`${text}`, `왕관 ${crowns[me]} : ${crowns[me === 0 ? 1 : 0]}`);
+    const foe = me === 0 ? 1 : 0;
+    const text = winner === -1 ? '무승부' : winner === me ? '승리!' : '패배';
+    showOverlay(
+      text,
+      `기지 ${bases[me]} : ${bases[foe]}\n` +
+        `총 채굴 ${Math.floor(mined[me] / MINERAL_SCALE)} : ${Math.floor(mined[foe] / MINERAL_SCALE)}`,
+    );
   },
   onOpponentLeft: () => showOverlay('상대가 나갔습니다', '새로고침하면 다시 시작합니다'),
   onReject: (reason) => flash(rejectText(reason)),
@@ -82,12 +100,14 @@ const net = new NetClient(withSolo(serverUrl()), {
 
 function rejectText(reason: string): string {
   switch (reason) {
-    case 'no-elixir':
-      return '엘릭서 부족';
+    case 'no-minerals':
+      return '미네랄 부족';
     case 'bad-zone':
-      return '배치할 수 없는 위치';
-    case 'not-in-hand':
-      return '손패에 없는 카드';
+      return '내 기지 반경 밖입니다';
+    case 'locked':
+      return '아직 해금되지 않은 유닛';
+    case 'no-site':
+      return '기지를 세울 자리가 없습니다';
     case 'not-playing':
       return '경기 중이 아님';
     default:
@@ -99,12 +119,10 @@ function rejectText(reason: string): string {
 
 async function boot(): Promise<void> {
   await renderer.init($('arena'));
-  // 손패 카드를 먼저 만들어야 하단 패널 높이가 확정되고, 그래야 캔버스를 정확히 맞춘다
-  ensureHandEls();
+  buildPalette();
   fitCanvas();
   window.addEventListener('resize', fitCanvas);
 
-  // ?replay=<id|URL> 이면 서버 연결 없이 리플레이만 재생한다
   const replayId = new URLSearchParams(location.search).get('replay');
   if (replayId) {
     await bootReplay(replayId);
@@ -118,27 +136,38 @@ async function boot(): Promise<void> {
   });
   canvas.addEventListener('pointerdown', onPointerDown);
 
-  buildDeckPicker();
+  buildFactionPicker();
 
   $('start').addEventListener('click', () => {
     const name = ($('name') as HTMLInputElement).value.trim() || '플레이어';
-    net.connect(name, selectedDeck);
+    net.connect(name, selectedFaction);
     setStatus('접속 중…');
     ($('start') as HTMLButtonElement).disabled = true;
   });
 
+  $('btn-base').addEventListener('click', toggleBaseMode);
+  $('btn-tech').addEventListener('click', () => {
+    techOpen = !techOpen;
+    $('tech-panel').classList.toggle('hidden', !techOpen);
+    $('btn-tech').classList.toggle('open', techOpen);
+    fitCanvas();
+  });
+
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
+    if (e.key === 'Escape') {
+      selectedUnit = '';
+      baseMode = false;
+      refreshActionButtons();
+    }
     const n = Number(e.key);
-    if (n >= 1 && n <= HAND_SIZE) selectHand(n - 1);
+    if (n >= 1 && n <= 8) selectUnitByIndex(n - 1);
   });
 
   requestAnimationFrame(frame);
 }
 
-/**
- * 캔버스를 화면 크기에 맞춰 CSS로 스케일한다 (내부 해상도는 고정).
- * 남는 높이를 상수로 가정하면 기기마다 UI가 잘리므로, 실제 패널 높이를 측정한다.
- */
+/** 캔버스를 남는 높이에 맞춘다 (패널 높이를 실측한다) */
 function fitCanvas(): void {
   const host = $('arena');
   const reserved = $('topbar').offsetHeight + $('bottom').offsetHeight + 16;
@@ -149,6 +178,311 @@ function fitCanvas(): void {
   host.style.height = `${VIEW_H * scale}px`;
   renderer.canvas.style.width = `${VIEW_W * scale}px`;
   renderer.canvas.style.height = `${VIEW_H * scale}px`;
+}
+
+/* ── 종족 선택 ─────────────────────────────────────────────────────────── */
+
+function buildFactionPicker(): void {
+  const root = $('faction-picker');
+  root.replaceChildren();
+
+  for (const id of FACTION_IDS) {
+    const f = getFaction(id);
+    const el = document.createElement('button');
+    el.className = 'faction';
+    el.style.setProperty('--f-color', hex(f.color));
+    el.innerHTML = `<span class="fname"></span><span class="ftag"></span>`;
+    el.querySelector<HTMLElement>('.fname')!.textContent = f.name;
+    el.querySelector<HTMLElement>('.ftag')!.textContent = f.tagline;
+    el.addEventListener('click', () => {
+      selectedFaction = id;
+      refreshFactionPicker();
+    });
+    root.appendChild(el);
+  }
+  refreshFactionPicker();
+}
+
+function refreshFactionPicker(): void {
+  const buttons = $('faction-picker').children;
+  for (let i = 0; i < buttons.length; i++) {
+    buttons[i].classList.toggle('selected', FACTION_IDS[i] === selectedFaction);
+  }
+
+  // 시작 해금은 초록 테두리로 구분한다 — 무엇으로 시작하는지가 가장 중요한 정보다
+  const detail = $('faction-detail');
+  detail.replaceChildren();
+  for (const node of getFaction(selectedFaction).tech) {
+    const u = getUnit(node.unit);
+    const chip = document.createElement('span');
+    chip.className = node.cost === 0 ? 'chip start' : 'chip';
+    chip.style.setProperty('--chip-color', hex(u.color));
+    chip.textContent = u.name + (u.flying ? ' ✈' : '');
+    const cost = document.createElement('span');
+    cost.className = 'cc';
+    cost.textContent = node.cost === 0 ? '시작' : `T${node.tier}`;
+    chip.appendChild(cost);
+    detail.appendChild(chip);
+  }
+}
+
+/* ── 유닛 팔레트 / 테크 패널 ───────────────────────────────────────────── */
+
+let paletteEls: { el: HTMLElement; unit: string }[] = [];
+
+function factionOfMe(): ReturnType<typeof getFaction> {
+  const s = net.state;
+  return getFaction(s ? s.players[net.myTeam].faction : selectedFaction);
+}
+
+function buildPalette(): void {
+  const root = $('palette');
+  root.replaceChildren();
+  paletteEls = [];
+
+  for (const node of factionOfMe().tech) {
+    const u = getUnit(node.unit);
+    const el = document.createElement('button');
+    el.className = 'unit';
+    el.style.setProperty('--unit-color', hex(u.color));
+    el.innerHTML = `<span class="uname"></span><span class="ucost"></span>`;
+    el.querySelector<HTMLElement>('.uname')!.innerHTML =
+      u.name + (u.flying ? ' <span class="air">✈</span>' : '');
+    el.querySelector<HTMLElement>('.ucost')!.textContent = String(u.cost);
+    el.addEventListener('click', () => selectUnit(node.unit));
+    root.appendChild(el);
+    paletteEls.push({ el, unit: node.unit });
+  }
+}
+
+function selectUnit(unit: string): void {
+  baseMode = false;
+  selectedUnit = selectedUnit === unit ? '' : unit;
+  refreshActionButtons();
+}
+
+function selectUnitByIndex(i: number): void {
+  const entry = paletteEls[i];
+  if (entry) selectUnit(entry.unit);
+}
+
+function toggleBaseMode(): void {
+  baseMode = !baseMode;
+  if (baseMode) selectedUnit = '';
+  refreshActionButtons();
+}
+
+function refreshActionButtons(): void {
+  $('btn-base').classList.toggle('active', baseMode);
+}
+
+function buildTechPanel(): void {
+  const root = $('tech-panel');
+  root.replaceChildren();
+  const f = factionOfMe();
+
+  for (const tier of [1, 2]) {
+    const nodes = f.tech.filter((n) => n.tier === tier);
+    if (!nodes.length) continue;
+    const head = document.createElement('div');
+    head.className = 'tech-tier';
+    head.textContent = `${tier}단계`;
+    root.appendChild(head);
+
+    const row = document.createElement('div');
+    row.className = 'tech-row';
+    for (const node of nodes) {
+      const u = getUnit(node.unit);
+      const el = document.createElement('button');
+      el.className = 'tech';
+      el.dataset.unit = node.unit;
+      el.style.setProperty('--unit-color', hex(u.color));
+      el.innerHTML = `<span class="tname"></span><span class="tmeta"></span>`;
+      el.querySelector<HTMLElement>('.tname')!.textContent = u.name;
+      el.addEventListener('click', () => requestTech(node.unit));
+      row.appendChild(el);
+    }
+    root.appendChild(row);
+  }
+}
+
+function requestTech(unit: string): void {
+  const s = net.state;
+  if (!s) return;
+  const me = s.players[net.myTeam];
+  if (isUnlocked(me, unit)) return;
+  if (!canResearch(me, unit)) {
+    flash(me.research ? '이미 연구 중입니다' : '선행 연구가 필요합니다');
+    return;
+  }
+  const node = factionOfMe().tech.find((n) => n.unit === unit);
+  if (node && me.minerals < node.cost * MINERAL_SCALE) {
+    flash('미네랄 부족');
+    return;
+  }
+  net.act('tech', unit);
+}
+
+/* ── 입력 ──────────────────────────────────────────────────────────────── */
+
+function pointerToArena(ev: PointerEvent): [number, number] {
+  const rect = renderer.canvas.getBoundingClientRect();
+  const px = ((ev.clientX - rect.left) / rect.width) * VIEW_W;
+  const py = ((ev.clientY - rect.top) / rect.height) * VIEW_H;
+  return renderer.toArena(px, py, net.myTeam);
+}
+
+function onPointerMove(ev: PointerEvent): void {
+  cursor = pointerToArena(ev);
+}
+
+function onPointerDown(ev: PointerEvent): void {
+  const s = net.state;
+  if (!s) return;
+  const [x, y] = pointerToArena(ev);
+  cursor = [x, y];
+
+  if (baseMode) {
+    const me = s.players[net.myTeam];
+    if (me.minerals < BASE_BUILD_COST) {
+      flash('미네랄 부족');
+      return;
+    }
+    if (!nearestFreeSite(x, y, occupiedSites(s))) {
+      flash('근처에 빈 기지 자리가 없습니다');
+      return;
+    }
+    net.act('base', '', x, y);
+    baseMode = false;
+    refreshActionButtons();
+    return;
+  }
+
+  if (!selectedUnit) return;
+  const me = s.players[net.myTeam];
+  if (!isUnlocked(me, selectedUnit)) {
+    flash('해금되지 않은 유닛');
+    return;
+  }
+  if (me.minerals < getUnit(selectedUnit).cost * MINERAL_SCALE) {
+    flash('미네랄 부족');
+    return;
+  }
+  if (!deployable(s, x, y)) {
+    flash('내 기지 반경 안에만 배치할 수 있습니다');
+    return;
+  }
+  net.act('unit', selectedUnit, x, y);
+  selectedUnit = '';
+}
+
+function deployable(s: GameState, x: number, y: number): boolean {
+  return canDeployAt(x, y, ownBasePositions(s, net.myTeam));
+}
+
+/* ── 프레임 루프 ───────────────────────────────────────────────────────── */
+
+function frame(): void {
+  const now = performance.now();
+  renderer.advanceWorkerAnimation(now - lastFrameMs);
+  lastFrameMs = now;
+
+  net.update();
+
+  const s = net.state;
+  if (s) {
+    const site = baseMode && cursor ? nearestFreeSite(cursor[0], cursor[1], occupiedSites(s)) : null;
+    renderer.draw({
+      state: s,
+      myTeam: net.myTeam,
+      prev: prevPos,
+      alpha: net.alpha(),
+      cursor: selectedUnit ? cursor : null,
+      cursorValid: cursor ? deployable(s, cursor[0], cursor[1]) : false,
+      pendingSite: site ? { x: site.x, y: site.y } : null,
+      showDeployZone: Boolean(selectedUnit),
+    });
+    updateHud(s);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ── HUD ───────────────────────────────────────────────────────────────── */
+
+function updateHud(s: GameState): void {
+  const me = s.players[net.myTeam];
+  const foe = net.myTeam === 0 ? 1 : 0;
+
+  const minerals = me.minerals / MINERAL_SCALE;
+  $('mineral-fill').style.width = `${(me.minerals / MINERAL_MAX) * 100}%`;
+  $('mineral-num').textContent = `${Math.floor(minerals)} / ${MINERAL_MAX / MINERAL_SCALE}`;
+
+  // 초당 수입 = 가동 중이고 매장량이 남은 기지 수 × 틱당 수입 × 틱레이트
+  let active = 0;
+  for (const e of s.entities) {
+    if (e.kind === 'base' && e.team === net.myTeam && e.deploy === 0 && e.reserve > 0) active++;
+  }
+  const perSec = (active * INCOME_PER_TICK * TICK_RATE) / MINERAL_SCALE;
+  $('income').textContent = `+${perSec.toFixed(1)}/s`;
+
+  $('score').textContent = `🏠 ${baseCount(s, net.myTeam)} : ${baseCount(s, foe)}`;
+
+  const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
+  const left = Math.max(0, Math.ceil((limit - s.tick) / TICK_RATE));
+  $('timer').textContent =
+    `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+
+  // 유닛 팔레트
+  for (const { el, unit } of paletteEls) {
+    const u = getUnit(unit);
+    const unlocked = isUnlocked(me, unit);
+    const affordable = me.minerals >= u.cost * MINERAL_SCALE;
+    el.classList.toggle('selected', selectedUnit === unit);
+    el.classList.toggle('unaffordable', !unlocked || !affordable);
+    el.title = unlocked ? '' : '테크트리에서 해금이 필요합니다';
+  }
+
+  // 기지 건설 버튼
+  const baseBtn = $('btn-base') as HTMLButtonElement;
+  baseBtn.disabled = me.minerals < BASE_BUILD_COST;
+  baseBtn.textContent = baseMode
+    ? '자리를 클릭하세요'
+    : `기지 건설 (${BASE_BUILD_COST / MINERAL_SCALE})`;
+
+  // 테크 패널
+  if (techOpen) updateTechPanel(me);
+
+  $('research').textContent = me.research
+    ? `연구 중: ${getUnit(me.research.unit).name} ${Math.ceil(me.research.ticks / TICK_RATE)}초`
+    : '';
+
+  const st = net.stats();
+  $('netinfo').textContent = `${st.rttMs}ms · tick ${st.simTick}/${st.leadTick} · desync ${st.desyncs}`;
+  $('netinfo').classList.toggle('bad', st.desyncs > 0);
+}
+
+function updateTechPanel(me: GameState['players'][number]): void {
+  const f = factionOfMe();
+  for (const el of Array.from($('tech-panel').querySelectorAll<HTMLElement>('.tech'))) {
+    const unit = el.dataset.unit!;
+    const node = f.tech.find((n) => n.unit === unit);
+    if (!node) continue;
+
+    const done = isUnlocked(me, unit);
+    const active = me.research?.unit === unit;
+    const available = canResearch(me, unit) && me.minerals >= node.cost * MINERAL_SCALE;
+
+    el.classList.toggle('done', done);
+    el.classList.toggle('researching', active);
+    el.classList.toggle('locked', !done && !active && !available);
+
+    const meta = el.querySelector<HTMLElement>('.tmeta')!;
+    if (done) meta.textContent = '해금됨';
+    else if (active) meta.textContent = `${Math.ceil(me.research!.ticks / TICK_RATE)}초 남음`;
+    else if (node.requires && !isUnlocked(me, node.requires))
+      meta.textContent = `선행: ${getUnit(node.requires).name}`;
+    else meta.textContent = `${node.cost} · ${Math.round(node.researchTicks / TICK_RATE)}초`;
+  }
 }
 
 /* ── 리플레이 모드 ─────────────────────────────────────────────────────── */
@@ -163,7 +497,6 @@ async function bootReplay(id: string): Promise<void> {
   try {
     replay = await fetchReplay(withSolo(serverUrl()), id);
   } catch (err) {
-    // 목록을 함께 보여주면 id를 잘못 넣었을 때 바로 고칠 수 있다
     const list = await fetchReplayList(serverUrl()).catch(() => []);
     const hint = list.length
       ? `\n최근 리플레이: ${list.slice(0, 5).map((e) => e.id).join(', ')}`
@@ -181,16 +514,15 @@ async function bootReplay(id: string): Promise<void> {
       renderer.draw({
         state,
         myTeam: viewTeam,
-        // 리플레이는 틱 단위로 상태를 재구성하므로 보간 없이 그린다.
-        // 보간하려면 인접 두 틱을 동시에 들고 있어야 해서 뷰어가 복잡해진다.
+        // 리플레이는 틱 단위로 상태를 재구성하므로 보간 없이 그린다
         prev: prevPos,
         alpha: 1,
         cursor: null,
         cursorValid: false,
+        pendingSite: null,
+        showDeployZone: false,
       });
-      const me = state.players[viewTeam];
-      const foe = state.players[viewTeam === 0 ? 1 : 0];
-      $('crowns').textContent = `👑 ${me.crowns} : ${foe.crowns}`;
+      $('score').textContent = `🏠 ${baseCount(state, viewTeam)} : ${baseCount(state, viewTeam === 0 ? 1 : 0)}`;
     },
     onStatus: renderReplayStatus,
   });
@@ -221,184 +553,6 @@ function renderReplayStatus(s: ReplayStatus): void {
   $('timer').textContent = s.timeText.split(' / ')[0];
 }
 
-/* ── 덱 선택 ───────────────────────────────────────────────────────────── */
-
-function hex(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
-}
-
-function buildDeckPicker(): void {
-  const root = $('deck-picker');
-  root.replaceChildren();
-
-  for (const id of DECK_IDS) {
-    const deck = getDeck(id);
-    const el = document.createElement('button');
-    el.className = 'deck';
-    el.style.setProperty('--deck-color', hex(deck.color));
-    el.innerHTML = `<span class="dname"></span><span class="dtag"></span>`;
-    el.querySelector<HTMLElement>('.dname')!.textContent = deck.name;
-    el.querySelector<HTMLElement>('.dtag')!.textContent = deck.tagline;
-    el.addEventListener('click', () => {
-      selectedDeck = id;
-      refreshDeckPicker();
-    });
-    root.appendChild(el);
-  }
-  refreshDeckPicker();
-}
-
-function refreshDeckPicker(): void {
-  const buttons = $('deck-picker').children;
-  for (let i = 0; i < buttons.length; i++) {
-    buttons[i].classList.toggle('selected', DECK_IDS[i] === selectedDeck);
-  }
-
-  // 선택한 덱의 8장을 코스트와 함께 보여준다. 공중 유닛은 별도 표시 —
-  // 상대 덱에 공중이 있는데 내 덱에 대공이 없으면 그냥 진다.
-  const detail = $('deck-detail');
-  detail.replaceChildren();
-  for (const cardId of getDeck(selectedDeck).cards) {
-    const c = getCard(cardId);
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.style.setProperty('--chip-color', hex(c.color));
-    chip.textContent = c.name;
-    if (c.flying) {
-      const air = document.createElement('span');
-      air.className = 'air';
-      air.textContent = '✈';
-      chip.appendChild(air);
-    }
-    const cost = document.createElement('span');
-    cost.className = 'cc';
-    cost.textContent = String(c.cost);
-    chip.appendChild(cost);
-    detail.appendChild(chip);
-  }
-}
-
-/* ── 입력 ──────────────────────────────────────────────────────────────── */
-
-function pointerToArena(ev: PointerEvent): [number, number] {
-  const rect = renderer.canvas.getBoundingClientRect();
-  const px = ((ev.clientX - rect.left) / rect.width) * VIEW_W;
-  const py = ((ev.clientY - rect.top) / rect.height) * VIEW_H;
-  return renderer.toArena(px, py, net.myTeam);
-}
-
-function onPointerMove(ev: PointerEvent): void {
-  cursor = pointerToArena(ev);
-}
-
-function onPointerDown(ev: PointerEvent): void {
-  const s = net.state;
-  if (!s || selectedHand < 0) return;
-  const [x, y] = pointerToArena(ev);
-  cursor = [x, y];
-
-  const card = s.players[net.myTeam].cycle[selectedHand];
-  if (!card) return;
-
-  if (!deployable(s, x, y)) {
-    flash('배치할 수 없는 위치');
-    return;
-  }
-  if (s.players[net.myTeam].elixir < getCard(card).cost * ELIXIR_SCALE) {
-    flash('엘릭서 부족');
-    return;
-  }
-
-  net.play(card, x, y);
-  selectedHand = -1;
-}
-
-function deployable(s: GameState, x: number, y: number): boolean {
-  const enemy = s.players[net.myTeam === 0 ? 1 : 0];
-  return canDeploy(net.myTeam, x, y, enemy.princessDown);
-}
-
-function selectHand(i: number): void {
-  selectedHand = selectedHand === i ? -1 : i;
-}
-
-/* ── 프레임 루프 ───────────────────────────────────────────────────────── */
-
-function frame(): void {
-  net.update();
-
-  const s = net.state;
-  if (s) {
-    renderer.draw({
-      state: s,
-      myTeam: net.myTeam,
-      prev: prevPos,
-      alpha: net.alpha(),
-      cursor: selectedHand >= 0 ? cursor : null,
-      cursorValid: cursor ? deployable(s, cursor[0], cursor[1]) : false,
-    });
-    updateHud(s);
-  }
-  requestAnimationFrame(frame);
-}
-
-/* ── HUD ───────────────────────────────────────────────────────────────── */
-
-let handEls: HTMLElement[] = [];
-
-function ensureHandEls(): void {
-  if (handEls.length) return;
-  const root = $('hand');
-  for (let i = 0; i < HAND_SIZE; i++) {
-    const el = document.createElement('button');
-    el.className = 'card';
-    el.innerHTML = `<span class="cname"></span><span class="ccost"></span>`;
-    el.addEventListener('click', () => selectHand(i));
-    root.appendChild(el);
-    handEls.push(el);
-  }
-}
-
-function updateHud(s: GameState): void {
-  ensureHandEls();
-  const me = s.players[net.myTeam];
-  const foe = s.players[net.myTeam === 0 ? 1 : 0];
-
-  // 엘릭서
-  const elixir = me.elixir / ELIXIR_SCALE;
-  $('elixir-fill').style.width = `${(elixir / 10) * 100}%`;
-  $('elixir-num').textContent = String(Math.floor(elixir));
-
-  // 손패
-  for (let i = 0; i < HAND_SIZE; i++) {
-    const id = me.cycle[i];
-    const el = handEls[i];
-    const card = getCard(id);
-    el.querySelector<HTMLElement>('.cname')!.textContent = card.name;
-    el.querySelector<HTMLElement>('.ccost')!.textContent = String(card.cost);
-    el.style.setProperty('--card-color', `#${card.color.toString(16).padStart(6, '0')}`);
-    el.classList.toggle('selected', selectedHand === i);
-    el.classList.toggle('unaffordable', me.elixir < card.cost * ELIXIR_SCALE);
-  }
-  const nextId = me.cycle[HAND_SIZE];
-  $('next-card').textContent = nextId ? `다음: ${getCard(nextId).name}` : '';
-
-  // 시간
-  const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
-  const left = Math.max(0, Math.ceil((limit - s.tick) / TICK_RATE));
-  $('timer').textContent =
-    `${s.overtime ? '연장 ' : ''}${String(Math.floor(left / 60)).padStart(1, '0')}:${String(left % 60).padStart(2, '0')}`;
-
-  // 왕관
-  $('crowns').textContent = `👑 ${me.crowns} : ${foe.crowns}`;
-
-  // 넷 계기판 — 데스싱크가 0이 아니면 시뮬에 버그가 있다는 뜻이다
-  const st = net.stats();
-  $('netinfo').textContent =
-    `${st.rttMs}ms · tick ${st.simTick}/${st.leadTick} · desync ${st.desyncs}`;
-  $('netinfo').classList.toggle('bad', st.desyncs > 0);
-}
-
 /* ── 오버레이 / 토스트 ─────────────────────────────────────────────────── */
 
 function setStatus(text: string): void {
@@ -409,7 +563,10 @@ function showOverlay(title: string, sub: string): void {
   $('overlay').classList.remove('hidden');
   $('overlay-title').textContent = title;
   $('status').textContent = sub;
+  $('faction-picker').style.display = 'none';
+  $('faction-detail').style.display = 'none';
   ($('start') as HTMLButtonElement).style.display = 'none';
+  ($('name') as HTMLInputElement).style.display = 'none';
 }
 
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -418,7 +575,7 @@ function flash(text: string): void {
   el.textContent = text;
   el.classList.add('show');
   if (flashTimer) clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => el.classList.remove('show'), 1200);
+  flashTimer = setTimeout(() => el.classList.remove('show'), 1400);
 }
 
 boot().catch((err) => {

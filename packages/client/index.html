@@ -13,7 +13,9 @@
       --line: #24314b;
       --text: #e2e8f0;
       --muted: #94a3b8;
-      --elixir: #d946ef;
+      --mineral: #22d3ee;
+      --tech: #a78bfa;
+      --base: #facc15;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
@@ -39,7 +41,7 @@
       padding: 8px 12px;
       font-size: 13px;
     }
-    #crowns { font-weight: 700; }
+    #score { font-weight: 700; }
     #timer { font-variant-numeric: tabular-nums; font-weight: 700; }
     #opponent { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -55,246 +57,243 @@
     #arena canvas { display: block; }
 
     /* 하단 패널 */
-    #bottom {
-      width: 100%;
-      max-width: 520px;
-      padding: 10px 12px 14px;
-    }
-    #elixir-bar {
+    #bottom { width: 100%; max-width: 520px; padding: 8px 12px 12px; }
+
+    /* 미네랄 */
+    #mineral-row { display: flex; align-items: center; gap: 8px; }
+    #mineral-bar {
       position: relative;
+      flex: 1;
       height: 16px;
       background: #1e293b;
       border-radius: 8px;
       overflow: hidden;
       border: 1px solid var(--line);
     }
-    #elixir-fill {
+    #mineral-fill {
       height: 100%;
-      width: 50%;
-      background: linear-gradient(90deg, #a21caf, var(--elixir));
+      width: 25%;
+      background: linear-gradient(90deg, #0e7490, var(--mineral));
       transition: width 80ms linear;
     }
-    #elixir-num {
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      font-size: 11px;
-      font-weight: 800;
+    #mineral-num {
+      position: absolute; inset: 0;
+      display: grid; place-items: center;
+      font-size: 11px; font-weight: 800;
       text-shadow: 0 1px 2px rgba(0,0,0,.8);
+      font-variant-numeric: tabular-nums;
     }
+    #income { font-size: 11px; color: var(--mineral); font-weight: 700; white-space: nowrap; }
 
-    #hand {
+    /* 액션 행 */
+    #actions { display: flex; gap: 6px; margin-top: 8px; }
+    #actions button {
+      flex: 1;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 8px;
+      padding: 8px 6px;
+      cursor: pointer;
+    }
+    #btn-base { border-color: var(--base); color: var(--base); }
+    #btn-base.active { background: var(--base); color: #1a1a1a; }
+    #btn-tech.open { background: #2b2145; border-color: var(--tech); color: var(--tech); }
+    #actions button:disabled { opacity: .4; cursor: default; }
+
+    /* 유닛 팔레트 */
+    #palette {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-      margin-top: 10px;
+      gap: 6px;
+      margin-top: 8px;
     }
-    .card {
-      --card-color: #64748b;
+    .unit {
+      --unit-color: #64748b;
       position: relative;
-      aspect-ratio: 3 / 4;
-      max-height: 108px;
       border: 2px solid var(--line);
-      border-left: 5px solid var(--card-color);
-      border-radius: 9px;
+      border-left: 5px solid var(--unit-color);
+      border-radius: 8px;
       background: var(--panel);
       color: var(--text);
       font-family: inherit;
       cursor: pointer;
+      padding: 7px 6px;
+      text-align: left;
+      min-height: 52px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      padding: 8px 6px;
       transition: transform 90ms ease, border-color 90ms ease;
     }
-    /* '전투비행선' 같은 긴 이름이 두 줄로 깨지지 않도록 살짝 줄인다 */
-    .card .cname { font-size: 12px; font-weight: 700; letter-spacing: -0.4px; line-height: 1.25; }
-    .card .ccost {
+    .unit .uname { font-size: 11.5px; font-weight: 700; letter-spacing: -.3px; line-height: 1.2; }
+    .unit .ucost {
       align-self: flex-end;
-      font-size: 12px;
-      font-weight: 800;
-      background: var(--elixir);
-      color: #fff;
-      border-radius: 999px;
-      min-width: 20px;
-      height: 20px;
-      display: grid;
-      place-items: center;
+      font-size: 11px; font-weight: 800;
+      background: var(--mineral); color: #06232b;
+      border-radius: 999px; min-width: 18px; height: 18px;
+      display: grid; place-items: center;
     }
-    .card.selected { border-color: #facc15; transform: translateY(-6px); }
-    .card.unaffordable { opacity: .45; }
+    .unit.selected { border-color: #facc15; transform: translateY(-4px); }
+    .unit.unaffordable { opacity: .45; }
+    .unit .air { color: #7dd3fc; font-size: 10px; }
+
+    /* 테크 패널 */
+    #tech-panel {
+      margin-top: 8px;
+      border: 1px solid var(--tech);
+      border-radius: 10px;
+      background: #17132b;
+      padding: 8px;
+      max-height: 190px;
+      overflow-y: auto;
+    }
+    #tech-panel.hidden { display: none; }
+    .tech-tier { font-size: 10px; color: var(--muted); margin: 4px 0 3px; }
+    .tech-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tech {
+      --unit-color: #64748b;
+      flex: 1 1 30%;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--unit-color);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 6px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .tech .tname { font-weight: 700; display: block; }
+    .tech .tmeta { color: var(--muted); font-size: 10px; }
+    .tech.done { border-color: #22c55e; color: #86efac; cursor: default; }
+    .tech.locked { opacity: .45; cursor: default; }
+    .tech.researching { border-color: var(--tech); color: var(--tech); }
 
     #meta {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 8px;
-      font-size: 11px;
-      color: var(--muted);
+      display: flex; justify-content: space-between;
+      margin-top: 6px; font-size: 11px; color: var(--muted);
       font-variant-numeric: tabular-nums;
     }
     #netinfo.bad { color: #f87171; font-weight: 700; }
-
-    /* 시작 오버레이 */
-    #overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(8,13,24,.92);
-      display: grid;
-      place-content: center;
-      justify-items: center;
-      gap: 14px;
-      padding: 24px;
-      text-align: center;
-      z-index: 10;
-    }
-    #overlay.hidden { display: none; }
-    #overlay-title { font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
-    #overlay p { color: var(--muted); font-size: 13px; max-width: 320px; line-height: 1.6; }
-    #name {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      color: var(--text);
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-family: inherit;
-      font-size: 14px;
-      text-align: center;
-    }
-    #start {
-      background: linear-gradient(135deg, #d946ef, #8b5cf6);
-      color: #fff;
-      border: 0;
-      border-radius: 999px;
-      padding: 12px 32px;
-      font-size: 15px;
-      font-weight: 800;
-      font-family: inherit;
-      cursor: pointer;
-    }
-    #start:disabled { opacity: .5; cursor: default; }
-    #status { color: var(--muted); font-size: 13px; min-height: 18px; }
-
-    /* 덱 선택 */
-    /* 덱은 1열로 쌓는다 — 홀수 개일 때 빈 칸이 생기지 않고, 한 줄에 이름과
-       설명이 나란히 들어가 훑어보기 쉽다 */
-    #deck-picker {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      width: min(360px, 88vw);
-    }
-    .deck {
-      --deck-color: #64748b;
-      background: var(--panel);
-      border: 2px solid var(--line);
-      border-left: 5px solid var(--deck-color);
-      border-radius: 10px;
-      padding: 10px 12px;
-      color: var(--text);
-      font-family: inherit;
-      cursor: pointer;
-      text-align: left;
-      transition: border-color 90ms ease, transform 90ms ease;
-    }
-    .deck:hover { transform: translateX(3px); }
-    /* 선택 여부가 한눈에 보여야 한다 — 색만으로는 4장이 다 비슷해 보인다 */
-    .deck:not(.selected) { opacity: .5; }
-    .deck.selected {
-      opacity: 1;
-      border-color: var(--deck-color);
-      background: #1b2740;
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--deck-color) 35%, transparent);
-    }
-    .deck .dname { font-size: 14px; font-weight: 800; display: block; }
-    .deck .dtag { font-size: 11px; color: var(--muted); line-height: 1.4; display: block; margin-top: 3px; }
-
-    #deck-detail {
-      width: min(360px, 88vw);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      justify-content: center;
-      min-height: 44px;
-    }
-    .chip {
-      font-size: 10.5px;
-      padding: 3px 7px;
-      border-radius: 999px;
-      background: #1b2740;
-      border: 1px solid var(--line);
-      border-left: 3px solid var(--chip-color, #64748b);
-      white-space: nowrap;
-    }
-    .chip .cc { color: var(--elixir); font-weight: 800; margin-left: 3px; }
-    .chip .air { color: #7dd3fc; margin-left: 2px; }
 
     /* 리플레이 재생 바 */
     #replay-bar { margin-top: 10px; }
     #replay-bar.hidden { display: none; }
     .rb-row { display: flex; align-items: center; gap: 10px; }
     .rb-row button {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      color: var(--text);
-      font-family: inherit;
-      font-size: 13px;
-      font-weight: 700;
-      border-radius: 8px;
-      padding: 7px 12px;
-      min-width: 46px;
-      cursor: pointer;
+      background: var(--panel); border: 1px solid var(--line); color: var(--text);
+      font-family: inherit; font-size: 13px; font-weight: 700;
+      border-radius: 8px; padding: 7px 12px; min-width: 46px; cursor: pointer;
     }
-    .rb-row button:hover { border-color: var(--elixir); }
-    #rb-seek { flex: 1; accent-color: var(--elixir); cursor: pointer; }
+    #rb-seek { flex: 1; accent-color: var(--mineral); cursor: pointer; }
     .rb-info {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 6px;
-      font-size: 11px;
-      color: var(--muted);
-      font-variant-numeric: tabular-nums;
+      display: flex; justify-content: space-between; margin-top: 6px;
+      font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
     }
+    body.replay #palette,
+    body.replay #actions,
+    body.replay #tech-panel,
+    body.replay #mineral-row { display: none; }
 
-    /* 리플레이 모드에서는 손패와 엘릭서 바를 감춘다 (조작할 게 없다) */
-    body.replay #hand,
-    body.replay #elixir-bar,
-    body.replay #next-card { display: none; }
+    /* 시작 오버레이 */
+    #overlay {
+      position: fixed; inset: 0;
+      background: rgba(8,13,24,.94);
+      display: grid; place-content: center; justify-items: center;
+      gap: 14px; padding: 24px; text-align: center; z-index: 10;
+      overflow-y: auto;
+    }
+    #overlay.hidden { display: none; }
+    #overlay-title { font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
+    #overlay p { color: var(--muted); font-size: 13px; max-width: 340px; line-height: 1.7; }
+    #faction-picker { display: flex; flex-direction: column; gap: 8px; width: min(360px, 88vw); }
+    .faction {
+      --f-color: #64748b;
+      background: var(--panel);
+      border: 2px solid var(--line);
+      border-left: 5px solid var(--f-color);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text); font-family: inherit;
+      cursor: pointer; text-align: left;
+      transition: border-color 90ms ease, transform 90ms ease;
+    }
+    .faction:hover { transform: translateX(3px); }
+    .faction:not(.selected) { opacity: .5; }
+    .faction.selected {
+      opacity: 1; border-color: var(--f-color); background: #1b2740;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--f-color) 35%, transparent);
+    }
+    .faction .fname { font-size: 14px; font-weight: 800; display: block; }
+    .faction .ftag { font-size: 11px; color: var(--muted); line-height: 1.4; display: block; margin-top: 3px; }
+    #faction-detail {
+      width: min(360px, 88vw);
+      display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+      min-height: 40px;
+    }
+    .chip {
+      font-size: 10.5px; padding: 3px 7px; border-radius: 999px;
+      background: #1b2740; border: 1px solid var(--line);
+      border-left: 3px solid var(--chip-color, #64748b); white-space: nowrap;
+    }
+    .chip.start { border-color: #22c55e; }
+    .chip .cc { color: var(--mineral); font-weight: 800; margin-left: 3px; }
+    #name {
+      background: var(--panel); border: 1px solid var(--line); color: var(--text);
+      border-radius: 8px; padding: 10px 12px; font-family: inherit;
+      font-size: 14px; text-align: center;
+    }
+    #start {
+      background: linear-gradient(135deg, #0891b2, #6366f1);
+      color: #fff; border: 0; border-radius: 999px;
+      padding: 12px 32px; font-size: 15px; font-weight: 800;
+      font-family: inherit; cursor: pointer;
+    }
+    #start:disabled { opacity: .5; cursor: default; }
+    #status { color: var(--muted); font-size: 13px; min-height: 18px; white-space: pre-line; }
 
-    /* 토스트 */
     #toast {
-      position: fixed;
-      bottom: 220px;
-      background: rgba(15,23,42,.95);
-      border: 1px solid var(--line);
-      padding: 8px 16px;
-      border-radius: 999px;
-      font-size: 13px;
-      opacity: 0;
-      transition: opacity 150ms ease;
-      pointer-events: none;
-      z-index: 20;
+      position: fixed; bottom: 240px;
+      background: rgba(15,23,42,.95); border: 1px solid var(--line);
+      padding: 8px 16px; border-radius: 999px; font-size: 13px;
+      opacity: 0; transition: opacity 150ms ease; pointer-events: none; z-index: 20;
     }
     #toast.show { opacity: 1; }
   </style>
 </head>
 <body>
   <div id="topbar">
-    <span id="crowns">👑 0 : 0</span>
+    <span id="score">🏠 1 : 1</span>
     <span id="opponent"></span>
-    <span id="timer">3:00</span>
+    <span id="timer">4:00</span>
   </div>
 
   <div id="arena"></div>
 
   <div id="bottom">
-    <div id="elixir-bar">
-      <div id="elixir-fill"></div>
-      <div id="elixir-num">5</div>
+    <div id="mineral-row">
+      <div id="mineral-bar">
+        <div id="mineral-fill"></div>
+        <div id="mineral-num">8</div>
+      </div>
+      <span id="income">+0.0/s</span>
     </div>
-    <div id="hand"></div>
+
+    <div id="actions">
+      <button id="btn-base" type="button">기지 건설 (8)</button>
+      <button id="btn-tech" type="button">테크트리</button>
+    </div>
+
+    <div id="tech-panel" class="hidden"></div>
+    <div id="palette"></div>
+
     <div id="meta">
-      <span id="next-card"></span>
+      <span id="research"></span>
       <span id="netinfo"></span>
     </div>
 
@@ -314,11 +313,12 @@
   <div id="overlay">
     <div id="overlay-title">로얄</div>
     <p>
-      엘릭서를 모아 카드를 배치하고 상대 타워를 부수세요.<br />
-      카드를 고른 뒤 <strong>내 진영</strong>을 탭하면 배치됩니다. (숫자키 1~4)
+      기지가 미네랄을 캐고, 미네랄로 <strong>병력·확장·테크</strong>를 고릅니다.<br />
+      유닛은 <strong>내 기지 반경 안</strong>에만 배치할 수 있으니,
+      앞으로 나아가려면 먼저 확장하세요.
     </p>
-    <div id="deck-picker"></div>
-    <div id="deck-detail"></div>
+    <div id="faction-picker"></div>
+    <div id="faction-detail"></div>
     <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
     <button id="start">시작</button>
     <div id="status"></div>

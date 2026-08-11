@@ -5,29 +5,44 @@
  * 따라서 클라이언트는 봇의 존재를 알 필요가 없고, 결정론에도 영향이 없다.
  * (봇의 내부 RNG는 서버에만 있고 시뮬 상태에 들어가지 않는다.)
  *
- * v1 전략: "엘릭서가 차면 상황에 맞는 카드를 낸다" 수준의 규칙 기반.
- * 강한 AI는 M4 이후의 과제다.
+ * v1 전략은 매크로 게임의 기본 우선순위를 그대로 따른다:
+ *
+ *   1. 기지가 부족하면 확장한다        (수입이 모든 것의 기반)
+ *   2. 연구 중이 아니면 테크를 올린다  (해금 없이는 후반에 밀린다)
+ *   3. 남는 자원으로 병력을 뽑는다
+ *
+ * 강한 AI는 M6 이후의 과제다.
  */
 
 import {
-  ARENA_W,
-  ELIXIR_SCALE,
+  BASE_BUILD_COST,
+  BASE_SITES,
+  CommandKind,
+  DEPLOY_RADIUS,
   GameState,
-  HAND_SIZE,
-  RIVER_TOP,
+  MINERAL_SCALE,
   Rng,
+  baseCount,
+  canDeployAt,
+  canResearch,
   createRng,
-  getCard,
+  findTech,
+  getFaction,
+  getUnit,
+  isUnlocked,
   nextInt,
-  nextRange,
-  tiles,
+  occupiedSites,
+  ownBasePositions,
 } from '@royale/shared';
 
 /** 봇이 수를 두는 최소 간격 (틱) */
-const MIN_INTERVAL = 30;
+const MIN_INTERVAL = 24;
+/** 이 이상 기지를 늘리지는 않는다 */
+const MAX_BASES = 4;
 
 export interface BotMove {
-  card: string;
+  kind: CommandKind;
+  id: string;
   x: number;
   y: number;
 }
@@ -45,63 +60,79 @@ export class Bot {
     if (tick - this.lastTick < MIN_INTERVAL) return null;
 
     const me = s.players[1];
-    const hand = me.cycle.slice(0, HAND_SIZE);
+    const move = this.expand(s) ?? this.research(s) ?? this.produce(s, me);
+    if (move) this.lastTick = tick;
+    return move;
+  }
 
-    // 낼 수 있는 카드 중 가장 비싼 것을 고른다 (엘릭서를 흘리지 않도록)
+  /** 1순위: 확장 — 자기 진영에 가까운 빈 지점부터 채운다 */
+  private expand(s: GameState): BotMove | null {
+    if (s.players[1].minerals < BASE_BUILD_COST) return null;
+    if (baseCount(s, 1) >= MAX_BASES) return null;
+
+    const taken = occupiedSites(s);
+    // 팀 1은 위쪽이므로 y가 작은 지점을 선호한다
+    const candidates = BASE_SITES.filter((b) => !taken.has(b.id)).sort((a, b) => a.y - b.y);
+    const site = candidates[0];
+    if (!site) return null;
+    return { kind: 'base', id: '', x: site.x, y: site.y };
+  }
+
+  /** 2순위: 테크 — 지금 시작할 수 있고 비용을 감당하는 것 중 가장 싼 것 */
+  private research(s: GameState): BotMove | null {
+    const me = s.players[1];
+    if (me.research) return null;
+
+    const f = getFaction(me.faction);
+    let best: string | null = null;
+    let bestCost = Infinity;
+    for (const node of f.tech) {
+      if (!canResearch(me, node.unit)) continue;
+      const cost = node.cost * MINERAL_SCALE;
+      if (me.minerals < cost) continue;
+      if (node.cost < bestCost) {
+        bestCost = node.cost;
+        best = node.unit;
+      }
+    }
+    if (!best) return null;
+    // 확장 여력을 남겨두기 위해 자원이 넉넉할 때만 올린다
+    if (me.minerals < bestCost + BASE_BUILD_COST) return null;
+    return { kind: 'tech', id: best, x: 0, y: 0 };
+  }
+
+  /** 3순위: 병력 — 해금된 것 중 가장 비싼 것을 자기 기지 앞에 낸다 */
+  private produce(s: GameState, me: GameState['players'][number]): BotMove | null {
+    const bases = ownBasePositions(s, 1);
+    if (bases.length === 0) return null;
+
     let best: string | null = null;
     let bestCost = -1;
-    for (const id of hand) {
-      const c = getCard(id);
-      const cost = c.cost * ELIXIR_SCALE;
-      if (me.elixir < cost) continue;
-      if (c.cost > bestCost) {
-        bestCost = c.cost;
+    for (const id of me.unlocked) {
+      if (!isUnlocked(me, id)) continue;
+      const u = getUnit(id);
+      if (me.minerals < u.cost * MINERAL_SCALE) continue;
+      if (u.cost > bestCost) {
+        bestCost = u.cost;
         best = id;
       }
     }
     if (!best) return null;
 
-    // 엘릭서를 8 이상 모았을 때만 공격적으로 움직인다
-    if (me.elixir < 7 * ELIXIR_SCALE && nextInt(this.rng, 3) !== 0) return null;
+    // 가장 앞선(=y가 큰) 기지 앞에 낸다 — 팀 1은 아래로 밀고 내려간다
+    let front = bases[0];
+    for (const b of bases) if (b[1] > front[1]) front = b;
 
-    const card = getCard(best);
-    this.lastTick = tick;
-
-    // 주문은 적(팀 0) 유닛이 뭉친 곳에, 그 외에는 자기 진영 다리 앞에 배치
-    if (card.kind === 'spell') {
-      const target = this.densestEnemyCluster(s);
-      if (!target) return null;
-      return { card: best, x: target[0], y: target[1] };
+    const spread = DEPLOY_RADIUS / 2;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const x = front[0] + nextInt(this.rng, spread * 2) - spread;
+      const y = front[1] + nextInt(this.rng, spread);
+      if (canDeployAt(x, y, bases)) return { kind: 'unit', id: best, x, y };
     }
-
-    const lane = nextInt(this.rng, 2);
-    const x = lane === 0 ? nextRange(this.rng, tiles(2), tiles(6)) : nextRange(this.rng, tiles(12), tiles(16));
-    const y = nextRange(this.rng, tiles(9), RIVER_TOP - tiles(1));
-    return { card: best, x: Math.min(x, ARENA_W - tiles(1)), y };
-  }
-
-  /** 팀 0 유닛이 가장 많이 뭉친 지점 (주문 타겟팅용) */
-  private densestEnemyCluster(s: GameState): [number, number] | null {
-    const units = s.entities.filter((e) => e.team === 0 && e.kind === 'unit');
-    if (units.length === 0) return null;
-
-    let bestIdx = 0;
-    let bestCount = -1;
-    const r = tiles(3);
-    for (let i = 0; i < units.length; i++) {
-      let count = 0;
-      for (const o of units) {
-        const dx = o.x - units[i].x;
-        const dy = o.y - units[i].y;
-        if (dx * dx + dy * dy <= r * r) count++;
-      }
-      if (count > bestCount) {
-        bestCount = count;
-        bestIdx = i;
-      }
-    }
-    // 유닛 하나 잡자고 주문을 쓰진 않는다
-    if (bestCount < 2) return null;
-    return [units[bestIdx].x, units[bestIdx].y];
+    // 흩뿌리기가 전부 실패하면 기지 바로 위에 낸다
+    return { kind: 'unit', id: best, x: front[0], y: front[1] + 1000 };
   }
 }
+
+/** 참고: 선행 조건 확인은 shared의 canResearch가 담당한다 */
+void findTech;
