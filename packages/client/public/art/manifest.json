@@ -1,10 +1,90 @@
 {
   "_": "이미지를 넣은 뒤 여기에 적어야 화면에 나온다. 자세한 규격은 docs/ART_PIPELINE.md",
   "units": {
-    "rifleman": { "walk": { "frames": 5, "fps": 10 } },
-    "gnawer": { "attack": { "frames": 5, "fps": 14 } },
-    "siegetank": { "attack": { "frames": 5, "fps": 14 } },
-    "zealot": { "walk": { "frames": 5, "fps": 10 } }
+    "devourer": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "flamer": {
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "gnawer": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "lightpylon": {
+      "walk": {
+        "frames": 1,
+        "fps": 1
+      }
+    },
+    "mystic": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "rifleman": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "scoutcar": {
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "siegetank": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "spinetentacle": {
+      "walk": {
+        "frames": 1,
+        "fps": 1
+      }
+    },
+    "spitter": {
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "wingswarm": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "zealot": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      }
+    }
   },
   "bases": [],
   "worker": false

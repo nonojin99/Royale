@@ -46,7 +46,7 @@ const PX_PER_TILE = 30;
  * §3.3) 이 값 하나로 소형 ~26px, 대형 ~42px가 나온다. 도형일 때의 지름 25px과
  * 소형이 맞아떨어지도록 잡은 값이다.
  */
-const UNIT_SPRITE_H = PX_PER_TILE * 1.55;
+const UNIT_SPRITE_H = PX_PER_TILE * 2.0;
 export const VIEW_W = (ARENA_W / SCALE) * PX_PER_TILE;
 export const VIEW_H = (ARENA_H / SCALE) * PX_PER_TILE;
 
