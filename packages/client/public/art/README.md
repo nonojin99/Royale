@@ -7,9 +7,12 @@
 프레임을 한 장에 나란히 뽑은 시트(가로 배열, 투명 배경)를 그대로 넣으면 안 된다.
 게임은 균일한 셀 스트립을 기대하므로 먼저 잘라야 한다.
 
+원본 시트는 이 폴더가 아니라 저장소 최상위 [`art-src/`](../../../../art-src/)에 둔다 —
+이 폴더의 파일은 전부 브라우저로 배포되므로 게임이 안 쓰는 원본이 섞이면 안 된다.
+
 ```bash
 cd packages/client
-node tools/slice-sheet.mjs ~/받은시트.png --unit rifleman --anim walk --tier small
+node tools/slice-sheet.mjs ../../art-src/받은시트.png --unit rifleman --anim walk --tier small
 ```
 
 결과가 `units/rifleman.walk.png`로 저장되고, `manifest.json`에 붙여 넣을 내용이
