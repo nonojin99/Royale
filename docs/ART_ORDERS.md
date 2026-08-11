@@ -49,36 +49,62 @@
 
 ---
 
-## 2. 진행 현황
+## 2. 진행 체크리스트
 
-**12/24 유닛에 이미지가 일부 있고, 그중 3개는 재생성이 필요하다.**
+**24종 전부 새로 만든다.** 지금 게임에 들어 있는 이미지는 규격이 정립되기 전에
+받은 것이라 전부 교체 대상이다. 새 파일이 같은 이름으로 들어오면 덮어쓴다.
 
-### 재생성 필요 (3)
+### 먼저 한 마리로 화풍을 확정할 것
 
-| 유닛 | 문제 |
-|---|---|
-| `gnawer` 물어뜯는것 | 걷기와 공격이 **다른 생물** (거미 vs 전갈) |
-| `mystic` 술사 | 걷기와 공격의 갑옷 디자인이 다름 |
-| `devourer` 거대포식자 | 같은 생물이나 **그려진 크기가 달라** 화면 크기가 튐 |
+24종을 각각 다른 생성 배치로 뽑으면 **화풍이 흩어져서 화면이 조잡해진다.**
+색감·외곽선 굵기·디테일 밀도가 제각각이 되기 때문이다.
 
-### 한쪽만 있음 — 나머지 행만 있으면 되지만, 2행으로 다시 뽑는 게 낫다 (9)
+1. `rifleman` 하나를 먼저 뽑는다
+2. 잘라서 게임 화면에서 확인한다 (아래 §5)
+3. 마음에 들면 **그 이미지를 스타일 참조로 붙여서** 나머지를 뽑는다
 
-| 유닛 | 있는 것 | 없는 것 |
-|---|---|---|
-| `rifleman` 소총병 | 공격 | 걷기 |
-| `siegetank` 공성전차 | 공격 | 걷기 |
-| `wingswarm` 날개무리 | 공격 | 걷기 |
-| `zealot` 광전사 | 공격 | 걷기 |
-| `flamer` 화염병 | 걷기 | 공격 |
-| `scoutcar` 정찰차 | 걷기 | 공격 |
-| `spitter` 가시뱉는것 | 걷기 | 공격 |
-| `lightpylon` 빛기둥 | 정지 1장 | (건물이라 이대로도 됨) |
-| `spinetentacle` 가시촉수 | 정지 1장 | 공격 |
+이 순서를 지키면 나중에 전부 다시 만드는 일이 없다.
 
-### 아직 없음 (12)
+### 체크리스트
 
-`bulwark` `ironwalker` `gunship` `carpetbomb` `tunneler` `burrower`
-`sporetentacle` `strider` `shade` `fusionite` `skiff` `mindbreak`
+기갑단 (steel)
+- [ ] `rifleman` 소총병 — **화풍 기준. 이것부터**
+- [ ] `scoutcar` 정찰차
+- [ ] `flamer` 화염병
+- [ ] `bulwark` 방벽 *(건물)*
+- [ ] `ironwalker` 강철거인
+- [ ] `siegetank` 공성전차
+- [ ] `gunship` 전투비행선 *(공중)*
+- [ ] ~~`carpetbomb` 융단폭격~~ *(주문 — 유닛 아트 없음)*
+
+군체 (swarmhive)
+- [ ] `gnawer` 물어뜯는것
+- [ ] `spitter` 가시뱉는것
+- [ ] `tunneler` 굴착충
+- [ ] `spinetentacle` 가시촉수 *(건물)*
+- [ ] `burrower` 땅속의것
+- [ ] `sporetentacle` 포자촉수 *(건물)*
+- [ ] `wingswarm` 날개무리 *(공중)*
+- [ ] `devourer` 거대포식자
+
+신념단 (covenant)
+- [ ] `zealot` 광전사
+- [ ] `lightpylon` 빛기둥 *(건물)*
+- [ ] `strider` 사격보행기
+- [ ] `shade` 그림자
+- [ ] `mystic` 술사
+- [ ] `fusionite` 융합체
+- [ ] `skiff` 부유선 *(공중)*
+- [ ] ~~`mindbreak` 정신붕괴~~ *(주문 — 유닛 아트 없음)*
+
+유닛 외
+- [ ] `bases/main` 본진 (종족별 3종)
+- [ ] `bases/expansion` 확장 기지 (종족별 3종)
+- [ ] `worker` 일꾼
+- [ ] 미네랄 덩이
+- [ ] 이펙트 시트 (투사체 · 착탄 · 폭발 · 연기)
+
+**실제로 만들 유닛은 22종**이다. 주문 2종은 화면 효과라 유닛 스프라이트가 없다.
 
 ---
 
@@ -163,6 +189,16 @@ node tools/slice-sheet.mjs ../../art-src/clean/gnawer.png \
 등급은 `tools/tiers.json`이 갖고 있으므로 `--tier`를 줄 필요가 없다.
 출력된 내용을 `public/art/manifest.json`에 붙여 넣으면 끝.
 
+```bash
+# 4) 화면에서 확인 — 첫 유닛은 반드시 여기까지 하고 화풍을 확정할 것
+pnpm --filter @royale/server build && node packages/server/dist/index.js &
+pnpm --filter @royale/client dev
+# 브라우저에서 http://localhost:5173/?solo=1&faction=steel
+```
+
+화면에서 볼 것: **덩치가 코스트에 맞게 읽히는가**, 발이 팀 색 링에 붙어 있는가,
+걷다가 공격으로 넘어갈 때 크기가 튀지 않는가.
+
 ### 흔한 실패
 
 | 증상 | 원인 | 대처 |
@@ -175,38 +211,40 @@ node tools/slice-sheet.mjs ../../art-src/clean/gnawer.png \
 
 ---
 
-## 6. 아직 배정 안 된 원본 10장
+## 6. 옛 원본 처리
 
-`art-src/`에 이름이 무작위인 채로 남아 있다. 내용을 보고 추정한 것이라
-**맞는지 확인이 필요하다.** 이름만 바꾸면 바로 쓸 수 있는 것도 있다.
+`art-src/`에 규격 정립 전에 받은 파일들이 남아 있다. 전부 교체 대상이므로
+**새 파일을 같은 이름으로 넣으면 자연스럽게 덮인다.** 굳이 먼저 지울 필요는
+없고, 지금 게임에 들어 있는 이미지도 새것이 올 때까지 자리를 채워 준다.
 
-| 파일 | 내용 | 추정 용도 |
-|---|---|---|
-| `pXIUa.jpg` | 금빛 갑주 인간형 5프레임 (걷기) | **`zealot` 걷기** — 지금 공격만 있어서 바로 필요 |
-| `S1vgs.jpg` | 회청색 전투기 5프레임 | `gunship` 전투비행선 |
-| `xyXg4.jpg` | 금빛 유선형 비행체 5프레임 | `skiff` 부유선 |
-| `SXW12.jpg` | 회청색 대형 기지 (단일) | 기갑단 본진 → `bases/` |
-| `UhP8q.jpg` | 금빛 수정 대형 건물 (단일) | 신념단 본진 → `bases/` |
-| `WJYAU.jpg` | 금빛 수정 건물 (단일, 작음) | 신념단 확장 기지 |
-| `oB11L.jpg` | 청록 수정 건물 (단일) | `lightpylon` 또는 신념단 건물 |
-| `n0p9w.jpg` | 갈색 유기체 건물 (단일) | 군체 본진 → `bases/` |
-| `pfpWf.jpg` | 바위 위 청색 수정 덩이 (단일) | **미네랄 덩이** — 지금 도형으로 그림 |
-| `YUbFx.jpg` | **4행** 이펙트 시트 (투사체/착탄/폭발/연기) | 이펙트 — 슬라이서가 아직 4행을 처리 못 함 |
+깨끗한 상태로 시작하고 싶으면:
 
-기지·미네랄은 유닛과 경로가 다르다(`bases/main.png` 등). 배정을 알려주면
-그쪽 파이프라인을 붙이겠다.
+```bash
+rm -f art-src/*.jpg art-src/*.png
+rm -rf art-src/clean
+rm -f packages/client/public/art/units/*.png
+# manifest.json 의 units 를 {} 로 비운다
+```
+
+지우면 화면이 다시 도형으로 돌아간다. 게임은 정상 동작한다.
 
 ---
 
 ## 7. 우선순위
 
-1. **재생성 3종** (`gnawer` `mystic` `devourer`) — 지금 화면에서 어긋나 보인다
-2. **시작 해금 유닛** — 경기 시작하자마자 보인다
-   `rifleman` `scoutcar` / `gnawer` `spitter` / `zealot` `lightpylon`
-3. **1단계 테크** — 대부분의 경기에서 등장
+1. **`rifleman` 한 마리** — 화풍 기준을 잡는다. 여기서 멈추고 화면 확인
+2. **시작 해금 6종** — 경기 시작하자마자 보이므로 체감이 가장 크다
+   `scoutcar` / `gnawer` `spitter` / `zealot` `lightpylon`
+   *(여기까지 하면 세 종족 모두 "그럴듯한 첫 화면"이 된다)*
+3. **1단계 테크 9종** — 대부분의 경기에서 등장
    `flamer` `bulwark` `ironwalker` / `tunneler` `spinetentacle` `burrower` /
    `strider` `shade` `mystic`
-4. **2단계 테크** — 후반에만
+4. **2단계 테크 7종** — 후반에만 나온다
    `siegetank` `gunship` / `sporetentacle` `wingswarm` `devourer` /
    `fusionite` `skiff`
-5. 주문 2종(`carpetbomb` `mindbreak`)과 건물 이펙트는 M7.5(이펙트)에서 따로
+5. **기지 · 미네랄 · 일꾼** — 항상 화면에 있지만 지금 도형으로도 읽히긴 한다
+6. **이펙트 시트** — M7.5(타격 반응)에서 다룬다. 4행 시트라 슬라이서에
+   행 지원을 더 붙여야 한다
+
+각 단계가 끝날 때마다 화면을 한 번 보는 게 좋다. 22종을 다 만든 뒤에 규격이
+안 맞는 걸 발견하면 전부 다시 만들어야 한다.
