@@ -32,6 +32,7 @@ import {
   workerCapacity,
 } from '@royale/shared';
 
+import { art } from './art.js';
 import { NetClient } from './net.js';
 import { Renderer, VIEW_H, VIEW_W } from './render.js';
 import { ReplayStatus, ReplayView, fetchReplay, fetchReplayList } from './replayview.js';
@@ -125,6 +126,15 @@ async function boot(): Promise<void> {
   buildPalette();
   fitCanvas();
   window.addEventListener('resize', fitCanvas);
+
+  // 이미지를 먼저 불러온다. 경기 중에 뒤늦게 도착하면 같은 유닛이 도형이었다가
+  // 그림으로 바뀌는 게 눈에 보인다. 이미지가 한 장도 없어도 정상 진행된다.
+  const startBtn = $('start') as HTMLButtonElement;
+  startBtn.disabled = true;
+  setStatus('에셋 불러오는 중…');
+  await art.load();
+  startBtn.disabled = false;
+  setStatus(art.any ? `이미지 ${art.count}장 적용됨` : '');
 
   const replayId = new URLSearchParams(location.search).get('replay');
   if (replayId) {

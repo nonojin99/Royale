@@ -9,7 +9,9 @@
  * 넣지 않고 여기서 상태를 보고 그린다.
  */
 
-import { Application, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Text, TextStyle, Texture } from 'pixi.js';
+
+import { art } from './art.js';
 
 import {
   ARENA_H,
@@ -36,6 +38,15 @@ import {
 
 /** 1 타일당 픽셀 */
 const PX_PER_TILE = 30;
+
+/**
+ * 유닛 스프라이트가 차지하는 상자 높이.
+ *
+ * 이미지 안에서 소형은 캔버스의 55%, 대형은 90%를 채우기로 했으므로(ART_PIPELINE
+ * §3.3) 이 값 하나로 소형 ~26px, 대형 ~42px가 나온다. 도형일 때의 지름 25px과
+ * 소형이 맞아떨어지도록 잡은 값이다.
+ */
+const UNIT_SPRITE_H = PX_PER_TILE * 1.55;
 export const VIEW_W = (ARENA_W / SCALE) * PX_PER_TILE;
 export const VIEW_H = (ARENA_H / SCALE) * PX_PER_TILE;
 
@@ -78,12 +89,19 @@ export class Renderer {
   private readonly gTerrain = new Graphics();
   private readonly gField = new Graphics();
   private readonly gZone = new Graphics();
+  /** 이미지가 없는 엔티티의 도형 + 스프라이트 아래에 깔리는 것(그림자·발판 링) */
   private readonly gEntities = new Graphics();
+  /** 이미지가 있는 엔티티. y좌표로 정렬해 아래쪽이 위에 겹치게 한다 */
+  private readonly sprites = new Container();
+  /** 체력바처럼 스프라이트 **위에** 떠야 하는 것 */
+  private readonly gDecor = new Graphics();
   private readonly gOverlay = new Graphics();
   private readonly labels = new Container();
   private readonly labelPool: Text[] = [];
+  private readonly spritePool: Sprite[] = [];
   private terrainDrawn = false;
   private labelCount = 0;
+  private spriteCount = 0;
 
   async init(host: HTMLElement): Promise<void> {
     await this.app.init({
@@ -95,11 +113,14 @@ export class Renderer {
       autoDensity: true,
     });
     host.appendChild(this.app.canvas);
+    this.sprites.sortableChildren = true;
     this.world.addChild(
       this.gTerrain,
       this.gField,
       this.gZone,
       this.gEntities,
+      this.sprites,
+      this.gDecor,
       this.gOverlay,
       this.labels,
     );
@@ -240,8 +261,11 @@ export class Renderer {
   private drawEntities(input: RenderInput): void {
     const { state, myTeam, prev, alpha } = input;
     const g = this.gEntities;
+    const d = this.gDecor;
     g.clear();
+    d.clear();
     this.resetLabels();
+    this.resetSprites();
 
     for (const e of state.entities) {
       const p = prev.get(e.id);
@@ -252,18 +276,25 @@ export class Renderer {
       const teamColor = mine ? COLORS.teamMe : COLORS.teamFoe;
 
       if (e.kind === 'base') {
-        this.drawBase(g, e, sx, sy, teamColor, state);
+        this.drawBase(g, d, e, sx, sy, teamColor, state);
         continue;
       }
 
       const u = getUnit(e.unit);
+      const tex = art.unit(e.unit);
+
       if (e.kind === 'building') {
         const size = PX_PER_TILE * 1.5;
-        g.rect(sx - size / 2, sy - size / 2, size, size);
-        g.fill(u.color);
-        g.rect(sx - size / 2, sy - size / 2, size, size);
-        g.stroke({ width: 3.5, color: teamColor });
-        this.hpBar(g, sx, sy - size / 2 - 6, size, e);
+        if (tex) {
+          this.groundRing(g, sx, sy, size * 0.5, teamColor);
+          this.place(tex, sx, sy, PX_PER_TILE * 2.0, 0.85);
+        } else {
+          g.rect(sx - size / 2, sy - size / 2, size, size);
+          g.fill(u.color);
+          g.rect(sx - size / 2, sy - size / 2, size, size);
+          g.stroke({ width: 3.5, color: teamColor });
+        }
+        this.hpBar(d, sx, sy - size / 2 - 6, size, e);
         continue;
       }
 
@@ -277,25 +308,41 @@ export class Renderer {
         g.fill({ color: 0x000000, alpha: 0.28 });
       }
 
-      g.circle(sx, by, r);
-      g.fill(u.color);
-      g.circle(sx, by, r);
-      g.stroke({ width: 2.5, color: teamColor });
+      if (tex) {
+        // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
+        if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
+        this.place(tex, sx, by, UNIT_SPRITE_H, 0.88);
+      } else {
+        g.circle(sx, by, r);
+        g.fill(u.color);
+        g.circle(sx, by, r);
+        g.stroke({ width: 2.5, color: teamColor });
+      }
 
       if (e.flying) {
-        g.circle(sx, by, r + 3);
-        g.stroke({ width: 1.5, color: 0xffffff, alpha: 0.55 });
+        const ring = tex ? r + 1 : r + 3;
+        d.circle(sx, by, ring);
+        d.stroke({ width: 1.5, color: tex ? teamColor : 0xffffff, alpha: tex ? 0.9 : 0.55 });
       }
       if (e.deploy > 0) {
-        g.circle(sx, by, r + 4);
-        g.stroke({ width: 2, color: COLORS.deployRing, alpha: 0.9 });
+        d.circle(sx, by, r + 4);
+        d.stroke({ width: 2, color: COLORS.deployRing, alpha: 0.9 });
       }
-      this.hpBar(g, sx, by - r - 6, PX_PER_TILE * 1.1, e);
+      this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
     }
+  }
+
+  /** 스프라이트 발밑에 두는 팀 색 타원 링 */
+  private groundRing(g: Graphics, sx: number, sy: number, r: number, color: number): void {
+    g.ellipse(sx, sy, r * 1.05, r * 0.45);
+    g.fill({ color, alpha: 0.18 });
+    g.ellipse(sx, sy, r * 1.05, r * 0.45);
+    g.stroke({ width: 2, color, alpha: 0.85 });
   }
 
   private drawBase(
     g: Graphics,
+    d: Graphics,
     e: Entity,
     sx: number,
     sy: number,
@@ -305,22 +352,64 @@ export class Renderer {
     const faction = getFaction(state.players[e.team].faction);
     const size = e.isMain ? PX_PER_TILE * 2.4 : PX_PER_TILE * 1.8;
     const building = e.deploy > 0;
+    const tex = art.base(e.isMain);
 
-    g.rect(sx - size / 2, sy - size / 2, size, size);
-    g.fill({ color: faction.color, alpha: building ? 0.4 : 1 });
-    g.rect(sx - size / 2, sy - size / 2, size, size);
-    g.stroke({ width: 3.5, color: teamColor });
+    if (tex) {
+      this.groundRing(g, sx, sy, size * 0.5, teamColor);
+      const sp = this.place(tex, sx, sy, size * 1.25, 0.85);
+      // 건설 중에는 반투명 — 도형일 때의 규칙을 그대로 옮긴다
+      sp.alpha = building ? 0.45 : 1;
+    } else {
+      g.rect(sx - size / 2, sy - size / 2, size, size);
+      g.fill({ color: faction.color, alpha: building ? 0.4 : 1 });
+      g.rect(sx - size / 2, sy - size / 2, size, size);
+      g.stroke({ width: 3.5, color: teamColor });
 
-    if (e.isMain) {
-      // 본진은 안쪽에 표식을 하나 더 둬서 확장과 즉시 구분되게 한다
-      g.rect(sx - size / 6, sy - size / 6, size / 3, size / 3);
-      g.fill({ color: 0xffffff, alpha: 0.75 });
+      if (e.isMain) {
+        // 본진은 안쪽에 표식을 하나 더 둬서 확장과 즉시 구분되게 한다
+        g.rect(sx - size / 6, sy - size / 6, size / 3, size / 3);
+        g.fill({ color: 0xffffff, alpha: 0.75 });
+      }
     }
+
     if (building) this.label('건설 중', sx, sy - size / 2 - 12, 10);
     if (e.reserve <= 0) this.label('고갈', sx, sy + size / 2 + 10, 10);
 
-    this.hpBar(g, sx, sy - size / 2 - 7, size, e);
+    this.hpBar(d, sx, sy - size / 2 - 7, size, e);
     this.drawWorkers(g, workersAtBase(state, e), sx, sy);
+  }
+
+  /* ── 스프라이트 풀 ───────────────────────────────────────────────────── */
+
+  /**
+   * 엔티티 하나를 스프라이트로 배치한다.
+   *
+   * 크기는 **유닛 종류와 무관하게 같은 상자**에 맞춘다. 유닛의 덩치 차이는
+   * 이미지 안에서 캔버스 대비 55/70/90%로 표현하기로 했으므로(ART_PIPELINE
+   * §3.3), 여기서 유닛별로 배율을 따로 주면 그 규격이 두 번 적용된다.
+   */
+  private place(tex: Texture, x: number, y: number, height: number, anchorY: number): Sprite {
+    let sp = this.spritePool[this.spriteCount];
+    if (!sp) {
+      sp = new Sprite();
+      this.spritePool.push(sp);
+      this.sprites.addChild(sp);
+    }
+    this.spriteCount++;
+    sp.texture = tex;
+    sp.anchor.set(0.5, anchorY);
+    sp.scale.set(height / tex.height);
+    sp.position.set(x, y);
+    // 아래쪽(= y가 큰) 것이 위에 그려져야 겹침이 자연스럽다
+    sp.zIndex = Math.round(y);
+    sp.alpha = 1;
+    sp.visible = true;
+    return sp;
+  }
+
+  private resetSprites(): void {
+    for (const s of this.spritePool) s.visible = false;
+    this.spriteCount = 0;
   }
 
   /**
