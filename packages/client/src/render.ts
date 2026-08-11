@@ -266,6 +266,7 @@ export class Renderer {
     d.clear();
     this.resetLabels();
     this.resetSprites();
+    this.pruneAnimState(state);
 
     for (const e of state.entities) {
       const p = prev.get(e.id);
@@ -281,7 +282,8 @@ export class Renderer {
       }
 
       const u = getUnit(e.unit);
-      const tex = art.unit(e.unit);
+      const moved = !!p && (p[0] !== e.x || p[1] !== e.y);
+      const tex = this.frameFor(e, moved);
 
       if (e.kind === 'building') {
         const size = PX_PER_TILE * 1.5;
@@ -330,6 +332,50 @@ export class Renderer {
       }
       this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
     }
+  }
+
+  /**
+   * 이 엔티티가 지금 보여야 할 프레임.
+   *
+   * 애니메이션 선택은 **시뮬 상태에서 파생**한다. 시뮬에 애니메이션 상태를
+   * 넣으면 한쪽 클라이언트에만 이미지가 있어도 결정론이 깨진다.
+   *
+   * - 공격: 쿨다운이 올라간 순간 = 방금 쏜 것이다. 한 번만 재생한다
+   * - 걷기: 직전 틱 대비 좌표가 변했다
+   * - 그 외: 대기 (없으면 걷기 0프레임에서 멈춘다)
+   */
+  private frameFor(e: Entity, moved: boolean): Texture | null {
+    const prevCd = this.prevCd.get(e.id);
+    const fired = prevCd !== undefined && e.cd > prevCd;
+    this.prevCd.set(e.id, e.cd);
+
+    let st = this.animState.get(e.id);
+    const attack = art.clip(e.unit, 'attack');
+
+    if (fired && attack) {
+      st = { name: 'attack', startMs: this.nowMs };
+      this.animState.set(e.id, st);
+    } else {
+      // 공격 재생이 끝나기 전에는 다른 동작으로 넘어가지 않는다
+      const busy =
+        st?.name === 'attack' && attack && this.nowMs - st.startMs < attack.durationMs;
+      if (!busy) {
+        const want = moved && art.clip(e.unit, 'walk') ? 'walk' : 'idle';
+        if (!st || st.name !== want) {
+          st = { name: want, startMs: this.nowMs };
+          this.animState.set(e.id, st);
+        }
+      }
+    }
+
+    const clip = art.clip(e.unit, st!.name) ?? art.clip(e.unit, 'walk');
+    if (!clip) return art.unit(e.unit);
+
+    const i = Math.floor(((this.nowMs - st!.startMs) / 1000) * clip.fps);
+    // 대기는 걷기 첫 프레임에 멈춰 있고, 공격은 마지막 프레임에서 끝난다
+    if (st!.name === 'idle' && !art.clip(e.unit, 'idle')) return clip.textures[0];
+    const last = clip.textures.length - 1;
+    return clip.textures[st!.name === 'attack' ? Math.min(i, last) : i % clip.textures.length];
   }
 
   /** 스프라이트 발밑에 두는 팀 색 타원 링 */
@@ -440,12 +486,29 @@ export class Renderer {
     }
   }
 
-  /** 일꾼 애니메이션 위상 (0~1). 렌더 전용 값이라 시뮬과 무관하다 */
-  private workerPhase = 0;
+  /* ── 애니메이션 시계 (전부 렌더 전용, 시뮬과 무관) ──────────────────── */
 
-  advanceWorkerAnimation(deltaMs: number): void {
+  /** 일꾼 애니메이션 위상 (0~1) */
+  private workerPhase = 0;
+  /** 렌더 기준 경과 시간(ms). 프레임 선택에 쓴다 */
+  private nowMs = 0;
+  /** 엔티티별 현재 동작 */
+  private readonly animState = new Map<number, { name: string; startMs: number }>();
+  /** 직전에 본 공격 쿨다운 — 올라가면 방금 쏜 것이다 */
+  private readonly prevCd = new Map<number, number>();
+
+  advanceAnimations(deltaMs: number): void {
+    this.nowMs += deltaMs;
     // 1.6초에 한 번 왕복
     this.workerPhase = (this.workerPhase + deltaMs / 1600) % 1;
+  }
+
+  /** 죽은 엔티티가 남긴 항목을 걷어낸다 — 경기가 길어지면 계속 쌓인다 */
+  private pruneAnimState(state: GameState): void {
+    if (this.animState.size < state.entities.length * 2 + 32) return;
+    const live = new Set(state.entities.map((e) => e.id));
+    for (const id of this.animState.keys()) if (!live.has(id)) this.animState.delete(id);
+    for (const id of this.prevCd.keys()) if (!live.has(id)) this.prevCd.delete(id);
   }
 
   private hpBar(g: Graphics, cx: number, cy: number, w: number, e: Entity): void {

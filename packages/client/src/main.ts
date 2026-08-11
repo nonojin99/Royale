@@ -415,7 +415,7 @@ function deployable(s: GameState, x: number, y: number): boolean {
 
 function frame(): void {
   const now = performance.now();
-  renderer.advanceWorkerAnimation(now - lastFrameMs);
+  renderer.advanceAnimations(now - lastFrameMs);
   lastFrameMs = now;
 
   net.update();
