@@ -26,6 +26,9 @@ import {
   ReplayPlayer,
   RIVER_BOT,
   RIVER_TOP,
+  navDistance,
+  navStep,
+  walkable,
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
   TICK_RATE,
@@ -755,6 +758,31 @@ test('지상 유닛은 강을 건너지 않고 다리로만 넘어간다', () =>
     }
   }
   assert.ok(sawRiver, '유닛이 400틱 동안 강에 도달조차 못했다');
+});
+
+test('길찾기는 지형 데이터만 보고 결정된다 (하드코딩된 다리가 아니라)', () => {
+  // 강 한복판의 다리 밖 지점은 통행 불가여야 한다
+  assert.equal(walkable(9, 16), false, '다리 밖 강이 통행 가능으로 잡혔다');
+  assert.equal(walkable(4, 16), true, '왼쪽 다리가 통행 불가로 잡혔다');
+  assert.equal(walkable(14, 16), true, '오른쪽 다리가 통행 불가로 잡혔다');
+
+  // 강 건너로 가는 길은 반드시 다리를 지나므로, 직선 거리보다 멀어야 한다.
+  // 이게 성립해야 "지형을 실제로 돌아간다"고 말할 수 있다.
+  const across = navDistance(9000, 25000, 9000, 5000);
+  assert.ok(across > 0, '강 건너가 도달 불가로 잡혔다');
+  const straightTiles = 20; // 25 → 5 타일
+  assert.ok(
+    across > straightTiles * 10,
+    `우회 없이 직선으로 가로지른다 (거리 ${across}, 직선 ${straightTiles * 10})`,
+  );
+});
+
+test('길찾기 결과는 호출 순서와 무관하다 (캐시가 결과를 바꾸지 않는다)', () => {
+  // 거리장을 캐시하므로, 캐시가 비어 있을 때와 차 있을 때가 같아야 한다.
+  const first = navStep(3000, 25000, 9000, 3000);
+  for (let i = 0; i < 50; i++) navStep(i * 300, 20000, 15000, 4000);
+  const again = navStep(3000, 25000, 9000, 3000);
+  assert.deepEqual(again, first, '다른 목적지를 조회한 뒤 결과가 달라졌다');
 });
 
 test('공중과 지상은 서로 밀어내지 않는다 (다른 층)', () => {

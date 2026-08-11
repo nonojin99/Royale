@@ -21,21 +21,16 @@ import {
   ARENA_H,
   ARENA_W,
   BASE_SITES,
-  BRIDGE_HALF_W,
-  BRIDGE_X,
   BaseSite,
   Lane,
-  RIVER_BOT,
-  RIVER_MID,
-  RIVER_TOP,
   Team,
   canDeployAt,
   getSite,
   inRiver,
-  mustCross,
   nearestFreeSite,
   nearestLane,
 } from './arena.js';
+import { navStep } from './nav.js';
 import {
   BASE_BUILD_COST,
   BASE_BUILD_TICKS,
@@ -579,18 +574,16 @@ function findById(s: GameState, id: number): Entity | undefined {
 
 /* ── 이동 ──────────────────────────────────────────────────────────────── */
 
-/** 목표까지 가기 위해 지금 향해야 할 지점 (강을 건너야 하면 다리를 경유) */
+/**
+ * 목표까지 가기 위해 지금 향해야 할 지점.
+ *
+ * 지형을 아는 것은 `nav` 뿐이다. 여기서는 "날면 직선, 아니면 길을 물어본다"만
+ * 판단한다. 그래서 맵이 바뀌어도 이 함수는 손댈 필요가 없다.
+ */
 function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
   // 공중 유닛은 지형을 무시하고 직선으로 난다.
   if (e.flying) return [tx, ty];
-  if (!mustCross(e.y, ty)) return [tx, ty];
-
-  const bx = BRIDGE_X[e.lane];
-  const onBridgeColumn = Math.abs(e.x - bx) <= BRIDGE_HALF_W;
-  if (!onBridgeColumn) {
-    return [bx, e.y < RIVER_MID ? RIVER_TOP - 500 : RIVER_BOT + 500];
-  }
-  return [bx, e.y < RIVER_MID ? RIVER_BOT + 500 : RIVER_TOP - 500];
+  return navStep(e.x, e.y, tx, ty);
 }
 
 /* ── 틱 진행 ───────────────────────────────────────────────────────────── */

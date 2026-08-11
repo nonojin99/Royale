@@ -2,6 +2,7 @@ export * from './fixed.js';
 export * from './rng.js';
 export * from './constants.js';
 export * from './arena.js';
+export * from './nav.js';
 export * from './units.js';
 export * from './factions.js';
 export * from './sim.js';
