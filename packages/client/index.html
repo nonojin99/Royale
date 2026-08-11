@@ -30,6 +30,35 @@
       overflow: hidden;
     }
 
+    /*
+     * 넓은 화면(PC)에서는 조작부를 오른쪽으로 뺀다.
+     *
+     * 세로 스택으로 두면 아레나 높이가 조작부에 눌려서, 1080p 화면에서도
+     * 유닛이 폰에서보다 작게 보인다. 가로는 남아도는데 세로가 모자란
+     * 상황이라 사이드바가 정답이다.
+     */
+    :root { --sidebar-w: 0px; }
+    @media (min-width: 900px) {
+      :root { --sidebar-w: 380px; }
+      body {
+        display: grid;
+        grid-template-columns: 1fr var(--sidebar-w);
+        grid-template-rows: auto 1fr;
+        grid-template-areas: "top top" "arena side";
+        height: 100dvh;
+        align-items: stretch;
+      }
+      #topbar { grid-area: top; max-width: none; }
+      #arena { grid-area: arena; place-self: center; }
+      #bottom {
+        grid-area: side;
+        max-width: none;
+        overflow-y: auto;
+        align-self: stretch;
+        border-left: 1px solid #1e293b;
+      }
+    }
+
     /* 상단 바 */
     #topbar {
       width: 100%;

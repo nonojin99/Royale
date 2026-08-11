@@ -185,9 +185,19 @@ async function boot(): Promise<void> {
 /** 캔버스를 남는 높이에 맞춘다 (패널 높이를 실측한다) */
 function fitCanvas(): void {
   const host = $('arena');
-  const reserved = $('topbar').offsetHeight + $('bottom').offsetHeight + 16;
+  // 사이드바 폭은 CSS가 정한다(--sidebar-w). 0이면 세로 스택(모바일) 배치다.
+  const sidebar =
+    parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w')) || 0;
+  const wide = sidebar > 0;
+
+  const reserved = wide
+    ? $('topbar').offsetHeight + 16
+    : $('topbar').offsetHeight + $('bottom').offsetHeight + 16;
   const availH = Math.max(200, window.innerHeight - reserved);
-  const availW = Math.min(window.innerWidth - 24, 520);
+  // 좁은 화면에서는 520px로 묶어 두지만, 넓은 화면에서는 남는 가로를 다 쓴다
+  const availW = wide
+    ? Math.max(200, window.innerWidth - sidebar - 24)
+    : Math.min(window.innerWidth - 24, 520);
   const scale = Math.min(availW / VIEW_W, availH / VIEW_H);
   host.style.width = `${VIEW_W * scale}px`;
   host.style.height = `${VIEW_H * scale}px`;
