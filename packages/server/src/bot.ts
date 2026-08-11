@@ -28,7 +28,6 @@ import {
   canDeployAt,
   canResearch,
   createRng,
-  findTech,
   getFaction,
   getUnit,
   isUnlocked,
@@ -144,6 +143,3 @@ export class Bot {
     return { kind: 'unit', id: best, x: front[0], y: front[1] + 1000 };
   }
 }
-
-/** 참고: 선행 조건 확인은 shared의 canResearch가 담당한다 */
-void findTech;

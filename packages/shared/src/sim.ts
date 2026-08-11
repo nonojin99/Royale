@@ -256,6 +256,26 @@ export function activeWorkers(s: GameState, team: Team): number {
 }
 
 /**
+ * 이 기지에 배치된 일꾼 수.
+ *
+ * 배분 규칙(id 오름차순, 정원까지)을 렌더러가 따로 복제하면 언젠가 어긋난다.
+ * 그래서 규칙은 여기 한 곳에만 두고 조회로 노출한다.
+ */
+export function workersAtBase(s: GameState, base: Entity): number {
+  if (base.kind !== 'base' || base.deploy > 0 || base.reserve <= 0) return 0;
+  let left = s.players[base.team].workers;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== base.team) continue;
+    if (e.deploy > 0 || e.reserve <= 0) continue;
+    const assigned = left < WORKER_CAP_PER_BASE ? left : WORKER_CAP_PER_BASE;
+    if (e.id === base.id) return assigned;
+    left -= assigned;
+    if (left <= 0) return 0;
+  }
+  return 0;
+}
+
+/**
  * 채굴 — 일꾼을 기지에 id 오름차순으로 정원까지 배분하고, 배분된 만큼 캔다.
  *
  * 배분 순서가 고정이라 결정론이 유지되고, 각 기지가 자기 몫만큼만 매장량을

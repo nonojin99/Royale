@@ -28,8 +28,10 @@ import {
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
   Team,
+  WORKER_CAP_PER_BASE,
   getFaction,
   getUnit,
+  workersAtBase,
 } from '@royale/shared';
 
 /** 1 타일당 픽셀 */
@@ -318,7 +320,7 @@ export class Renderer {
     if (e.reserve <= 0) this.label('고갈', sx, sy + size / 2 + 10, 10);
 
     this.hpBar(g, sx, sy - size / 2 - 7, size, e);
-    this.drawWorkers(g, e, sx, sy);
+    this.drawWorkers(g, workersAtBase(state, e), sx, sy);
   }
 
   /**
@@ -328,20 +330,23 @@ export class Renderer {
    * 대상이 되지 않는다. 일꾼 견제를 게임 규칙으로 넣는 것은 별개의 큰 작업이라
    * 지금은 수입의 시각화로만 둔다.
    */
-  private drawWorkers(g: Graphics, e: Entity, sx: number, sy: number): void {
-    if (e.deploy > 0 || e.reserve <= 0) return;
+  private drawWorkers(g: Graphics, count: number, sx: number, sy: number): void {
+    if (count <= 0) return;
+    // 덩이 하나에 일꾼 둘이 붙으므로, 덩이 열에 맞춰 두 줄로 늘어놓는다
     const gap = PX_PER_TILE * 0.55;
     const patchY = sy + PX_PER_TILE * 1.15;
     const startX = sx - (gap * (MINERAL_PATCHES - 1)) / 2;
 
-    for (let i = 0; i < MINERAL_PATCHES; i++) {
+    for (let i = 0; i < count && i < WORKER_CAP_PER_BASE; i++) {
+      const lane = i % MINERAL_PATCHES;
+      const row = Math.floor(i / MINERAL_PATCHES);
       // 일꾼마다 위상을 어긋나게 해서 한꺼번에 움직이지 않게 한다
-      const phase = (this.workerPhase + i * 0.25) % 1;
+      const phase = (this.workerPhase + i * 0.13) % 1;
       // 0→1 사이를 왕복 (0.5에서 반환)
       const t = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-      const wx = startX + gap * i;
+      const wx = startX + gap * lane + (row === 1 ? gap * 0.28 : -gap * 0.28);
       const wy = sy + (patchY - sy) * t;
-      g.circle(wx, wy, 3);
+      g.circle(wx, wy, 2.6);
       g.fill(COLORS.worker);
     }
   }
