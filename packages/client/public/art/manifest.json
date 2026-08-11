@@ -1,6 +1,11 @@
 {
   "_": "이미지를 넣은 뒤 여기에 적어야 화면에 나온다. 자세한 규격은 docs/ART_PIPELINE.md",
-  "units": {},
+  "units": {
+    "rifleman": { "walk": { "frames": 5, "fps": 10 } },
+    "gnawer": { "attack": { "frames": 5, "fps": 14 } },
+    "siegetank": { "attack": { "frames": 5, "fps": 14 } },
+    "zealot": { "walk": { "frames": 5, "fps": 10 } }
+  },
   "bases": [],
   "worker": false
 }

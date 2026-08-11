@@ -101,19 +101,24 @@ function evenCells(width, n) {
   return out;
 }
 
-/** 구간 안에서 실제 그림이 차지하는 세로 범위 */
+/**
+ * 구간 안에서 실제 그림이 차지하는 세로 범위.
+ *
+ * 한 줄에 불투명 픽셀이 `MIN_ROW_PX`개는 있어야 "그림이 있다"고 본다. JPG에서
+ * 배경을 지우고 나면 사방에 1px 잡티가 흩뿌려지는데, 한 픽셀만으로 판정하면
+ * 그 잡티까지 경계에 들어가 유닛이 실제보다 작게 축소된다.
+ */
+const MIN_ROW_PX = 4;
+
 function verticalBounds(png, x0, x1) {
   let top = -1;
   let bot = -1;
   for (let y = 0; y < png.height; y++) {
-    let has = false;
+    let n = 0;
     for (let x = x0; x <= x1; x++) {
-      if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) {
-        has = true;
-        break;
-      }
+      if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) n++;
     }
-    if (has) {
+    if (n >= MIN_ROW_PX) {
       if (top < 0) top = y;
       bot = y;
     }
@@ -223,6 +228,16 @@ if (ratio < 0.02) {
 }
 
 let spans = findFrameSpans(columnOccupancy(png));
+
+// JPG에서 배경을 지우고 나면 1~2px짜리 잡티가 남아 프레임으로 오인된다.
+// 실제 프레임이 이만큼 좁을 수는 없다.
+const MIN_SPAN = 8;
+const specks = spans.filter((s) => s[1] - s[0] + 1 < MIN_SPAN).length;
+if (specks) {
+  spans = spans.filter((s) => s[1] - s[0] + 1 >= MIN_SPAN);
+  console.log(`  ${MIN_SPAN}px 미만 잡티 ${specks}개 무시`);
+}
+
 if (!spans.length) {
   console.error('불투명한 픽셀을 찾지 못했다. 배경이 투명한 PNG가 맞는지 확인할 것');
   process.exit(1);
@@ -251,6 +266,40 @@ for (const [x0, x1] of spans) {
   unionTop = Math.min(unionTop, top);
   unionBot = Math.max(unionBot, bot);
   maxW = Math.max(maxW, x1 - x0 + 1);
+}
+
+// 생성 도구가 프레임 아래에 "Frame1 Frame2…" 같은 라벨을 그려 넣는 경우가 있다.
+// 그대로 두면 합집합 경계가 라벨까지 삼켜 유닛이 작아지고 발 위치가 어긋난다.
+// 본체와 뚝 떨어진 얇은 띠가 아래쪽에 있으면 그것이 라벨이다.
+{
+  const rows = new Uint8Array(png.height);
+  for (let y = 0; y < png.height; y++) {
+    let n = 0;
+    for (let x = 0; x < png.width; x++) if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) n++;
+    rows[y] = n > 3 ? 1 : 0;
+  }
+  const bands = [];
+  let s = -1;
+  for (let y = 0; y < png.height; y++) {
+    if (rows[y] && s < 0) s = y;
+    else if (!rows[y] && s >= 0) {
+      bands.push([s, y - 1]);
+      s = -1;
+    }
+  }
+  if (s >= 0) bands.push([s, png.height - 1]);
+  if (bands.length >= 2) {
+    const main = bands.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
+    const tail = bands[bands.length - 1];
+    if (tail !== main && tail[0] > main[1] && tail[1] - tail[0] + 1 < (main[1] - main[0]) * 0.25) {
+      const pct = Math.ceil(((png.height - tail[0] + 4) / png.height) * 100);
+      console.warn(
+        `  ⚠ 본체(y ${main[0]}~${main[1]}) 아래에 얇은 띠(y ${tail[0]}~${tail[1]})가 있다.\n` +
+          `    "Frame1 Frame2…" 같은 구워진 라벨일 가능성이 높다. 그대로 두면 유닛이 작아진다.\n` +
+          `    dealpha.mjs 에 --cropbottom ${pct} 을 주고 다시 만들 것.`,
+      );
+    }
+  }
 }
 
 const unionH = unionBot - unionTop + 1;
