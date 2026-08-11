@@ -9,34 +9,81 @@
  */
 
 import { createServer } from 'node:http';
+import type { ServerResponse } from 'node:http';
 import { WebSocketServer } from 'ws';
 
-import { ClientMsg, DECK_IDS, TICK_MS, Team, getDeck } from '@royale/shared';
+import { ClientMsg, DECK_IDS, Replay, TICK_MS, Team, getDeck } from '@royale/shared';
 
 import { Conn } from './conn.js';
 import { Match } from './match.js';
+import { ReplayStore } from './replays.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
+/** 설정하면 리플레이를 디스크에도 쓴다 (미설정 시 메모리 전용) */
+const REPLAY_DIR = process.env.REPLAY_DIR;
 
 /** 대기열 (선착순 2명씩 매칭) */
 const queue: Conn[] = [];
 /** 진행 중인 매치 */
 const matches = new Set<Match>();
+const replays = new ReplayStore(Number(process.env.REPLAY_KEEP ?? 50), REPLAY_DIR);
+
+/**
+ * 클라이언트는 정적 호스팅(GitHub Pages)에서, 서버는 Fly.io에서 돌아가므로
+ * 리플레이 조회는 교차 출처 요청이 된다. 읽기 전용 공개 데이터라 전체 허용한다.
+ */
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'cache-control': 'no-store',
+  });
+  res.end(JSON.stringify(body));
+}
 
 const http = createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        ok: true,
-        matches: matches.size,
-        queued: queue.length,
-        uptime: Math.floor(process.uptime()),
-      }),
-    );
+  const url = req.url ?? '/';
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET, OPTIONS',
+    });
+    res.end();
     return;
   }
+
+  if (url === '/health') {
+    sendJson(res, 200, {
+      ok: true,
+      matches: matches.size,
+      queued: queue.length,
+      replays: replays.size,
+      uptime: Math.floor(process.uptime()),
+    });
+    return;
+  }
+
+  // 최근 리플레이 목록
+  if (url.startsWith('/replays')) {
+    const limit = Number(new URL(url, 'http://x').searchParams.get('limit') ?? 30);
+    sendJson(res, 200, { replays: replays.list(Number.isFinite(limit) ? limit : 30) });
+    return;
+  }
+
+  // 리플레이 하나 — 이 JSON만 있으면 경기 전체가 재생된다
+  if (url.startsWith('/replay/')) {
+    const id = decodeURIComponent(url.slice('/replay/'.length).split('?')[0]);
+    const r = replays.get(id);
+    if (!r) {
+      sendJson(res, 404, { error: 'replay not found', id });
+      return;
+    }
+    sendJson(res, 200, r);
+    return;
+  }
+
   res.writeHead(404).end('royale game server');
 });
 
@@ -83,7 +130,7 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
         // 연습 모드 봇은 플레이어와 다른 덱을 쓴다 — 같은 덱만 상대하면
         // 대공 대응 같은 매치업 학습이 안 된다
         const botDeck = DECK_IDS[Math.floor(Math.random() * DECK_IDS.length)];
-        matches.add(new Match(conn, null, botDeck));
+        matches.add(new Match(conn, null, botDeck, saveReplay));
         return;
       }
       queue.push(conn);
@@ -114,6 +161,17 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
   }
 }
 
+/** 정상 종료된 경기의 리플레이를 저장소로 넘긴다 */
+function saveReplay(r: Replay): void {
+  replays.save(r);
+  const bytes = JSON.stringify(r).length;
+  console.log(
+    `[replay] ${r.matchId} 저장 — ${r.deckIds[0]} vs ${r.deckIds[1]}, ` +
+      `승자 ${r.result.winner === -1 ? '무승부' : `team${r.result.winner}`}, ` +
+      `커맨드 ${r.commands.length}개, ${(bytes / 1024).toFixed(1)}KB`,
+  );
+}
+
 function tryMatch(): void {
   while (queue.length >= 2) {
     const a = queue.shift()!;
@@ -126,7 +184,7 @@ function tryMatch(): void {
       queue.unshift(a);
       continue;
     }
-    matches.add(new Match(a, b));
+    matches.add(new Match(a, b, undefined, saveReplay));
     console.log(`[match] ${a.name} vs ${b.name}`);
   }
 }

@@ -10,10 +10,12 @@ import {
   Command,
   ELIXIR_SCALE,
   GameState,
+  Replay,
   SIM_DELAY_TICKS,
   ServerMsg,
   TICK_MS,
   Team,
+  buildReplay,
   createState,
   getCard,
   getDeck,
@@ -39,14 +41,27 @@ export class Match {
   readonly state: GameState;
   readonly conns: (Conn | null)[];
   readonly bot: Bot | null;
+  /** 양 팀의 카드 목록 — 리플레이 재현에 필요하다 */
+  private readonly decks: [string[], string[]];
 
   /** execTick → 그 틱에 실행될 커맨드들 */
   private readonly scheduled = new Map<number, Command[]>();
   /** tick → 그 틱 종료 시점의 상태 해시 */
   private readonly hashes = new Map<number, number>();
+  /** 리플레이용 — 확정된 모든 커맨드를 순서대로 누적한다 */
+  private readonly recorded: Command[] = [];
+  /** 표시용 메타데이터 (경기 도중 연결이 끊겨도 남아야 하므로 복사해 둔다) */
+  private readonly deckIds: [string, string];
+  private readonly playerNames: [string, string];
   private ended = false;
 
-  constructor(a: Conn, b: Conn | null, botDeckId?: string) {
+  constructor(
+    a: Conn,
+    b: Conn | null,
+    botDeckId?: string,
+    /** 경기가 정상 종료되면 리플레이를 넘겨받는 콜백 */
+    private readonly onReplay?: (r: Replay) => void,
+  ) {
     this.id = `m${++matchSeq}-${Date.now().toString(36)}`;
     // 시드는 서버가 정해 양쪽에 동일하게 배포한다
     this.seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
@@ -57,6 +72,9 @@ export class Match {
     const deck1 = getDeck(b ? b.deckId : botDeckId);
     const decks: [string[], string[]] = [deck0.cards.slice(), deck1.cards.slice()];
     const deckIds: [string, string] = [deck0.id, deck1.id];
+    this.deckIds = deckIds;
+    this.decks = decks;
+    this.playerNames = [a.name, b ? b.name : `봇 (${deck1.name})`];
 
     this.state = createState(this.seed, decks);
     this.conns = [a, b];
@@ -128,6 +146,7 @@ export class Match {
     const arr = this.scheduled.get(execTick);
     if (arr) arr.push(cmd);
     else this.scheduled.set(execTick, [cmd]);
+    this.recorded.push(cmd);
 
     this.broadcast({ t: 'cmd', execTick, team, card, x: cmd.x, y: cmd.y });
   }
@@ -197,6 +216,38 @@ export class Match {
     });
     for (const c of this.conns) {
       if (c) c.match = null;
+    }
+    this.emitReplay();
+  }
+
+  /**
+   * 정상 종료된 경기만 리플레이로 남긴다.
+   * 중간에 나간 경기는 분석에 노이즈가 되고 재현해도 의미가 없다.
+   */
+  private emitReplay(): void {
+    if (!this.onReplay) return;
+    try {
+      const replay = buildReplay({
+        matchId: this.id,
+        seed: this.seed,
+        decks: this.decks,
+        deckIds: this.deckIds,
+        players: this.playerNames,
+        commands: this.recorded,
+        createdAt: this.startWallMs,
+      });
+
+      // 저장 시점에 재현성을 확인한다. 여기서 어긋나면 저장된 커맨드만으로는
+      // 경기를 되살릴 수 없다는 뜻이라, 조용히 넘어가면 원인을 영영 못 찾는다.
+      if (replay.finalHash !== hashState(this.state)) {
+        console.error(
+          `[replay] ${this.id}: 재현 결과가 서버 상태와 다르다 ` +
+            `(replay=${replay.finalHash} server=${hashState(this.state)}) — 저장은 하되 검증 필요`,
+        );
+      }
+      this.onReplay(replay);
+    } catch (err) {
+      console.error(`[replay] ${this.id}: 생성 실패`, err);
     }
   }
 

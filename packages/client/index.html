@@ -176,9 +176,11 @@
     #status { color: var(--muted); font-size: 13px; min-height: 18px; }
 
     /* 덱 선택 */
+    /* 덱은 1열로 쌓는다 — 홀수 개일 때 빈 칸이 생기지 않고, 한 줄에 이름과
+       설명이 나란히 들어가 훑어보기 쉽다 */
     #deck-picker {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      display: flex;
+      flex-direction: column;
       gap: 8px;
       width: min(360px, 88vw);
     }
@@ -186,16 +188,16 @@
       --deck-color: #64748b;
       background: var(--panel);
       border: 2px solid var(--line);
-      border-top: 4px solid var(--deck-color);
+      border-left: 5px solid var(--deck-color);
       border-radius: 10px;
-      padding: 10px 8px;
+      padding: 10px 12px;
       color: var(--text);
       font-family: inherit;
       cursor: pointer;
       text-align: left;
       transition: border-color 90ms ease, transform 90ms ease;
     }
-    .deck:hover { transform: translateY(-2px); }
+    .deck:hover { transform: translateX(3px); }
     /* 선택 여부가 한눈에 보여야 한다 — 색만으로는 4장이 다 비슷해 보인다 */
     .deck:not(.selected) { opacity: .5; }
     .deck.selected {
@@ -226,6 +228,38 @@
     }
     .chip .cc { color: var(--elixir); font-weight: 800; margin-left: 3px; }
     .chip .air { color: #7dd3fc; margin-left: 2px; }
+
+    /* 리플레이 재생 바 */
+    #replay-bar { margin-top: 10px; }
+    #replay-bar.hidden { display: none; }
+    .rb-row { display: flex; align-items: center; gap: 10px; }
+    .rb-row button {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 8px;
+      padding: 7px 12px;
+      min-width: 46px;
+      cursor: pointer;
+    }
+    .rb-row button:hover { border-color: var(--elixir); }
+    #rb-seek { flex: 1; accent-color: var(--elixir); cursor: pointer; }
+    .rb-info {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 리플레이 모드에서는 손패와 엘릭서 바를 감춘다 (조작할 게 없다) */
+    body.replay #hand,
+    body.replay #elixir-bar,
+    body.replay #next-card { display: none; }
 
     /* 토스트 */
     #toast {
@@ -262,6 +296,18 @@
     <div id="meta">
       <span id="next-card"></span>
       <span id="netinfo"></span>
+    </div>
+
+    <div id="replay-bar" class="hidden">
+      <div class="rb-row">
+        <button id="rb-play">▶</button>
+        <input id="rb-seek" type="range" min="0" max="1000" value="0" step="1" />
+        <button id="rb-speed">1×</button>
+      </div>
+      <div class="rb-info">
+        <span id="rb-title"></span>
+        <span id="rb-time"></span>
+      </div>
     </div>
   </div>
 

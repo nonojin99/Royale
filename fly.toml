@@ -6,7 +6,9 @@
 # 리전은 플레이어와 가까울수록 좋다. 한국 대상이면 nrt(도쿄)가 현실적으로 가장 낮은 지연을 준다.
 # 시뮬레이션이 20Hz이고 커맨드에 300ms 여유를 두므로, 왕복 150ms까지는 체감이 없다.
 
-app = "royale"
+# Fly 앱 이름은 <앱이름>.fly.dev 서브도메인이 되므로 소문자·숫자·하이픈만 쓸 수 있다.
+# (표기상의 이름은 LAMSiRoyale)
+app = "lamsiroyale"
 primary_region = "nrt"
 
 [build]

@@ -19,10 +19,13 @@ import {
   ELIXIR_MAX,
   HAND_SIZE,
   MATCH_TICKS,
+  ReplayPlayer,
   RIVER_BOT,
   RIVER_TOP,
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
+  TICK_RATE,
+  buildReplay,
   createRng,
   createState,
   getCard,
@@ -31,10 +34,13 @@ import {
   isqrt,
   nextInt,
   nextRange,
+  playReplay,
   restore,
   snapshot,
   sortCommands,
   step,
+  summarizeReplay,
+  verifyReplay,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -560,4 +566,99 @@ test('카드 색이 팀 구분 색과 겹치지 않는다', () => {
     assert.notEqual(c.color, TEAM_COLOR_ME, `카드 '${id}'의 색이 아군 팀 색과 같다`);
     assert.notEqual(c.color, TEAM_COLOR_FOE, `카드 '${id}'의 색이 적군 팀 색과 같다`);
   }
+});
+
+/* ── 리플레이 ──────────────────────────────────────────────────────────── */
+
+/** 시드로부터 "한 경기 분량"의 커맨드를 만들고 리플레이로 묶는다 */
+function makeReplay(seed, decks = MIRROR, matchId = `t${seed}`) {
+  const commands = genCommands(seed, MATCH_TICKS, decks);
+  return buildReplay({
+    matchId,
+    seed,
+    decks: [decks[0].slice(), decks[1].slice()],
+    deckIds: ['steel', 'steel'],
+    players: ['A', 'B'],
+    commands,
+    createdAt: 1_700_000_000_000,
+  });
+}
+
+test('리플레이는 기록한 경기를 그대로 재현한다', () => {
+  for (const seed of [1, 42, 0xbeef]) {
+    const r = makeReplay(seed);
+    const v = verifyReplay(r);
+    assert.ok(v.ok, `시드 ${seed} 재현 실패: 틱 ${v.divergedAtTick} 부터 갈라짐`);
+    assert.equal(v.divergedAtTick, -1);
+  }
+});
+
+test('리플레이는 비대칭 덱도 재현한다', () => {
+  const decks = [getDeck('steel').cards, getDeck('covenant').cards];
+  const r = makeReplay(909, decks);
+  r.deckIds = ['steel', 'covenant'];
+  assert.ok(verifyReplay(r).ok, '비대칭 덱 리플레이 재현 실패');
+});
+
+test('리플레이는 JSON 왕복(네트워크/디스크)을 견딘다', () => {
+  const r = makeReplay(77);
+  const wire = JSON.parse(JSON.stringify(r));
+  const v = verifyReplay(wire);
+  assert.ok(v.ok, 'JSON 왕복 후 재현 실패');
+});
+
+test('경기 하나의 리플레이가 수 KB 수준이다', () => {
+  // 상태를 저장하지 않고 커맨드만 남긴다는 설계의 핵심 근거.
+  // 이 값이 크게 튀면 뭔가 상태를 같이 저장하고 있다는 뜻이다.
+  const r = makeReplay(4242);
+  const kb = JSON.stringify(r).length / 1024;
+  assert.ok(kb < 64, `리플레이가 ${kb.toFixed(1)}KB — 너무 크다`);
+  assert.ok(r.commands.length > 10, '커맨드가 너무 적어 크기 검증이 의미 없다');
+});
+
+test('커맨드가 변조되면 재현 검증이 실패한다', () => {
+  // 검증기가 실제로 작동하는지 확인한다. 늘 통과하는 검증기는 쓸모가 없다.
+  const r = makeReplay(31337);
+
+  // 대조군: 원본은 통과해야 한다
+  assert.ok(verifyReplay(r).ok, '원본 리플레이부터 검증에 실패했다');
+
+  // 배치 x좌표를 전부 좌우 반전시킨다.
+  // 커맨드 하나만 건드리면, 하필 그게 무시되던 커맨드(손패에 없거나 엘릭서
+  // 부족)일 때 결과가 그대로라 테스트가 헛돈다.
+  const tampered = JSON.parse(JSON.stringify(r));
+  for (const c of tampered.commands) c.x = ARENA_W - c.x;
+
+  const v = verifyReplay(tampered);
+  assert.equal(v.ok, false, '커맨드를 변조했는데 검증이 통과했다');
+  assert.ok(v.divergedAtTick >= 0, '갈라진 지점을 찾지 못했다');
+});
+
+test('ReplayPlayer는 임의 틱으로 이동해도 순차 재생과 같은 상태를 낸다', () => {
+  const r = makeReplay(5150);
+  const player = new ReplayPlayer(r);
+  assert.ok(player.totalTicks > 0);
+
+  // 키프레임 경계, 그 사이, 뒤로 감기까지 섞어서 확인한다
+  const probes = [0, 37, 200, 201, 999, 1400, 640, 55, player.totalTicks];
+  for (const tick of probes) {
+    const seeked = hashState(player.stateAt(tick));
+    const sequential = hashState(playReplay(r, tick));
+    assert.equal(seeked, sequential, `틱 ${tick} 에서 탐색 결과가 순차 재생과 다르다`);
+  }
+});
+
+test('리플레이 요약이 실제 커맨드 수와 일치한다', () => {
+  const r = makeReplay(2024);
+  const s = summarizeReplay(r, TICK_RATE);
+
+  assert.equal(s.playCounts[0] + s.playCounts[1], r.commands.length);
+  for (const team of [0, 1]) {
+    const total = Object.values(s.cardUsage[team]).reduce((a, b) => a + b, 0);
+    assert.equal(total, s.playCounts[team], `team${team} 카드 집계가 어긋난다`);
+    for (const id of Object.keys(s.cardUsage[team])) {
+      assert.doesNotThrow(() => getCard(id), `요약에 존재하지 않는 카드 '${id}'`);
+    }
+  }
+  assert.equal(s.winner, r.result.winner);
 });

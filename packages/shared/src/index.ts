@@ -5,4 +5,5 @@ export * from './arena.js';
 export * from './cards.js';
 export * from './decks.js';
 export * from './sim.js';
+export * from './replay.js';
 export * from './protocol.js';

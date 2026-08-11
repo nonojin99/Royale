@@ -23,6 +23,7 @@ import {
 
 import { NetClient } from './net.js';
 import { Renderer, VIEW_H, VIEW_W } from './render.js';
+import { ReplayStatus, ReplayView, fetchReplay, fetchReplayList } from './replayview.js';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -103,6 +104,13 @@ async function boot(): Promise<void> {
   fitCanvas();
   window.addEventListener('resize', fitCanvas);
 
+  // ?replay=<id|URL> 이면 서버 연결 없이 리플레이만 재생한다
+  const replayId = new URLSearchParams(location.search).get('replay');
+  if (replayId) {
+    await bootReplay(replayId);
+    return;
+  }
+
   const canvas = renderer.canvas;
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerleave', () => {
@@ -141,6 +149,76 @@ function fitCanvas(): void {
   host.style.height = `${VIEW_H * scale}px`;
   renderer.canvas.style.width = `${VIEW_W * scale}px`;
   renderer.canvas.style.height = `${VIEW_H * scale}px`;
+}
+
+/* ── 리플레이 모드 ─────────────────────────────────────────────────────── */
+
+let replayView: ReplayView | null = null;
+
+async function bootReplay(id: string): Promise<void> {
+  document.body.classList.add('replay');
+  setStatus('리플레이 불러오는 중…');
+
+  let replay;
+  try {
+    replay = await fetchReplay(withSolo(serverUrl()), id);
+  } catch (err) {
+    // 목록을 함께 보여주면 id를 잘못 넣었을 때 바로 고칠 수 있다
+    const list = await fetchReplayList(serverUrl()).catch(() => []);
+    const hint = list.length
+      ? `\n최근 리플레이: ${list.slice(0, 5).map((e) => e.id).join(', ')}`
+      : '\n서버에 저장된 리플레이가 없습니다.';
+    showOverlay('리플레이를 불러오지 못했습니다', `${String(err)}${hint}`);
+    return;
+  }
+
+  $('overlay').classList.add('hidden');
+  $('replay-bar').classList.remove('hidden');
+  $('opponent').textContent = '리플레이';
+
+  replayView = new ReplayView(replay, {
+    onFrame: (state, viewTeam) => {
+      renderer.draw({
+        state,
+        myTeam: viewTeam,
+        // 리플레이는 틱 단위로 상태를 재구성하므로 보간 없이 그린다.
+        // 보간하려면 인접 두 틱을 동시에 들고 있어야 해서 뷰어가 복잡해진다.
+        prev: prevPos,
+        alpha: 1,
+        cursor: null,
+        cursorValid: false,
+      });
+      const me = state.players[viewTeam];
+      const foe = state.players[viewTeam === 0 ? 1 : 0];
+      $('crowns').textContent = `👑 ${me.crowns} : ${foe.crowns}`;
+    },
+    onStatus: renderReplayStatus,
+  });
+
+  const seek = $('rb-seek') as HTMLInputElement;
+  seek.max = String(replayView.totalTicks);
+  seek.addEventListener('input', () => replayView?.seek(Number(seek.value)));
+  $('rb-play').addEventListener('click', () => replayView?.togglePlay());
+  $('rb-speed').addEventListener('click', () => replayView?.cycleSpeed());
+  window.addEventListener('keydown', (e) => {
+    if (e.key === ' ') {
+      e.preventDefault();
+      replayView?.togglePlay();
+    }
+  });
+
+  fitCanvas();
+  replayView.start();
+}
+
+function renderReplayStatus(s: ReplayStatus): void {
+  $('rb-play').textContent = s.playing ? '❚❚' : '▶';
+  $('rb-speed').textContent = `${s.speed}×`;
+  $('rb-title').textContent = s.title;
+  $('rb-time').textContent = s.timeText;
+  const seek = $('rb-seek') as HTMLInputElement;
+  if (document.activeElement !== seek) seek.value = String(s.tick);
+  $('timer').textContent = s.timeText.split(' / ')[0];
 }
 
 /* ── 덱 선택 ───────────────────────────────────────────────────────────── */

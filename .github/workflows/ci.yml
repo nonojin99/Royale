@@ -33,5 +33,11 @@ jobs:
       - name: 넷코드 E2E
         run: pnpm --filter @royale/server test:e2e
 
+      # 경기를 3분 끝까지 돌려 리플레이가 저장되고 그대로 재현되는지 확인한다.
+      # 느리지만, 리플레이가 실제 경기와 어긋나면 밸런싱 분석 전체가 무의미해진다.
+      - name: 리플레이 E2E
+        run: pnpm --filter @royale/server test:replay
+        timeout-minutes: 8
+
       - name: 클라이언트 빌드
         run: pnpm --filter @royale/client build
