@@ -420,6 +420,9 @@ export class Renderer {
 
     if (building) this.label('건설 중', sx, sy - size / 2 - 12, 10);
     if (e.reserve <= 0) this.label('고갈', sx, sy + size / 2 + 10, 10);
+    // 고갈되고 나서 알리면 늦다 — 확장을 준비할 시간이 필요하다
+    else if (e.reserve < BASE_MINERAL_RESERVE / 4)
+      this.label('곧 고갈', sx, sy + size / 2 + 10, 10);
 
     this.hpBar(d, sx, sy - size / 2 - 7, size, e);
     this.drawWorkers(g, workersAtBase(state, e), sx, sy);

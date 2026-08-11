@@ -111,17 +111,42 @@ export class Bot {
     return { kind: 'tech', id: best, x: 0, y: 0 };
   }
 
+  /**
+   * 확장·연구라는 다음 목표에 필요한 만큼은 병력에 쓰지 않는다.
+   *
+   * 이 저축이 없으면 유닛 2~3코스트가 미네랄을 계속 빨아들여 확장(8)과
+   * 2단계 테크(12)에 영원히 도달하지 못한다 — 실측에서 3분 넘는 경기에도
+   * 확장 0회가 나온 원인(REVIEW.md P0-3). 사람도 봇도 같은 함정에 빠진다.
+   */
+  private reserveFor(s: GameState, me: GameState['players'][number]): number {
+    const taken = occupiedSites(s);
+    const canExpand =
+      baseCount(s, 1) < MAX_BASES && BASE_SITES.some((b) => !taken.has(b.id));
+    if (canExpand && me.workers >= workerCapacity(s, 1)) return BASE_BUILD_COST;
+
+    if (!me.research) {
+      let cheapest = Infinity;
+      for (const node of getFaction(me.faction).tech) {
+        if (!canResearch(me, node.unit)) continue;
+        if (node.cost < cheapest) cheapest = node.cost;
+      }
+      if (cheapest !== Infinity) return cheapest * MINERAL_SCALE;
+    }
+    return 0;
+  }
+
   /** 4순위: 병력 — 해금된 것 중 가장 비싼 것을 자기 기지 앞에 낸다 */
   private produce(s: GameState, me: GameState['players'][number]): BotMove | null {
     const bases = ownBasePositions(s, 1);
     if (bases.length === 0) return null;
 
+    const reserve = this.reserveFor(s, me);
     let best: string | null = null;
     let bestCost = -1;
     for (const id of me.unlocked) {
       if (!isUnlocked(me, id)) continue;
       const u = getUnit(id);
-      if (me.minerals < u.cost * MINERAL_SCALE) continue;
+      if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
       if (u.cost > bestCost) {
         bestCost = u.cost;
         best = id;

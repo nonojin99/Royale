@@ -31,7 +31,8 @@ import {
 } from './sim.js';
 
 /** 포맷 버전. 시뮬 규칙이 바뀌어 과거 리플레이가 재현 불가능해지면 올린다. */
-export const REPLAY_VERSION = 2;
+// v3: siege 배율 도입 + 연장 판정 변경 (기지 총 HP 우선) — 이전 리플레이는 재현 불가
+export const REPLAY_VERSION = 3;
 
 /** 경기가 진행될 수 있는 최대 틱 (정규 + 연장) */
 export const MAX_MATCH_TICKS = MATCH_TICKS + OVERTIME_TICKS;

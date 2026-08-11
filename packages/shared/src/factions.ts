@@ -60,11 +60,11 @@ const defs: FactionDef[] = [
     fieldColor: 0x1e3a8a,
     tech: [
       start('rifleman'), // 지상+공중 원거리 — 초반 만능
-      start('scoutcar'), // 건물 직행 — 확장 견제
-      tier1('flamer'),
+      start('flamer'), // 근접 광역 — 스웜을 막는 방어의 축 ("방어형"의 시작다운 구성)
+      tier1('scoutcar'), // 건물 직행 견제 — 군체의 굴착충처럼 "테크를 태운 러시"로
       tier1('bulwark'),
       tier1('ironwalker'),
-      tier2('siegetank', 'flamer'),
+      tier2('siegetank', 'scoutcar'),
       tier2('gunship', 'ironwalker'),
       tier2('carpetbomb', 'bulwark'),
     ],

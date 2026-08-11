@@ -214,13 +214,31 @@ export function radiusOf(e: Entity): number {
   return e.kind === 'unit' ? UNIT_RADIUS : BUILDING_RADIUS;
 }
 
-function statsOf(e: Entity): { damage: number; hitSpeed: number; range: number; splash: number } {
+function statsOf(e: Entity): {
+  damage: number;
+  hitSpeed: number;
+  range: number;
+  splash: number;
+  siege: number;
+} {
   if (e.kind === 'base') {
     const b = e.isMain ? MAIN_BASE_STATS : EXPANSION_BASE_STATS;
-    return { ...b, splash: 0 };
+    return { ...b, splash: 0, siege: 100 };
   }
   const u = getUnit(e.unit);
-  return { damage: u.damage, hitSpeed: u.hitSpeed, range: u.range, splash: u.splash };
+  return {
+    damage: u.damage,
+    hitSpeed: u.hitSpeed,
+    range: u.range,
+    splash: u.splash,
+    siege: u.siege,
+  };
+}
+
+/** 피격자가 구조물이면 siege 배율을 적용한 데미지 (정수 유지) */
+function damageTo(st: { damage: number; siege: number }, victim: Entity): number {
+  if (victim.kind === 'unit') return st.damage;
+  return Math.trunc((st.damage * st.siege) / 100);
 }
 
 /**
@@ -651,10 +669,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         const o = s.entities[j];
         if (o.team === e.team) continue;
         if (!canAttack(e, o)) continue;
-        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += st.damage;
+        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(st, o);
       }
     } else {
-      dmg[ti] += st.damage;
+      dmg[ti] += damageTo(st, t);
     }
   }
 
@@ -813,12 +831,28 @@ function checkEnd(s: GameState): void {
   const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
   if (s.tick < limit) return;
 
-  // 시간 초과 — 기지 수로 가리고, 같으면 누적 채굴량으로 가린다
+  // 정규 시간 종료 — 기지 수가 다르면 그걸로 끝, 같으면 연장전
   const b0 = baseCount(s, 0);
   const b1 = baseCount(s, 1);
   if (b0 !== b1) {
     s.over = true;
     s.winner = b0 > b1 ? 0 : 1;
+    return;
+  }
+  if (!s.overtime) {
+    s.overtime = true;
+    return;
+  }
+
+  // 연장 종료 — 남은 기지 총 HP로 가린다. "누가 더 때렸는가"를 그대로 반영하고
+  // 조작이 불가능하다. 채굴량 비교는 그다음이다 — 확장 없는 장기전은 양쪽 다
+  // 매장량을 정확히 다 캐서 채굴량이 같아지므로(REVIEW.md P0-2) 단독으로는
+  // 기계적 무승부를 낳는다.
+  const hp0 = baseHpTotal(s, 0);
+  const hp1 = baseHpTotal(s, 1);
+  if (hp0 !== hp1) {
+    s.over = true;
+    s.winner = hp0 > hp1 ? 0 : 1;
     return;
   }
   const m0 = s.players[0].mined;
@@ -828,12 +862,17 @@ function checkEnd(s: GameState): void {
     s.winner = m0 > m1 ? 0 : 1;
     return;
   }
-  if (!s.overtime) {
-    s.overtime = true;
-    return;
-  }
   s.over = true;
   s.winner = -1;
+}
+
+/** 팀의 남은 기지 HP 합 (건설 중 포함 — 이미 지불한 자산이다) */
+export function baseHpTotal(s: GameState, team: Team): number {
+  let sum = 0;
+  for (const e of s.entities) {
+    if (e.kind === 'base' && e.team === team) sum += e.hp;
+  }
+  return sum;
 }
 
 /* ── 스냅샷 / 해시 ─────────────────────────────────────────────────────── */

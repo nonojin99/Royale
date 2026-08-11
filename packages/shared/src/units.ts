@@ -51,6 +51,15 @@ export interface UnitDef {
   splash: number;
   targets: TargetPref;
   /**
+   * 구조물(기지·건물) 상대 데미지 배율 — **백분율 정수** (100 = 그대로).
+   *
+   * 이 값이 게임의 시간 축을 결정한다. 시작 유닛은 100 미만이라 본진을 빨리
+   * 못 부수고(초반 방어 성립), 2단계 테크의 공성 유닛은 100을 크게 넘어
+   * 대치를 끝내는 유일한 효율 수단이 된다. "러시 40초 종결"과 "300초 무승부"
+   * 라는 두 극단(REVIEW.md P0-1)을 좁히기 위한 손잡이다.
+   */
+  siege: number;
+  /**
    * 공중 유닛인가.
    * 공중 유닛은 강과 다리를 무시하고 목표를 향해 직선으로 날아가며,
    * 지상 유닛·건물과 충돌하지 않는다. 대신 지상 전용 공격에 맞지 않는다.
@@ -68,8 +77,8 @@ function spd(tilesPerSec: number): number {
 }
 
 /** 카드 정의의 반복을 줄이기 위한 기본값 */
-type UnitSpec = Omit<UnitDef, 'count' | 'splash' | 'targets' | 'flying' | 'lifetime'> &
-  Partial<Pick<UnitDef, 'count' | 'splash' | 'targets' | 'flying' | 'lifetime'>>;
+type UnitSpec = Omit<UnitDef, 'count' | 'splash' | 'targets' | 'flying' | 'lifetime' | 'siege'> &
+  Partial<Pick<UnitDef, 'count' | 'splash' | 'targets' | 'flying' | 'lifetime' | 'siege'>>;
 
 function unit(spec: UnitSpec): UnitDef {
   return {
@@ -78,6 +87,7 @@ function unit(spec: UnitSpec): UnitDef {
     targets: 'any',
     flying: false,
     lifetime: -1,
+    siege: 100,
     ...spec,
   };
 }
@@ -91,30 +101,30 @@ const defs: UnitDef[] = [
      느린 대신 사거리로 이득을 보는 종족. */
   unit({
     id: 'rifleman', name: '소총병', cost: 3, kind: 'unit', count: 3,
-    hp: 200, damage: 50, hitSpeed: seconds(1.0, TICK_RATE),
-    range: tiles(5.0), speed: spd(1.0), color: 0x3b82f6,
+    hp: 220, damage: 65, hitSpeed: seconds(1.0, TICK_RATE),
+    range: tiles(5.0), speed: spd(1.0), siege: 30, color: 0x3b82f6,
   }),
   unit({
     id: 'flamer', name: '화염병', cost: 3, kind: 'unit', count: 2,
-    hp: 480, damage: 85, hitSpeed: seconds(1.3, TICK_RATE),
-    range: tiles(1.2), speed: spd(0.95), splash: tiles(1.4),
-    targets: 'ground', color: 0xf97316,
+    hp: 480, damage: 100, hitSpeed: seconds(1.3, TICK_RATE),
+    range: tiles(1.6), speed: spd(0.95), splash: tiles(1.4),
+    targets: 'ground', siege: 60, color: 0xf97316,
   }),
   unit({
     id: 'scoutcar', name: '정찰차', cost: 2, kind: 'unit',
     hp: 420, damage: 130, hitSpeed: seconds(1.1, TICK_RATE),
-    range: tiles(0.8), speed: spd(1.9), targets: 'buildings', color: 0xfbbf24,
+    range: tiles(0.8), speed: spd(1.4), targets: 'buildings', siege: 120, color: 0xfbbf24,
   }),
   unit({
     id: 'siegetank', name: '공성전차', cost: 5, kind: 'unit',
     hp: 1000, damage: 230, hitSpeed: seconds(2.2, TICK_RATE),
     range: tiles(7.0), speed: spd(0.45), splash: tiles(2.0),
-    targets: 'ground', color: 0x1d4ed8,
+    targets: 'ground', siege: 220, color: 0x1d4ed8,
   }),
   unit({
     id: 'ironwalker', name: '강철거인', cost: 4, kind: 'unit',
     hp: 850, damage: 110, hitSpeed: seconds(1.2, TICK_RATE),
-    range: tiles(5.5), speed: spd(0.8), color: 0x475569,
+    range: tiles(5.5), speed: spd(0.8), siege: 120, color: 0x475569,
   }),
   unit({
     id: 'bulwark', name: '방벽', cost: 3, kind: 'building',
@@ -124,7 +134,7 @@ const defs: UnitDef[] = [
   unit({
     id: 'gunship', name: '전투비행선', cost: 4, kind: 'unit', flying: true,
     hp: 700, damage: 100, hitSpeed: seconds(1.3, TICK_RATE),
-    range: tiles(3.0), speed: spd(1.1), color: 0x0891b2,
+    range: tiles(3.0), speed: spd(1.1), siege: 120, color: 0x0891b2,
   }),
   unit({
     id: 'carpetbomb', name: '융단폭격', cost: 3, kind: 'spell', count: 0,
@@ -137,25 +147,25 @@ const defs: UnitDef[] = [
      주문이 없는 대신 방어 건물이 둘(지상용·대공용)이다. */
   unit({
     id: 'gnawer', name: '물어뜯는것', cost: 2, kind: 'unit', count: 4,
-    hp: 130, damage: 55, hitSpeed: seconds(0.8, TICK_RATE),
-    range: tiles(0.7), speed: spd(1.5), targets: 'ground', color: 0xa16207,
+    hp: 95, damage: 55, hitSpeed: seconds(0.8, TICK_RATE),
+    range: tiles(0.7), speed: spd(1.5), targets: 'ground', siege: 40, color: 0xa16207,
   }),
   unit({
     id: 'spitter', name: '가시뱉는것', cost: 3, kind: 'unit', count: 2,
     hp: 300, damage: 65, hitSpeed: seconds(1.0, TICK_RATE),
-    range: tiles(4.5), speed: spd(1.05), color: 0x84cc16,
+    range: tiles(4.5), speed: spd(1.05), siege: 50, color: 0x84cc16,
   }),
   unit({
     id: 'burrower', name: '땅속의것', cost: 4, kind: 'unit',
     hp: 550, damage: 150, hitSpeed: seconds(1.6, TICK_RATE),
     range: tiles(4.5), speed: spd(0.5), splash: tiles(1.8),
-    targets: 'ground', color: 0x713f12,
+    targets: 'ground', siege: 100, color: 0x713f12,
   }),
   unit({
     id: 'devourer', name: '거대포식자', cost: 5, kind: 'unit',
     hp: 1600, damage: 170, hitSpeed: seconds(1.5, TICK_RATE),
     range: tiles(0.9), speed: spd(0.7), splash: tiles(1.2),
-    targets: 'ground', color: 0x7c2d12,
+    targets: 'ground', siege: 200, color: 0x7c2d12,
   }),
   unit({
     id: 'spinetentacle', name: '가시촉수', cost: 3, kind: 'building',
@@ -166,7 +176,7 @@ const defs: UnitDef[] = [
   unit({
     id: 'wingswarm', name: '날개무리', cost: 4, kind: 'unit', count: 3, flying: true,
     hp: 240, damage: 65, hitSpeed: seconds(1.0, TICK_RATE),
-    range: tiles(2.5), speed: spd(1.4), color: 0xc026d3,
+    range: tiles(2.5), speed: spd(1.4), siege: 100, color: 0xc026d3,
   }),
   unit({
     id: 'sporetentacle', name: '포자촉수', cost: 3, kind: 'building',
@@ -177,7 +187,7 @@ const defs: UnitDef[] = [
   unit({
     id: 'tunneler', name: '굴착충', cost: 2, kind: 'unit',
     hp: 520, damage: 140, hitSpeed: seconds(1.2, TICK_RATE),
-    range: tiles(0.7), speed: spd(1.6), targets: 'buildings', color: 0xca8a04,
+    range: tiles(0.7), speed: spd(1.6), targets: 'buildings', siege: 120, color: 0xca8a04,
   }),
 
   /* ── 신념단 ───────────────────────────────────────────────────────────
@@ -186,23 +196,23 @@ const defs: UnitDef[] = [
   unit({
     id: 'zealot', name: '광전사', cost: 3, kind: 'unit', count: 2,
     hp: 700, damage: 120, hitSpeed: seconds(1.3, TICK_RATE),
-    range: tiles(0.8), speed: spd(0.95), targets: 'ground', color: 0xfacc15,
+    range: tiles(0.8), speed: spd(0.95), targets: 'ground', siege: 50, color: 0xfacc15,
   }),
   unit({
     id: 'strider', name: '사격보행기', cost: 4, kind: 'unit',
     hp: 700, damage: 140, hitSpeed: seconds(1.4, TICK_RATE),
-    range: tiles(6.0), speed: spd(0.8), color: 0x0d9488,
+    range: tiles(6.0), speed: spd(0.8), siege: 100, color: 0x0d9488,
   }),
   unit({
     id: 'mystic', name: '술사', cost: 4, kind: 'unit',
     hp: 300, damage: 130, hitSpeed: seconds(1.6, TICK_RATE),
     range: tiles(5.0), speed: spd(0.9), splash: tiles(2.0),
-    targets: 'ground', color: 0x8b5cf6,
+    targets: 'ground', siege: 80, color: 0x8b5cf6,
   }),
   unit({
     id: 'fusionite', name: '융합체', cost: 5, kind: 'unit',
     hp: 1300, damage: 200, hitSpeed: seconds(1.6, TICK_RATE),
-    range: tiles(1.0), speed: spd(0.8), splash: tiles(1.6), color: 0x06b6d4,
+    range: tiles(1.0), speed: spd(0.8), splash: tiles(1.6), siege: 200, color: 0x06b6d4,
   }),
   unit({
     id: 'lightpylon', name: '빛기둥', cost: 3, kind: 'building',
@@ -214,13 +224,13 @@ const defs: UnitDef[] = [
   unit({
     id: 'shade', name: '그림자', cost: 4, kind: 'unit',
     hp: 550, damage: 320, hitSpeed: seconds(1.8, TICK_RATE),
-    range: tiles(0.8), speed: spd(1.2), targets: 'ground', color: 0x4c1d95,
+    range: tiles(0.8), speed: spd(1.2), targets: 'ground', siege: 70, color: 0x4c1d95,
   }),
   unit({
     id: 'skiff', name: '부유선', cost: 4, kind: 'unit', flying: true,
     hp: 650, damage: 90, hitSpeed: seconds(1.1, TICK_RATE),
     range: tiles(3.5), speed: spd(1.0), splash: tiles(1.3),
-    targets: 'ground', color: 0xe879f9,
+    targets: 'ground', siege: 100, color: 0xe879f9,
   }),
   unit({
     id: 'mindbreak', name: '정신붕괴', cost: 3, kind: 'spell', count: 0,

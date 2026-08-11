@@ -20,6 +20,7 @@ import {
   DEPLOY_RADIUS,
   FACTION_IDS,
   MATCH_TICKS,
+  OVERTIME_TICKS,
   MINERAL_MAX,
   MINERAL_SCALE,
   MINERAL_START,
@@ -576,13 +577,54 @@ test('시간이 다 되면 기지 수로 승패를 가린다', () => {
   assert.equal(s.winner, 0, '기지가 더 많은 쪽이 이기지 않았다');
 });
 
-test('기지 수가 같으면 누적 채굴량으로 가린다', () => {
+test('기지 수가 같으면 연장전으로 가고, 연장 끝에 기지 총 HP로 가린다', () => {
   const s = createState(14, MIRROR);
   while (s.tick < MATCH_TICKS - 1) step(s, []);
-  s.players[0].mined += 1; // 채굴량만 미세하게 앞선 상태를 만든다
+  // 채굴량은 앞서지만 기지 HP는 뒤진 상태 — HP가 우선해야 한다.
+  // 채굴량 비교는 확장 없는 장기전에서 양쪽 다 매장량을 다 캐 무의미해지기
+  // 때문이다 (REVIEW.md P0-2).
+  s.players[0].mined += 1000;
+  const main0 = s.entities.find((e) => e.kind === 'base' && e.isMain && e.team === 0);
+  main0.hp -= 500;
+  step(s, []);
+  assert.equal(s.over, false, '기지 수가 같은데 정규 시간에 끝났다');
+  assert.equal(s.overtime, true, '연장전에 들어가지 않았다');
+
+  while (s.tick < MATCH_TICKS + OVERTIME_TICKS - 1) step(s, []);
+  step(s, []);
+  assert.ok(s.over, '연장전이 끝났는데 경기가 안 끝났다');
+  assert.equal(s.winner, 1, '기지 총 HP가 아니라 채굴량으로 가렸다');
+});
+
+test('연장 끝에 기지 HP까지 같으면 채굴량으로 가린다', () => {
+  const s = createState(14, MIRROR);
+  while (s.tick < MATCH_TICKS - 1) step(s, []);
+  s.players[0].mined += 1000;
+  while (s.tick < MATCH_TICKS + OVERTIME_TICKS - 1) step(s, []);
   step(s, []);
   assert.ok(s.over);
-  assert.equal(s.winner, 0);
+  assert.equal(s.winner, 0, 'HP 동률에서 채굴량 우위가 반영되지 않았다');
+});
+
+test('공성 배율 — 같은 유닛이 유닛에게는 원래 데미지, 구조물에는 배율 데미지를 준다', () => {
+  // 시작 유닛의 siege 는 100 미만이어야 한다 (초반 방어 성립 — P0-1)
+  for (const fid of FACTION_IDS) {
+    const f = getFaction(fid);
+    for (const node of f.tech.filter((n) => n.cost === 0)) {
+      const u = getUnit(node.unit);
+      if (u.kind !== 'unit') continue;
+      assert.ok(u.siege < 100, `시작 유닛 ${u.id} 의 siege(${u.siege})가 100 이상이다`);
+    }
+  }
+  // 2단계 공성 유닛은 100을 크게 넘어야 한다 (스톨 브레이커)
+  for (const id of ['siegetank', 'devourer', 'fusionite']) {
+    assert.ok(getUnit(id).siege >= 150, `${id} 의 siege(${getUnit(id).siege})가 150 미만`);
+  }
+  // 배율 적용이 정수를 유지하는지 — 임의 조합 검사
+  for (const id of UNIT_IDS) {
+    const u = getUnit(id);
+    assert.ok(Number.isInteger(Math.trunc((u.damage * u.siege) / 100)));
+  }
 });
 
 test('긴 경기(연장전 포함)를 끝까지 돌려도 예외 없이 종료된다', () => {
