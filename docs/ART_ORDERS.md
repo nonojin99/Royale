@@ -143,6 +143,26 @@ node tools/base-art.mjs ../../art-src/clean/steel_main.png --faction steel --kin
 `public/art/bases/<종족>.<종류>.png` 로 저장되고, manifest의 `bases`에
 `{"steel": ["main"]}` 식으로 적으면 나온다. 없는 종족·종류는 도형 폴백.
 
+### 본진·확장이 한 장에 격자로 들어온 경우
+
+`--grid 행x열 --pick 행,열`로 칸 하나를 골라낸다 (둘 다 1부터 센다).
+2행 5열이면 1행이 본진, 2행이 확장, 열은 발광이 세지는 단계다 — **1열이 중립
+상태**이므로 정지 이미지로는 1열을 쓴다.
+
+```bash
+node tools/dealpha.mjs ../../art-src/steel.png --shadow
+node tools/base-art.mjs ../../art-src/clean/steel.png \
+     --grid 2x5 --pick 1,1 --faction steel --kind main
+node tools/base-art.mjs ../../art-src/clean/steel.png \
+     --grid 2x5 --pick 2,1 --faction steel --kind expansion
+```
+
+칸은 이미지를 균등 분할해서 자른다. 마지막 열의 발사 이펙트처럼 칸 밖으로
+삐져나온 그림이 있으면 옆 칸에 섞일 수 있어서, 그럴 때는 경고를 찍는다.
+
+원본에서 확장이 본진보다 작게 그려져 있어도 상관없다 — **화면 크기는 코드가
+정한다** (본진 2.4타일, 확장 1.8타일). 도구는 각 칸을 따로 256×256에 채운다.
+
 ## 3. 유닛 종류별 요령
 
 | 종류 | 행 구성 | 비고 |

@@ -9,8 +9,13 @@
  * 입력은 **배경이 이미 투명한 PNG**여야 한다. 체크무늬가 구워진 파일은
  * 먼저 `dealpha.mjs`로 지운다 (유닛과 같은 절차).
  *
+ * 본진과 확장이 한 장에 격자로 들어온 경우 `--grid`로 칸을 나누고
+ * `--pick`으로 쓸 칸 하나를 고른다. 둘 다 1부터 센다.
+ *
  * 사용:
  *   node tools/base-art.mjs ../../art-src/clean/steel_main.png --faction steel --kind main
+ *   node tools/base-art.mjs ../../art-src/clean/steel.png \
+ *        --grid 2x5 --pick 1,1 --faction steel --kind main
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -86,10 +91,36 @@ if (!(raw[0] === 0x89 && raw[1] === 0x50)) {
 }
 const png = PNG.sync.read(raw);
 
+// 격자에서 칸 하나만 보기 — 없으면 이미지 전체가 곧 그 칸이다
+let cellX = 0, cellY = 0, cellW = png.width, cellH = png.height;
+if (args.grid) {
+  const g = /^(\d+)x(\d+)$/.exec(String(args.grid));
+  const p = /^(\d+),(\d+)$/.exec(String(args.pick ?? ''));
+  if (!g) {
+    console.error('--grid 는 행x열 형식이다 (예: 2x5)');
+    process.exit(1);
+  }
+  if (!p) {
+    console.error('--grid 를 쓰면 --pick 행,열 도 줘야 한다 (예: --pick 1,1)');
+    process.exit(1);
+  }
+  const [rows, cols] = [Number(g[1]), Number(g[2])];
+  const [r, c] = [Number(p[1]), Number(p[2])];
+  if (r < 1 || r > rows || c < 1 || c > cols) {
+    console.error(`--pick 이 격자 밖이다 — 1..${rows}, 1..${cols} 범위여야 한다`);
+    process.exit(1);
+  }
+  cellX = Math.floor(((c - 1) * png.width) / cols);
+  cellY = Math.floor(((r - 1) * png.height) / rows);
+  cellW = Math.floor((c * png.width) / cols) - cellX;
+  cellH = Math.floor((r * png.height) / rows) - cellY;
+  console.log(`격자 ${rows}x${cols} 중 (${r},${c}) — ${cellW}×${cellH} 영역`);
+}
+
 // 알파 경계 트림
-let minx = png.width, maxx = -1, miny = png.height, maxy = -1;
-for (let y = 0; y < png.height; y++) {
-  for (let x = 0; x < png.width; x++) {
+let minx = cellX + cellW, maxx = -1, miny = cellY + cellH, maxy = -1;
+for (let y = cellY; y < cellY + cellH; y++) {
+  for (let x = cellX; x < cellX + cellW; x++) {
     if (png.data[(png.width * y + x) * 4 + 3] >= ALPHA_MIN) {
       if (x < minx) minx = x;
       if (x > maxx) maxx = x;
@@ -104,6 +135,13 @@ if (maxx < 0) {
 }
 const cw = maxx - minx + 1;
 const ch = maxy - miny + 1;
+
+// 칸 경계에 딱 붙어 있으면 옆 프레임 이펙트가 넘어왔을 가능성이 있다
+if (args.grid &&
+    (minx <= cellX || maxx >= cellX + cellW - 1 ||
+     miny <= cellY || maxy >= cellY + cellH - 1)) {
+  console.warn('⚠️  내용물이 칸 경계에 닿았다 — 옆 프레임이 섞였는지 결과를 눈으로 볼 것');
+}
 
 const scale = (OUT_SIZE * FILL) / Math.max(cw, ch);
 const dw = Math.round(cw * scale);
