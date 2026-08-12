@@ -25,6 +25,16 @@ export const MINERAL_MAX = 30 * MINERAL_SCALE;
  */
 export const MINERAL_START = 5 * MINERAL_SCALE;
 
+/**
+ * 기지가 이만큼 피해를 누적당할 때마다 그 팀 일꾼이 1기 죽는다.
+ *
+ * 포격이 채굴장을 흔든다 — 이게 없으면 조기 공세가 아무리 성공해도
+ * 경제에 흔적이 남지 않아서, 표준 빌드가 안 보고도 모든 도박수를 이기는
+ * 지배 구조가 된다 (COUNCIL 라운드 4 실측). hp 문턱값에서 유도하므로
+ * 추가 상태가 없고 해시·리플레이 구조도 그대로다.
+ */
+export const WORKER_LOSS_DAMAGE = 300;
+
 /* ── 일꾼 ──────────────────────────────────────────────────────────────── */
 
 /**
@@ -37,7 +47,15 @@ export const WORKER_MINE_PER_TICK = 6;
 /** 경기 시작 시 일꾼 수 */
 export const START_WORKERS = 2;
 /** 일꾼 한 기 생산 비용. 회수까지 약 16.7초 — 초반에는 확실한 이득이다 */
-export const WORKER_COST = 2 * MINERAL_SCALE;
+/**
+ * 일꾼 회수 기간이 곧 "지금 병력 vs 지금 경제"의 긴장이다.
+ *
+ * 2.0에서는 17초 만에 회수돼 경제가 항상 정답이었고(표준 빌드가 모든
+ * 도박수를 안 보고 이김), 3.0에서는 러시가 전장을 지배했다. 2.5가 실측
+ * 최적점 — 러시가 무방비 표준을 벌하되(84%), 포탑 웅크림이 최선의
+ * 대응으로 남는다 (COUNCIL 라운드 4).
+ */
+export const WORKER_COST = Math.trunc(2.5 * MINERAL_SCALE);
 
 /**
  * 기지당 미네랄 덩이 수.

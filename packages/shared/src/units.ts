@@ -128,7 +128,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'bulwark', name: '방벽', cost: 3, kind: 'building',
-    hp: 800, damage: 85, hitSpeed: seconds(0.8, TICK_RATE),
+    hp: 1000, damage: 120, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0x78716c,
   }),
   unit({
@@ -169,7 +169,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'spinetentacle', name: '가시촉수', cost: 3, kind: 'building',
-    hp: 750, damage: 110, hitSpeed: seconds(1.0, TICK_RATE),
+    hp: 950, damage: 150, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: 0, targets: 'ground',
     lifetime: BUILDING_LIFE, color: 0x9f1239,
   }),
@@ -216,7 +216,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'lightpylon', name: '빛기둥', cost: 3, kind: 'building',
-    hp: 700, damage: 95, hitSpeed: seconds(0.9, TICK_RATE),
+    hp: 900, damage: 130, hitSpeed: seconds(0.9, TICK_RATE),
     // 하늘색(0x38bdf8)은 렌더러의 아군 팀 색과 겹쳐서, 적 빛기둥이 아군 건물처럼
     // 보인다. 카드 색은 팀 색과 반드시 구분되어야 한다.
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0xfcd34d,
@@ -268,7 +268,7 @@ export interface BaseStats {
  */
 export const MAIN_BASE_STATS: BaseStats = {
   hp: 4000,
-  damage: 70,
+  damage: 45,
   hitSpeed: seconds(1.0, TICK_RATE),
   range: tiles(6.5),
 };

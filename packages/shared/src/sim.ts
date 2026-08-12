@@ -48,6 +48,7 @@ import {
   WORKER_CAP_PER_BASE,
   WORKER_COST,
   WORKER_MINE_PER_TICK,
+  WORKER_LOSS_DAMAGE,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -748,7 +749,17 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
   // 9) 피해 적용 + 사망 처리
   for (let i = 0; i < n; i++) {
-    if (dmg[i] > 0) s.entities[i].hp -= dmg[i];
+    if (dmg[i] <= 0) continue;
+    const e = s.entities[i];
+    // 기지 포격은 일꾼도 갈아낸다 — 누적 피해가 문턱을 넘을 때마다 1기.
+    // (maxHp - hp) 문턱에서 유도하므로 상태 추가 없이 결정적이다
+    if (e.kind === 'base') {
+      const before = Math.trunc((e.maxHp - e.hp) / WORKER_LOSS_DAMAGE);
+      const after = Math.trunc((e.maxHp - (e.hp - dmg[i])) / WORKER_LOSS_DAMAGE);
+      const p = s.players[e.team];
+      p.workers = Math.max(0, p.workers - Math.max(0, after - before));
+    }
+    e.hp -= dmg[i];
   }
   resolveDeaths(s);
 

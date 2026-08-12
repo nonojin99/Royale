@@ -231,6 +231,8 @@ function observe(s, team) {
     foeBases: baseCount(s, foe),
     myBases: baseCount(s, team),
     foeTeching: s.players[foe].research !== null,
+    foeWorkers: s.players[foe].workers,
+    myWorkers: s.players[team].workers,
   };
 }
 
@@ -238,7 +240,7 @@ const STRATS = {
   // 진짜 올인도 최소한의 경제는 깐다 — 일꾼 4기까지만 (기본 2기로는
   // 2코스트 유닛 하나에 8초가 걸려 러시 자체가 성립하지 않는다)
   RUSH: (s, team, rng) =>
-    (s.players[team].workers < 4 ? trainWorker(s, team) : null) ??
+    (s.players[team].workers < 6 ? trainWorker(s, team) : null) ??
     produce(s, team, rng, { cheap: true }),
   GREED: (s, team, rng) =>
     trainWorker(s, team) ??
@@ -271,9 +273,16 @@ const STRATS = {
   REACT: (s, team, rng) => {
     const o = observe(s, team);
     const early = s.tick < 20 * 75;
+    // 일꾼 수 판독(올인 예고)도 실험했지만 대응 정책이 방어에 갇혀
+    // 역효과였다 — 감지보다 "언제 반격으로 전환하나"가 어렵다 (라운드 4)
     if (early && o.foeArmy > o.myArmy + 4 * MINERAL_SCALE) {
-      // 상대가 초반부터 병력을 쏟는다 → 수비 우선, 확장 중단
-      return produce(s, team, rng, { defend: true }) ?? trainWorker(s, team);
+      // 상대가 초반부터 병력을 쏟는다 → 포탑 + 수비 병력, 확장 중단.
+      // 정보를 가진 대응이란 "맞는 방어를 제때 사는 것"이다
+      return (
+        buildDefense(s, team, rng) ??
+        produce(s, team, rng, { defend: true }) ??
+        trainWorker(s, team)
+      );
     }
     if (o.foeBases > o.myBases || (o.foeTeching && o.foeArmy < o.myArmy)) {
       // 상대가 배를 불린다 → 지금 찌른다
@@ -331,6 +340,42 @@ function series(a, b, faction, seed) {
   if (g2.winner === 1) aw++;
   else if (g2.winner === 0) bw++;
   return { aw, bw, games: [g1, g2] };
+}
+
+/* ── 단일 경기 추적 (--trace A B) ─────────────────────────────────────── */
+
+if (args.includes('--trace')) {
+  const i = args.indexOf('--trace');
+  const [a, b] = [args[i + 1], args[i + 2]];
+  const s = createState(7000, ['steel', 'steel']);
+  const rngs = [createRng(0x11111111), createRng(0x22222222)];
+  const strats = [STRATS[a], STRATS[b]];
+  const last = [-999, -999];
+  console.log(`\n${a}(팀0, 아래) vs ${b}(팀1, 위) — 10초마다 상태`);
+  while (!s.over && s.tick < MAX_TICKS) {
+    const cmds = [];
+    for (const team of [0, 1]) {
+      if (s.tick - last[team] >= DECIDE_EVERY) {
+        const mv = strats[team](s, team, rngs[team]);
+        if (mv) {
+          cmds.push({ execTick: s.tick, team, ...mv });
+          last[team] = s.tick;
+        }
+      }
+    }
+    step(s, cmds);
+    if (s.tick % 200 === 0) {
+      const line = [0, 1].map((t) => {
+        const p = s.players[t];
+        const bases = s.entities.filter((e) => e.kind === 'base' && e.team === t);
+        const hp = bases.reduce((x, e) => x + Math.max(0, e.hp), 0);
+        return `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers} 기지${bases.length}(${hp})`;
+      });
+      console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);
+    }
+  }
+  console.log(`승자: ${s.winner === -1 ? '무승부' : (s.winner === 0 ? a : b)} (${(s.tick / 20).toFixed(0)}초)`);
+  process.exit(0);
 }
 
 /* ── 실험 ──────────────────────────────────────────────────────────────── */
