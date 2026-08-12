@@ -293,6 +293,31 @@ export class Renderer {
       g.rect(rx, ry, rw, rh);
       g.fill({ color: sand, alpha: 0.55 });
     }
+
+    // 오목 모서리 — 물이 두 변에서 만나는 뭍 모서리는 물이 곡선으로
+    // 파고든다. 볼록만 둥글리면 여전히 계단이고, 양방향이어야 해안이
+    // S자 곡선으로 읽힌다
+    const bite = t * (0.55 + n * 0.3);
+    const corners: Array<[boolean, number, number, number, number]> = [
+      [water(0, -1) && water(-1, 0), x0, y0, 1, 1],
+      [water(0, -1) && water(1, 0), x0 + t, y0, -1, 1],
+      [water(0, 1) && water(1, 0), x0 + t, y0 + t, -1, -1],
+      [water(0, 1) && water(-1, 0), x0, y0 + t, 1, -1],
+    ];
+    for (const [hit, cx, cy, dx, dy] of corners) {
+      if (!hit) continue;
+      // 모래 테를 먼저(살짝 크게), 그 위에 물 사분원
+      for (const [rad, color, alpha] of [
+        [bite + 2, sand, 0.55],
+        [bite, 0x0f1b25, 1],
+      ] as const) {
+        g.moveTo(cx + dx * rad, cy);
+        g.quadraticCurveTo(cx, cy, cx, cy + dy * rad);
+        g.lineTo(cx, cy);
+        g.closePath();
+        g.fill({ color, alpha });
+      }
+    }
     if (any && n > 0.3) {
       // 자갈 — 좌표 시드 난수로 위치가 프레임마다 흔들리지 않는다
       const px = x0 + 3 + Math.floor(n * (t - 6));
@@ -362,7 +387,9 @@ export class Renderer {
             const landS = !this.chasmAt(worldTile, sx, sy + 1, W, H);
             const landW = !this.chasmAt(worldTile, sx - 1, sy, W, H);
             const landE = !this.chasmAt(worldTile, sx + 1, sy, W, H);
-            const r = t * 0.55;
+            // 반경을 타일 하나 크기까지 키우고 노이즈로 흔든다 — 균일한
+            // 반경은 그것대로 기계적으로 보인다
+            const r = t * (0.75 + n * 0.35);
             const x0 = sx * t;
             const y0 = sy * t;
             this.roundedTile(
