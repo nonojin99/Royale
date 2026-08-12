@@ -58,6 +58,13 @@ export interface ArtManifest {
    * 덩이마다 다른 칸을 골라 쓴다 (`fps`는 쓰이지 않는다).
    */
   mineral?: boolean | AnimDef;
+  /**
+   * 이펙트 — `fx.png`.
+   *
+   * 미네랄처럼 **변형 모음**이다. 4행 6열 시트를 행 우선으로 편 24칸 스트립이고,
+   * 몇 번 칸이 무슨 이펙트인지는 렌더러의 FX 표가 안다.
+   */
+  fx?: boolean | AnimDef;
 }
 
 /** 재생 가능한 프레임 묶음 */
@@ -150,7 +157,7 @@ class ArtLibrary {
 
     // 일꾼·미네랄은 유닛이 아니라서 매니페스트 항목이 따로다.
     // `true`면 한 장, 정의가 오면 스트립으로 읽는다.
-    for (const name of ['worker', 'mineral'] as const) {
+    for (const name of ['worker', 'mineral', 'fx'] as const) {
       const def = manifest?.[name];
       if (probe || def === true) wanted.push([name, artUrl(`${name}.png`), null]);
       else if (def) wanted.push([`clip:${name}:all`, artUrl(`${name}.png`), def]);
@@ -239,6 +246,13 @@ class ArtLibrary {
     const clip = this.clips.get('clip:mineral:all');
     if (!clip) return null;
     return clip.textures[variant % clip.textures.length];
+  }
+
+  /** 이펙트 칸. 번호는 렌더러의 FX 표가 정한다. 시트가 없으면 null */
+  fx(index: number): Texture | null {
+    const clip = this.clips.get('clip:fx:all');
+    if (!clip || index < 0 || index >= clip.textures.length) return null;
+    return clip.textures[index];
   }
 
   /** 이미지가 한 장이라도 있는지 */

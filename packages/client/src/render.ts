@@ -53,6 +53,20 @@ const UNIT_SPRITE_H = PX_PER_TILE * 2.0;
  */
 const MINERAL_SPRITE_H = PX_PER_TILE * 0.85;
 const WORKER_SPRITE_H = PX_PER_TILE * 0.7;
+
+/**
+ * 이펙트 시트(`fx.png`)의 칸 번호 — 4행 6열을 행 우선으로 편 24칸.
+ *
+ * 1행 투사체(0~5) · 2행 착탄(6~11) · 3행 폭발(12~17) · 4행 연기(18~23).
+ * 시트가 아직 없으면 같은 색의 도형 폴백으로 그린다.
+ */
+const FX_IMPACT: Record<string, number> = { steel: 13, swarmhive: 16, covenant: 15 };
+const FX_DEATH: Record<string, number> = { steel: 19, swarmhive: 22, covenant: 21 };
+const FX_COLOR: Record<string, number> = {
+  steel: 0xf97316,
+  swarmhive: 0xa855f7,
+  covenant: 0x22d3ee,
+};
 export const VIEW_W = (ARENA_W / SCALE) * PX_PER_TILE;
 export const VIEW_H = (ARENA_H / SCALE) * PX_PER_TILE;
 
@@ -411,6 +425,9 @@ export class Renderer {
       }
       this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
     }
+
+    this.spawnFx(state, myTeam);
+    this.drawFx(d);
   }
 
   /**
@@ -616,6 +633,120 @@ export class Renderer {
       else if (dx < -8) this.facing.set(e.id, 1);
     }
     return this.facing.get(e.id) ?? 1;
+  }
+
+  /* ── 이펙트 (전부 렌더 전용, 시뮬과 무관) ──────────────────────────── */
+
+  /** 재생 중인 이펙트. 수명이 다하면 지워진다 */
+  private readonly fxList: Array<{
+    tex: Texture | null;
+    color: number;
+    sx: number;
+    sy: number;
+    startMs: number;
+    durMs: number;
+    h: number;
+  }> = [];
+  /** 발사 감지용 — frameFor의 prevCd와 별도로 둬서 서로 간섭하지 않는다 */
+  private readonly fxPrevCd = new Map<number, number>();
+  /** 직전 프레임에 살아 있던 엔티티 — 사라지면 그 자리에 죽음 이펙트 */
+  private readonly fxSeen = new Map<number, { sx: number; sy: number; faction: string }>();
+  private fxLastTick = -1;
+
+  /**
+   * 시뮬 상태의 변화(발사·죽음)를 보고 이펙트를 만든다.
+   *
+   * 상태를 읽기만 하므로 결정론과 무관하다 — 공격 애니메이션을 고르는 것과
+   * 같은 원리다. cd가 직전보다 커졌으면 방금 쐈다는 뜻이고, 그 순간 대상
+   * 위치에 착탄을 심는다. 투사체 비행은 없다: 시뮬에 투사체가 없어서
+   * 데미지가 즉시 들어가기 때문에, 날아가는 그림을 그리면 오히려
+   * "맞았는데 아직 안 날아왔다"는 거짓말이 된다.
+   */
+  private spawnFx(state: GameState, myTeam: Team): void {
+    // 틱이 뒤로 갔으면 새 경기다 — 이전 경기의 기억으로 이펙트를 만들면 안 된다
+    if (state.tick < this.fxLastTick) {
+      this.fxPrevCd.clear();
+      this.fxSeen.clear();
+      this.fxList.length = 0;
+    }
+    this.fxLastTick = state.tick;
+
+    const byId = new Map<number, Entity>();
+    for (const e of state.entities) byId.set(e.id, e);
+
+    for (const e of state.entities) {
+      const prev = this.fxPrevCd.get(e.id);
+      this.fxPrevCd.set(e.id, e.cd);
+      if (prev === undefined || e.cd <= prev) continue;
+      const victim = byId.get(e.target);
+      if (!victim) continue;
+      const faction = state.players[e.team].faction;
+      const [sx, sy] = this.toScreen(victim.x, victim.y, myTeam);
+      const lift = victim.flying ? PX_PER_TILE * 0.55 : 0;
+      this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
+    }
+
+    // 지난 프레임엔 있었는데 지금 없다 = 죽었다. 마지막 자리에 연기를 남긴다
+    for (const [id, seen] of this.fxSeen) {
+      if (byId.has(id)) continue;
+      this.fxSeen.delete(id);
+      this.fxPrevCd.delete(id);
+      this.pushFx(
+        FX_DEATH[seen.faction],
+        FX_COLOR[seen.faction],
+        seen.sx,
+        seen.sy,
+        550,
+        PX_PER_TILE * 1.3,
+      );
+    }
+    for (const e of state.entities) {
+      const [sx, sy] = this.toScreen(e.x, e.y, myTeam);
+      this.fxSeen.set(e.id, { sx, sy, faction: state.players[e.team].faction });
+    }
+  }
+
+  private pushFx(
+    index: number | undefined,
+    color: number | undefined,
+    sx: number,
+    sy: number,
+    durMs: number,
+    h: number,
+  ): void {
+    // 대군 전투에서 이펙트가 수백 개로 불어나지 않게 오래된 것부터 버린다
+    if (this.fxList.length >= 80) this.fxList.shift();
+    this.fxList.push({
+      tex: index === undefined ? null : art.fx(index),
+      color: color ?? 0xffffff,
+      sx,
+      sy,
+      startMs: this.nowMs,
+      durMs,
+      h,
+    });
+  }
+
+  private drawFx(d: Graphics): void {
+    for (let i = this.fxList.length - 1; i >= 0; i--) {
+      const f = this.fxList[i];
+      const t = (this.nowMs - f.startMs) / f.durMs;
+      if (t >= 1) {
+        this.fxList.splice(i, 1);
+        continue;
+      }
+      if (f.tex) {
+        // 살짝 커지며 사라진다. 프레임이 하나뿐이라 크기·투명도가 곧 애니메이션이다
+        const sp = this.place(f.tex, f.sx, f.sy, f.h * (0.6 + 0.6 * t), 0.5);
+        sp.alpha = 1 - t * t;
+        sp.zIndex = Math.round(f.sy) + 4; // 같은 y의 유닛보다 위
+      } else {
+        // 시트가 아직 없다 — 종족 색 링이 퍼지며 사라진다
+        const r = f.h * (0.25 + 0.55 * t);
+        d.circle(f.sx, f.sy, r);
+        d.stroke({ width: 3 * (1 - t), color: f.color, alpha: 0.8 * (1 - t) });
+      }
+    }
   }
 
   /** 죽은 엔티티가 남긴 항목을 걷어낸다 — 경기가 길어지면 계속 쌓인다 */
