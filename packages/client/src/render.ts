@@ -240,6 +240,72 @@ export class Renderer {
     return waterTile(...worldTile(sx, sy));
   }
 
+  /** 모서리별 반지름을 받는 타일 사각형 경로 */
+  private roundedTile(
+    g: Graphics,
+    x: number,
+    y: number,
+    t: number,
+    nw: number,
+    ne: number,
+    se: number,
+    sw: number,
+  ): void {
+    g.moveTo(x + nw, y);
+    g.lineTo(x + t - ne, y);
+    if (ne) g.quadraticCurveTo(x + t, y, x + t, y + ne);
+    g.lineTo(x + t, y + t - se);
+    if (se) g.quadraticCurveTo(x + t, y + t, x + t - se, y + t);
+    g.lineTo(x + sw, y + t);
+    if (sw) g.quadraticCurveTo(x, y + t, x, y + t - sw);
+    g.lineTo(x, y + nw);
+    if (nw) g.quadraticCurveTo(x, y, x + nw, y);
+    g.closePath();
+  }
+
+  /** 물과 접한 뭍 변에 모래띠와 자갈을 얹는다 */
+  private decorateCoast(
+    g: Graphics,
+    worldTile: (sx: number, sy: number) => [number, number],
+    sx: number,
+    sy: number,
+    W: number,
+    H: number,
+    t: number,
+    n: number,
+  ): void {
+    const water = (dx: number, dy: number): boolean =>
+      sx + dx >= 0 && sy + dy >= 0 && sx + dx < W && sy + dy < H &&
+      waterTile(...worldTile(sx + dx, sy + dy));
+    const x0 = sx * t;
+    const y0 = sy * t;
+    const sand = 0xc9bc8a;
+    const sides: Array<[boolean, number, number, number, number]> = [
+      [water(0, -1), x0, y0, t, 2.5],
+      [water(0, 1), x0, y0 + t - 2.5, t, 2.5],
+      [water(-1, 0), x0, y0, 2.5, t],
+      [water(1, 0), x0 + t - 2.5, y0, 2.5, t],
+    ];
+    let any = false;
+    for (const [hit, rx, ry, rw, rh] of sides) {
+      if (!hit) continue;
+      any = true;
+      g.rect(rx, ry, rw, rh);
+      g.fill({ color: sand, alpha: 0.55 });
+    }
+    if (any && n > 0.3) {
+      // 자갈 — 좌표 시드 난수로 위치가 프레임마다 흔들리지 않는다
+      const px = x0 + 3 + Math.floor(n * (t - 6));
+      const py = y0 + 3 + Math.floor(((n * 7919) % 1) * (t - 6));
+      g.circle(px, py, 1.4);
+      g.fill({ color: 0x9aa3ad, alpha: 0.8 });
+      if (n > 0.7) {
+        g.circle(x0 + t - 4 - Math.floor(n * 5), y0 + 4 + Math.floor(n * 4), 1.1);
+        g.fill({ color: 0x8a8f96, alpha: 0.7 });
+      }
+    }
+  }
+
   /** 지형은 매 프레임 다시 그릴 이유가 없다 */
   private drawTerrain(myTeam: Team): void {
     const g = this.gTerrain;
@@ -280,20 +346,52 @@ export class Renderer {
         };
 
         if (hasTiles) {
-          // 협곡 — 파인 지형. 어두운 구덩이로 그리고 타일은 깔지 않는다
+          // 협곡·바다 — 파인 지형. 시뮬은 타일 사각형이지만 그림까지
+          // 사각형일 이유는 없다: 밑에 뭍 타일을 깔고 그 위에 물을
+          // **모서리를 둥글려** 그리면 해안선이 곡선으로 읽힌다
           if (waterTile(wx, wy)) {
-            g.rect(sx * t, sy * t, t, t);
+            // 1) 밑바닥 뭍 — 둥근 모서리 뒤로 비쳐 보이는 부분
+            const under = new Sprite(art.terrain(pickCell(T_LOW, n))!);
+            under.position.set(sx * t, sy * t);
+            under.width = t;
+            under.height = t;
+            this.gTiles.addChild(under);
+
+            // 2) 물 본체 — 뭍과 만나는 볼록 모서리만 둥글린다
+            const landN = !this.chasmAt(worldTile, sx, sy - 1, W, H);
+            const landS = !this.chasmAt(worldTile, sx, sy + 1, W, H);
+            const landW = !this.chasmAt(worldTile, sx - 1, sy, W, H);
+            const landE = !this.chasmAt(worldTile, sx + 1, sy, W, H);
+            const r = t * 0.55;
+            const x0 = sx * t;
+            const y0 = sy * t;
+            this.roundedTile(
+              g,
+              x0,
+              y0,
+              t,
+              landN && landW ? r : 0,
+              landN && landE ? r : 0,
+              landS && landE ? r : 0,
+              landS && landW ? r : 0,
+            );
             g.fill(n < 0.5 ? 0x0e1822 : 0x101c27);
-            const landAbove = !this.chasmAt(worldTile, sx, sy - 1, W, H);
-            const landBelow = !this.chasmAt(worldTile, sx, sy + 1, W, H);
-            if (landAbove) {
-              // 북쪽 벼랑 입술 — 빛을 받아 밝다
-              g.rect(sx * t, sy * t, t, 3);
-              g.fill({ color: 0x3d5166, alpha: 0.9 });
+
+            // 3) 잔물결 — 어두운 면이 밋밋하지 않게, 드문드문
+            if (n > 0.55 && !landN && !landS) {
+              const wy2 = y0 + 4 + Math.floor(n * (t - 8));
+              g.rect(x0 + 3, wy2, t * 0.4, 1);
+              g.fill({ color: 0x2b4258, alpha: 0.5 });
             }
-            if (landBelow) {
-              g.rect(sx * t, sy * t + t - 2, t, 2);
-              g.fill({ color: 0x000000, alpha: 0.5 });
+
+            // 4) 벼랑 입술 — 북쪽 뭍 경계는 빛을 받아 밝다
+            if (landN) {
+              g.rect(x0 + (landW ? r * 0.6 : 0), y0, t - (landW ? r * 0.6 : 0) - (landE ? r * 0.6 : 0), 2.5);
+              g.fill({ color: 0x3d5166, alpha: 0.85 });
+            }
+            if (landS) {
+              g.rect(x0 + (landW ? r * 0.6 : 0), y0 + t - 2, t - (landW ? r * 0.6 : 0) - (landE ? r * 0.6 : 0), 2);
+              g.fill({ color: 0x000000, alpha: 0.45 });
             }
             continue;
           }
@@ -334,6 +432,10 @@ export class Renderer {
           sp.width = t;
           sp.height = t;
           this.gTiles.addChild(sp);
+
+          // 해안 장식 — 물과 닿는 변에 모래띠, 그 위에 자갈 몇 알.
+          // 직선 경계가 "칠해진 사각형"으로 읽히는 것을 막는 값싼 마법이다
+          this.decorateCoast(g, worldTile, sx, sy, W, H, t, n);
 
           // 북쪽 능선 조각은 시트에 없어서(위·아래가 섞인 칸뿐) 페인트로 잇는다
           if (high && !blockedTile(wx, wy) && edge(0, -1) && !edge(0, 1)) {
