@@ -8,6 +8,7 @@
  */
 
 import {
+  siteReachable,
   BASE_BUILD_COST,
   DEFAULT_FACTION_ID,
   FACTION_IDS,
@@ -506,8 +507,13 @@ function onPointerDown(ev: PointerEvent): void {
       flash('미네랄 부족');
       return;
     }
-    if (!nearestFreeSite(x, y, occupiedSites(s))) {
+    const site = nearestFreeSite(x, y, occupiedSites(s));
+    if (!site) {
       flash('근처에 빈 기지 자리가 없습니다');
+      return;
+    }
+    if (!siteReachable(s, net.myTeam, site)) {
+      flash('확장은 내 영토에서 이어져야 합니다 (기지에서 11타일 안)');
       return;
     }
     net.act('base', '', x, y);

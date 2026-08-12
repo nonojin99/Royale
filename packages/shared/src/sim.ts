@@ -49,6 +49,7 @@ import {
   WORKER_COST,
   WORKER_MINE_PER_TICK,
   WORKER_LOSS_DAMAGE,
+  EXPAND_RANGE,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -470,6 +471,7 @@ function buildBase(s: GameState, cmd: Command): boolean {
 
   const site = nearestFreeSite(cmd.x, cmd.y, occupiedSites(s));
   if (!site) return false;
+  if (!siteReachable(s, cmd.team, site)) return false;
 
   p.minerals -= BASE_BUILD_COST;
   s.entities.push(makeBase(s, cmd.team, site, false));
@@ -527,6 +529,20 @@ function applySpell(s: GameState, team: Team, u: UnitDef, x: number, y: number):
     if (dist2(e.x, e.y, x, y) <= r2) e.hp -= u.damage;
   }
   reap(s);
+}
+
+/** 확장 인접 제약 — 보유 기지에서 EXPAND_RANGE 안의 지점만 지을 수 있다 */
+export function siteReachable(
+  s: GameState,
+  team: Team,
+  site: { x: number; y: number },
+): boolean {
+  const r2 = EXPAND_RANGE * EXPAND_RANGE;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.deploy > 0) continue;
+    if (dist2(e.x, e.y, site.x, site.y) <= r2) return true;
+  }
+  return false;
 }
 
 /* ── 타겟 선정 ─────────────────────────────────────────────────────────── */

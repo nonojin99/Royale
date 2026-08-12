@@ -39,6 +39,7 @@ import {
   nextInt,
   occupiedSites,
   ownBasePositions,
+  siteReachable,
   step,
   workerCapacity,
 } from '../packages/shared/dist/index.js';
@@ -106,7 +107,7 @@ function expand(s, team, max = 4) {
   const taken = occupiedSites(s);
   const [ex, ey] = enemyMain(team);
   // 자기 진영(적에서 먼 곳)부터
-  const cands = BASE_SITES.filter((b) => !taken.has(b.id)).sort(
+  const cands = BASE_SITES.filter((b) => !taken.has(b.id) && siteReachable(s, team, b)).sort(
     (a, b) =>
       Math.abs(b.x - ex) + Math.abs(b.y - ey) - (Math.abs(a.x - ex) + Math.abs(a.y - ey)),
   );

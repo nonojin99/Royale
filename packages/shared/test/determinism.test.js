@@ -61,6 +61,7 @@ import {
   restore,
   snapshot,
   sortCommands,
+  siteReachable,
   step,
   summarizeReplay,
   verifyReplay,
@@ -335,15 +336,18 @@ test('일꾼이 정원을 넘으면 초과분은 놀고 수입에 잡히지 않�
 
 test('미네랄이 모자라면 기지를 세울 수 없다', () => {
   const s = createState(5, MIRROR);
-  const free = BASE_SITES.filter((b) => b.startFor === -1);
+  // 인접 제약(라운드 5) 때문에 팀0이 이을 수 있는 지점만 쓴다
+  const free = BASE_SITES.filter((b) => b.startFor === -1 && siteReachable(s, 0, b));
   // 시작 자원(5)은 확장 비용(8)에 못 미친다
   step(s, [cmd(s.tick, 0, 'base', '', free[0].x, free[0].y)]);
   assert.equal(baseCount(s, 0), 1, '자원이 모자란데 기지가 세워졌다');
 
+  // 시작 시점에 이을 수 있는 지점은 앞마당 하나뿐이다(인접 제약) —
+  // 같은 지점에 두 번 명령해도 돈과 자리가 한 번치뿐임을 확인한다
   s.players[0].minerals = BASE_BUILD_COST;
   step(s, [
     cmd(s.tick, 0, 'base', '', free[0].x, free[0].y),
-    cmd(s.tick, 0, 'base', '', free[1].x, free[1].y),
+    cmd(s.tick, 0, 'base', '', free[0].x, free[0].y),
   ]);
   assert.equal(baseCount(s, 0), 2, '한 번치 자원으로 두 곳이 세워졌다');
 });
@@ -465,7 +469,8 @@ test('기지 반경 안에만 유닛을 배치할 수 있다', () => {
 
 test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다', () => {
   const s = createState(5, MIRROR);
-  const forward = BASE_SITES.find((b) => b.label === '중앙 아래');
+  // 인접 제약 때문에 본진에서 바로 이어지는 앞마당을 전진 기지로 쓴다
+  const forward = BASE_SITES.find((b) => b.label === '아래 앞마당');
 
   // 기지가 없을 때는 배치 불가
   assert.equal(canDeployAt(forward.x, forward.y, ownBasePositions(s, 0)), false);
@@ -556,7 +561,7 @@ test('본진이 파괴되면 즉시 상대가 승리한다', () => {
 
 test('확장 기지가 파괴되어도 경기는 계속된다', () => {
   const s = createState(12, MIRROR);
-  const site = BASE_SITES.find((b) => b.startFor === -1);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
   for (let i = 0; i < 400; i++) step(s, []);
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   assert.equal(baseCount(s, 0), 2);
@@ -1062,4 +1067,30 @@ test('주문은 자기 기지 반경 밖에도 시전된다 (라운드 1 안건 
   step(s, [{ execTick: s.tick, team: 0, kind: 'unit', id: 'carpetbomb', x: -5000, y: 0 }]);
   // 채굴이 한 틱 들어오므로 "줄지 않았다"로 본다 — 시전됐다면 3코스트가 빠졌을 것
   assert.ok(s.players[0].minerals >= minerals, '전장 밖 시전이 자원을 소모했다');
+});
+
+test('확장은 보유 기지에서 EXPAND_RANGE 안의 지점만 지을 수 있다 (라운드 5)', () => {
+  const s = createState(9, MIRROR);
+  s.players[0].minerals = 99 * MINERAL_SCALE;
+
+  // 팀0 본진은 아래쪽(20,20) — 반대편 구석 지점은 이어지지 않아야 한다
+  const near = BASE_SITES.find((b) => b.startFor === -1 && b.y > ARENA_H / 2);
+  const far = BASE_SITES.find((b) => b.startFor === 1); // 상대 본진 쪽
+  assert.ok(siteReachable(s, 0, near), '가까운 지점이 이어지지 않는다');
+  assert.ok(!siteReachable(s, 0, { x: far.x, y: far.y }), '반대편 지점이 이어진다');
+
+  // 실제 명령도 같은 판정을 따른다
+  const basesBefore = s.entities.filter((e) => e.kind === 'base').length;
+  step(s, [{ execTick: s.tick, team: 0, kind: 'base', id: '', x: far.x, y: far.y }]);
+  assert.equal(
+    s.entities.filter((e) => e.kind === 'base').length,
+    basesBefore,
+    '멀리 떨어진 확장이 지어졌다',
+  );
+  step(s, [{ execTick: s.tick, team: 0, kind: 'base', id: '', x: near.x, y: near.y }]);
+  assert.equal(
+    s.entities.filter((e) => e.kind === 'base').length,
+    basesBefore + 1,
+    '이어지는 확장이 지어지지 않았다',
+  );
 });

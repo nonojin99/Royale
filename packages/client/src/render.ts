@@ -16,9 +16,11 @@ import { art } from './art.js';
 import {
   ARENA_H,
   ARENA_W,
+  BASE_BUILD_TICKS,
   BASE_MINERAL_RESERVE,
   BASE_SITES,
   DEPLOY_RADIUS,
+  DEPLOY_TICKS,
   Entity,
   GameState,
   MINERAL_PATCHES,
@@ -32,6 +34,7 @@ import {
   WORKER_CAP_PER_BASE,
   getFaction,
   getUnit,
+  siteReachable,
   workersAtBase,
 } from '@royale/shared';
 
@@ -361,9 +364,12 @@ export class Renderer {
     for (const site of BASE_SITES) {
       if (taken.has(site.id)) continue;
       const [sx, sy] = this.toScreen(site.x, site.y, myTeam);
+      // 이을 수 있는 지점(내 기지에서 11타일 안)은 또렷하게 — 다음 확장의
+      // 후보가 한눈에 보여야 "출진해서 땅을 넓힌다"가 계획이 된다
+      const ok = siteReachable(state, myTeam, site);
       g.circle(sx, sy, this.pxLen(1200));
-      g.stroke({ width: 2, color: COLORS.siteMarker, alpha: 0.35 });
-      this.drawMineralPatches(g, sx, sy, 1, 0.25, site.id);
+      g.stroke({ width: ok ? 2.5 : 1.5, color: COLORS.siteMarker, alpha: ok ? 0.55 : 0.15 });
+      this.drawMineralPatches(g, sx, sy, 1, ok ? 0.3 : 0.12, site.id);
     }
 
     for (const e of state.entities) {
@@ -466,6 +472,9 @@ export class Renderer {
           g.rect(sx - size / 2, sy - size / 2, size, size);
           g.stroke({ width: 3.5, color: teamColor });
         }
+        if (e.deploy > 0) {
+          this.progressBar(d, sx, sy + size * 0.5, size, 1 - e.deploy / DEPLOY_TICKS);
+        }
         this.hpBar(d, sx, sy - size / 2 - 6, size, e);
         continue;
       }
@@ -505,6 +514,7 @@ export class Renderer {
       if (e.deploy > 0) {
         d.circle(sx, by, r + 4);
         d.stroke({ width: 2, color: COLORS.deployRing, alpha: 0.9 });
+        this.progressBar(d, sx, by + r + 6, r * 2, 1 - e.deploy / DEPLOY_TICKS);
       }
       this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
     }
@@ -603,6 +613,9 @@ export class Renderer {
     else if (e.reserve < BASE_MINERAL_RESERVE / 4)
       this.label('곧 고갈', sx, sy + size / 2 + 10, 10);
 
+    if (building) {
+      this.progressBar(d, sx, sy + size * 0.55, size, 1 - e.deploy / BASE_BUILD_TICKS);
+    }
     this.hpBar(d, sx, sy - size / 2 - 7, size, e);
     this.drawWorkers(g, workersAtBase(state, e), sx, sy);
   }
@@ -849,6 +862,15 @@ export class Renderer {
     for (const id of this.animState.keys()) if (!live.has(id)) this.animState.delete(id);
     for (const id of this.prevCd.keys()) if (!live.has(id)) this.prevCd.delete(id);
     for (const id of this.facing.keys()) if (!live.has(id)) this.facing.delete(id);
+  }
+
+  /** 건설·배치 진행 게이지 — 노란 바가 차오른다 */
+  private progressBar(g: Graphics, cx: number, cy: number, w: number, frac: number): void {
+    const h = 4;
+    g.rect(cx - w / 2, cy, w, h);
+    g.fill({ color: COLORS.hpBg, alpha: 0.75 });
+    g.rect(cx - w / 2, cy, w * Math.max(0, Math.min(1, frac)), h);
+    g.fill(COLORS.deployRing);
   }
 
   private hpBar(g: Graphics, cx: number, cy: number, w: number, e: Entity): void {

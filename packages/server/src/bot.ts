@@ -34,6 +34,7 @@ import {
   nextInt,
   occupiedSites,
   ownBasePositions,
+  siteReachable,
   workerCapacity,
 } from '@royale/shared';
 
@@ -41,6 +42,12 @@ import {
 const MIN_INTERVAL = 24;
 /** 이 이상 기지를 늘리지는 않는다 */
 const MAX_BASES = 4;
+/**
+ * 일꾼 상한. 정원(기지당 8, 최대 32)까지 다 채우면 "일꾼→확장→일꾼→…"
+ * 순환에 갇혀 병력을 한 기도 안 뽑는다 — 플레이테스트에서 실제로 관측된
+ * 버그다. 경제는 이 정도면 충분하고, 나머지 우선순위가 숨을 쉰다.
+ */
+const MAX_WORKERS = 10;
 
 export interface BotMove {
   kind: CommandKind;
@@ -62,16 +69,31 @@ export class Bot {
     if (tick - this.lastTick < MIN_INTERVAL) return null;
 
     const me = s.players[1];
-    const move = this.train(s) ?? this.expand(s) ?? this.research(s) ?? this.produce(s, me);
+    // 상대 병력이 더 크면 경제보다 병력이 먼저다 — 확장만 하다 죽지 않는다
+    const pressured = this.armyCost(s, 0) > this.armyCost(s, 1);
+    const move = pressured
+      ? this.produce(s, me) ?? this.train(s) ?? this.expand(s)
+      : this.train(s) ?? this.expand(s) ?? this.research(s) ?? this.produce(s, me);
     if (move) this.lastTick = tick;
     return move;
+  }
+
+  /** 필드 위 병력의 총 코스트 (기지 제외) — 압박 판정용 */
+  private armyCost(s: GameState, team: 0 | 1): number {
+    let sum = 0;
+    for (const e of s.entities) {
+      if (e.team !== team || e.kind === 'base') continue;
+      const u = getUnit(e.unit);
+      sum += (u.cost * MINERAL_SCALE) / Math.max(1, u.count);
+    }
+    return sum;
   }
 
   /** 1순위: 일꾼 — 정원이 빌 때까지 채운다. 경제가 모든 것의 기반이다 */
   private train(s: GameState): BotMove | null {
     const me = s.players[1];
     if (me.minerals < WORKER_COST) return null;
-    if (me.workers >= workerCapacity(s, 1)) return null;
+    if (me.workers >= Math.min(MAX_WORKERS, workerCapacity(s, 1))) return null;
     return { kind: 'worker', id: '', x: 0, y: 0 };
   }
 
@@ -81,8 +103,11 @@ export class Bot {
     if (baseCount(s, 1) >= MAX_BASES) return null;
 
     const taken = occupiedSites(s);
-    // 팀 1은 위쪽이므로 y가 작은 지점을 선호한다
-    const candidates = BASE_SITES.filter((b) => !taken.has(b.id)).sort((a, b) => a.y - b.y);
+    // 팀 1은 위쪽이므로 y가 작은 지점을 선호한다. 인접 제약을 지키지 않으면
+    // 서버가 거부한 수를 계속 두면서 다른 우선순위를 막는다
+    const candidates = BASE_SITES.filter(
+      (b) => !taken.has(b.id) && siteReachable(s, 1, b),
+    ).sort((a, b) => a.y - b.y);
     const site = candidates[0];
     if (!site) return null;
     return { kind: 'base', id: '', x: site.x, y: site.y };
