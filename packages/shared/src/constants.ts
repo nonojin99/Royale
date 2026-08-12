@@ -41,7 +41,7 @@ export const WORKER_LOSS_DAMAGE = 300;
  * 감각을 죽인다 (플레이테스트 피드백 #5). 지점 사슬의 최장 간격이 10타일
  * 이라 11이면 인접 지점은 항상 이어진다.
  */
-export const EXPAND_RANGE = 11 * 1000; // 밀리타일 (fixed.ts SCALE과 같은 단위 — 순환 참조를 피해 리터럴)
+export const EXPAND_RANGE = 15 * 1000; // 48그리드 지점 사슬의 최장 간격(~13타일)을 덮는다
 
 /* ── 일꾼 ──────────────────────────────────────────────────────────────── */
 
@@ -96,7 +96,7 @@ export const BASE_BUILD_TICKS = 2 * TICK_RATE;
  * 그래서 전진 기지를 세우는 것 자체가 공격 준비가 된다 —
  * 기지가 경제이자 전선이다.
  */
-export const DEPLOY_RADIUS = 6000;
+export const DEPLOY_RADIUS = 9000; // 48그리드에서도 기지 주변 '진영'이 화면에서 읽히는 크기
 
 /** 기지를 세울 때 클릭 지점에서 이 거리 안의 빈 확장 지점을 집는다 */
 export const BASE_SNAP_RADIUS = 4000;

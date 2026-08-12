@@ -11,8 +11,8 @@
 import { BASE_SNAP_RADIUS, DEPLOY_RADIUS } from './constants.js';
 import { dist2, tiles } from './fixed.js';
 
-export const ARENA_W_TILES = 24;
-export const ARENA_H_TILES = 24;
+export const ARENA_W_TILES = 48;
+export const ARENA_H_TILES = 48;
 
 export const ARENA_W = tiles(ARENA_W_TILES);
 export const ARENA_H = tiles(ARENA_H_TILES);
@@ -34,20 +34,35 @@ export type Team = 0 | 1;
  *   3. 측면에 가림막 — 우회로가 한눈에 안 보여야 심리전이 산다
  */
 const WALL_RECTS: readonly (readonly [number, number, number, number])[] = [
-  // 본진을 감싸는 벽. 출구는 남쪽 (5~6, 7) 한 곳뿐이라 초반 방어선이 명확하다.
-  // 대각선(본진↔본진 최단선) 위에 구멍을 두지 않는 것이 핵심 — 구멍이
-  // 대각선에 걸리면 벽이 있으나 마나가 된다.
-  [6, 0, 6, 6],
-  [0, 7, 4, 7],
-  // 중앙 고지를 두르는 벽. 네 변의 **가운데**만 뚫려 있어 모서리로 새지 못한다
-  [9, 9, 10, 9],
-  [13, 9, 14, 9],
-  [9, 10, 9, 10],
-  [9, 13, 9, 13],
-  // 측면 가림막 — 우회로가 한눈에 안 보이게
-  [17, 6, 17, 9],
-  // 중앙 상단 바위
-  [11, 3, 12, 4],
+  // ── 본진 주머니 (0..12, 0..13) — 출구는 남쪽 (10~12, 14) 한 곳 ──
+  // 직선 한 줄 대신 짧은 조각을 계단처럼 어긋나게 쌓아 능선처럼 보이게 한다
+  [13, 0, 13, 5],
+  [14, 5, 14, 9],
+  [13, 9, 13, 13],
+  [0, 14, 4, 14],
+  [4, 15, 7, 15],
+  [7, 14, 9, 14],
+
+  // ── 중앙 고원 (19..28, 19..28) 테두리 — 변의 가운데만 뚫린 램프 ──
+  [19, 19, 21, 19],
+  [26, 19, 28, 19],
+  [19, 20, 19, 21],
+  [19, 26, 19, 28],
+
+  // ── 대각 능선 — 본진과 중앙 사이의 시야 가림 + 우회로 강제 ──
+  [17, 12, 18, 12],
+  [18, 13, 19, 13],
+  [19, 14, 20, 14],
+
+  // ── 측면 가림막 (오른쪽 위 지역) ──
+  [33, 10, 33, 16],
+  [34, 16, 34, 18],
+
+  // ── 흩어진 바위 — 벌판이 밋밋하지 않게, 길을 살짝 굽히게 ──
+  [24, 6, 25, 7],
+  [8, 22, 9, 23],
+  [16, 30, 17, 31],
+  [30, 21, 31, 21],
 ];
 
 /** 점대칭으로 복제한 전체 벽 목록 */
@@ -77,10 +92,10 @@ export const WALLS: readonly (readonly [number, number, number, number])[] = (()
  * "중앙 고지를 다투는 싸움"이라는 RTS 문법을 만드는 장치.
  */
 const HIGH_RECTS: readonly (readonly [number, number, number, number])[] = [
-  // 본진 주머니 (벽 [6,0~6]과 [0~4,7]이 감싸는 영역 + 출구 램프 직전까지)
-  [0, 0, 5, 6],
-  // 중앙 고원 (링 벽 안쪽 전체 — 벽 타일은 어차피 통행 불가라 무해)
-  [9, 9, 14, 14],
+  // 본진 주머니 — 램프(출구) 직전까지
+  [0, 0, 12, 13],
+  // 중앙 고원
+  [19, 19, 28, 28],
 ];
 
 /** 점대칭 복제된 전체 고지 목록 */
@@ -143,14 +158,14 @@ export interface BaseSite {
 }
 
 export const BASE_SITES: readonly BaseSite[] = [
-  { id: 0, x: tiles(3), y: tiles(3), startFor: 1, label: '위 본진' },
-  { id: 1, x: tiles(20), y: tiles(3), startFor: -1, label: '위 우측' },
-  { id: 2, x: tiles(3), y: tiles(10), startFor: -1, label: '위 앞마당' },
-  { id: 3, x: tiles(13), y: tiles(11), startFor: -1, label: '중앙 위' },
-  { id: 4, x: tiles(10), y: tiles(12), startFor: -1, label: '중앙 아래' },
-  { id: 5, x: tiles(20), y: tiles(13), startFor: -1, label: '아래 앞마당' },
-  { id: 6, x: tiles(3), y: tiles(20), startFor: -1, label: '아래 좌측' },
-  { id: 7, x: tiles(20), y: tiles(20), startFor: 0, label: '아래 본진' },
+  { id: 0, x: tiles(6), y: tiles(6), startFor: 1, label: '위 본진' },
+  { id: 1, x: tiles(19), y: tiles(5), startFor: -1, label: '위 우측' },
+  { id: 2, x: tiles(7), y: tiles(18), startFor: -1, label: '위 앞마당' },
+  { id: 3, x: tiles(21), y: tiles(22), startFor: -1, label: '중앙 위' },
+  { id: 4, x: tiles(26), y: tiles(25), startFor: -1, label: '중앙 아래' },
+  { id: 5, x: tiles(40), y: tiles(29), startFor: -1, label: '아래 앞마당' },
+  { id: 6, x: tiles(28), y: tiles(42), startFor: -1, label: '아래 좌측' },
+  { id: 7, x: tiles(41), y: tiles(41), startFor: 0, label: '아래 본진' },
 ];
 
 /** 아레나 안쪽인가 */

@@ -61,6 +61,7 @@ import {
   restore,
   snapshot,
   sortCommands,
+  ARENA_W_TILES,
   siteReachable,
   step,
   summarizeReplay,
@@ -286,7 +287,7 @@ test('일꾼은 정원을 넘겨 살 수 없다', () => {
 
 test('확장하면 정원이 늘고 그만큼 일꾼을 더 붙일 수 있다', () => {
   const s = createState(5, MIRROR);
-  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > ARENA_H / 2);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
   s.players[0].minerals = MINERAL_MAX;
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
@@ -354,7 +355,7 @@ test('미네랄이 모자라면 기지를 세울 수 없다', () => {
 
 test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
   const s = createState(5, MIRROR);
-  const site = BASE_SITES.find((b) => b.startFor === -1);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
   s.players[0].minerals = MINERAL_MAX;
   s.players[1].minerals = MINERAL_MAX;
 
@@ -575,7 +576,7 @@ test('확장 기지가 파괴되어도 경기는 계속된다', () => {
 
 test('시간이 다 되면 기지 수로 승패를 가린다', () => {
   const s = createState(13, MIRROR);
-  const site = BASE_SITES.find((b) => b.startFor === -1 && b.y > ARENA_H / 2);
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
   for (let i = 0; i < 400; i++) step(s, []);
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
 
@@ -859,14 +860,14 @@ test('언덕 — 저지에서 고지를 때리면 데미지가 깎인다 (원거
   // 본진 주머니는 고지, 출구 밖은 저지 (맵 전제)
   const m1 = BASE_SITES.find((b) => b.startFor === 1);
   assert.equal(elevAt(m1.x, m1.y), 1, '본진이 고지가 아니다');
-  assert.equal(elevAt(5500, 7500), 0, '본진 출구 밖이 저지가 아니다');
+  assert.equal(elevAt(11500, 15500), 0, '본진 출구 밖이 저지가 아니다');
 
   // 같은 표적(고지 위 광전사)을 원거리 소총병으로 때린다.
   // 근접 유닛은 붙는 동안 자기도 고지에 올라가므로 이 규칙의 대상이 아니다 —
   // 원거리로 사거리 안·고도 밖에서 쏘는 상황만 감쇄된다.
   const firstVolley = (ax, ay) => {
     const s = createState(9, MIRROR);
-    const target = place(s, 1, 'zealot', 2500, 5500); // 고지 (2,5)
+    const target = place(s, 1, 'zealot', 11500, 12500); // 고지 램프 위 (11,12)
     place(s, 0, 'rifleman', ax, ay);
     const hp0 = target.hp;
     for (let i = 0; i < 100; i++) {
@@ -878,8 +879,8 @@ test('언덕 — 저지에서 고지를 때리면 데미지가 깎인다 (원거
     return 0;
   };
 
-  const fromLow = firstVolley(5500, 7500); // 저지 (5,7) — 사거리 안
-  const fromHigh = firstVolley(1500, 2500); // 고지 (1,2)
+  const fromLow = firstVolley(11500, 16500); // 저지 (11,16) — 램프 아래, 사거리 안
+  const fromHigh = firstVolley(11500, 9500); // 고지 (11,9)
   assert.ok(fromLow > 0, '저지 공격자가 때리지 못했다');
   assert.ok(fromHigh > 0, '고지 공격자가 때리지 못했다');
   assert.ok(
@@ -890,24 +891,25 @@ test('언덕 — 저지에서 고지를 때리면 데미지가 깎인다 (원거
 
 test('맵은 점대칭이다 (한쪽만 유리한 지형이 없다)', () => {
   // 벽을 절반만 적고 자동 복제하므로, 그 복제가 실제로 맞는지 확인한다.
-  for (let ty = 0; ty < 24; ty++) {
-    for (let tx = 0; tx < 24; tx++) {
+  const T = ARENA_W_TILES;
+  for (let ty = 0; ty < T; ty++) {
+    for (let tx = 0; tx < T; tx++) {
       assert.equal(
         blockedTile(tx, ty),
-        blockedTile(23 - tx, 23 - ty),
+        blockedTile(T - 1 - tx, T - 1 - ty),
         `(${tx},${ty}) 와 대칭점의 지형이 다르다`,
       );
       assert.equal(
         elevTile(tx, ty),
-        elevTile(23 - tx, 23 - ty),
+        elevTile(T - 1 - tx, T - 1 - ty),
         `(${tx},${ty}) 와 대칭점의 고도가 다르다`,
       );
     }
   }
   // 기지 자리도 대칭이어야 한다
   for (const a of BASE_SITES) {
-    const mx = 23000 - a.x;
-    const my = 23000 - a.y;
+    const mx = (T - 1) * 1000 - a.x;
+    const my = (T - 1) * 1000 - a.y;
     assert.ok(
       BASE_SITES.some((b) => Math.abs(b.x - mx) <= 1000 && Math.abs(b.y - my) <= 1000),
       `${a.label} 의 대칭 자리가 없다`,
@@ -1073,8 +1075,8 @@ test('확장은 보유 기지에서 EXPAND_RANGE 안의 지점만 지을 수 있
   const s = createState(9, MIRROR);
   s.players[0].minerals = 99 * MINERAL_SCALE;
 
-  // 팀0 본진은 아래쪽(20,20) — 반대편 구석 지점은 이어지지 않아야 한다
-  const near = BASE_SITES.find((b) => b.startFor === -1 && b.y > ARENA_H / 2);
+  // 팀0 본진은 아래쪽 — 반대편 지점은 이어지지 않아야 한다
+  const near = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
   const far = BASE_SITES.find((b) => b.startFor === 1); // 상대 본진 쪽
   assert.ok(siteReachable(s, 0, near), '가까운 지점이 이어지지 않는다');
   assert.ok(!siteReachable(s, 0, { x: far.x, y: far.y }), '반대편 지점이 이어진다');
