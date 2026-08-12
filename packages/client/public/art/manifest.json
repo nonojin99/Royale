@@ -247,5 +247,9 @@
   "fx": {
     "frames": 24,
     "fps": 8
+  },
+  "terrain": {
+    "frames": 24,
+    "fps": 8
   }
 }

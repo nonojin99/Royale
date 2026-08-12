@@ -118,7 +118,7 @@
 - [x] `worker` 일꾼
 - [x] 미네랄 덩이
 - [x] 이펙트 시트 (착탄 · 폭발 · 연기) — 적용됨. 투사체 행은 시뮬에 투사체가 생기면 쓴다
-- [ ] 지형 타일셋 — §2.8 지시서 참고
+- [x] 지형 타일셋 — 적용됨. 잔디·고지·절벽·바위가 이미지 타일로 그려진다
 
 **실제로 만들 유닛은 22종**이다. 주문 2종은 화면 효과라 유닛 스프라이트가 없다.
 
@@ -262,13 +262,18 @@ node tools/strip.mjs ../../art-src/clean/fx.png --out fx.png --grid 4x6 --cell 6
 ### 처리
 
 ```bash
-node tools/dealpha.mjs ../../art-src/terrain.png
+node tools/dealpha.mjs ../../art-src/terrain.png   # PNG 변환용 — 배경이 단색이면 그대로 남는다
 node tools/strip.mjs ../../art-src/clean/terrain.png --out terrain.png \
-     --grid 4x6 --cell 64 --fill 1
+     --grid 4x6 --cell 64 --bgcolor auto --inset 0.1 --stretch
 ```
 
-`--fill 1`이 중요하다 — 기본값(0.92)은 칸 사이에 투명 여백을 남기는데,
-지형 타일은 끝까지 채워야 이어 붙일 때 줄눈이 생기지 않는다.
+세 옵션이 전부 필요하다는 것을 실제로 넣어 보고 알았다:
+
+| 옵션 | 없으면 |
+|---|---|
+| `--bgcolor auto` | 배경이 투명이 아니라 단색으로 구워져 오면 경계를 못 잡는다 |
+| `--inset 0.1` | 생성기가 타일마다 어두운 테두리를 굽는다 — 게임에서 격자 줄눈이 된다 |
+| `--stretch` | 비율 유지 배치가 남기는 한두 줄의 빈 픽셀도 줄눈이 된다. 타일은 셀을 정확히 꽉 채워야 한다 |
 
 매니페스트: `"terrain": { "frames": 24, "fps": 8 }` (fps는 쓰이지 않는다).
 칸 번호(행 우선 0~23)가 곧 의미이므로 행·열 순서를 바꾸면 안 된다.

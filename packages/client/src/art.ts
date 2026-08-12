@@ -65,6 +65,13 @@ export interface ArtManifest {
    * 몇 번 칸이 무슨 이펙트인지는 렌더러의 FX 표가 안다.
    */
   fx?: boolean | AnimDef;
+  /**
+   * 지형 타일셋 — `terrain.png`.
+   *
+   * 역시 변형 모음이다. 4행 6열(잔디/고지/절벽/바위)을 행 우선으로 편
+   * 24칸 스트립이고, 칸 배정은 렌더러의 지형 표가 안다.
+   */
+  terrain?: boolean | AnimDef;
 }
 
 /** 재생 가능한 프레임 묶음 */
@@ -157,7 +164,7 @@ class ArtLibrary {
 
     // 일꾼·미네랄은 유닛이 아니라서 매니페스트 항목이 따로다.
     // `true`면 한 장, 정의가 오면 스트립으로 읽는다.
-    for (const name of ['worker', 'mineral', 'fx'] as const) {
+    for (const name of ['worker', 'mineral', 'fx', 'terrain'] as const) {
       const def = manifest?.[name];
       if (probe || def === true) wanted.push([name, artUrl(`${name}.png`), null]);
       else if (def) wanted.push([`clip:${name}:all`, artUrl(`${name}.png`), def]);
@@ -250,7 +257,32 @@ class ArtLibrary {
 
   /** 이펙트 칸. 번호는 렌더러의 FX 표가 정한다. 시트가 없으면 null */
   fx(index: number): Texture | null {
-    const clip = this.clips.get('clip:fx:all');
+    return this.cellOf('fx', index);
+  }
+
+  /** 텍셀 번짐을 막은 지형 타일 텍스처 캐시 */
+  private readonly terrainTex = new Map<number, Texture>();
+
+  /** 지형 타일 칸. 번호는 렌더러의 지형 표가 정한다. 시트가 없으면 null */
+  terrain(index: number): Texture | null {
+    const hit = this.terrainTex.get(index);
+    if (hit) return hit;
+    const base = this.cellOf('terrain', index);
+    if (!base) return null;
+    // 타일은 화면에서 빈틈없이 이어 붙는다. 스트립에서 이웃 칸과 맞닿은
+    // 가장자리 텍셀이 선형 보간으로 새어 들어오면 타일마다 줄눈이 생기므로,
+    // 한 텍셀 안쪽만 쓴다.
+    const f = base.frame;
+    const tex = new Texture({
+      source: base.source,
+      frame: new Rectangle(f.x + 1, f.y + 1, f.width - 2, f.height - 2),
+    });
+    this.terrainTex.set(index, tex);
+    return tex;
+  }
+
+  private cellOf(name: string, index: number): Texture | null {
+    const clip = this.clips.get(`clip:${name}:all`);
     if (!clip || index < 0 || index >= clip.textures.length) return null;
     return clip.textures[index];
   }

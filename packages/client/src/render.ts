@@ -24,6 +24,7 @@ import {
   MINERAL_PATCHES,
   SCALE,
   WALLS,
+  blockedTile,
   elevTile,
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
@@ -62,6 +63,33 @@ const WORKER_SPRITE_H = PX_PER_TILE * 0.7;
  */
 const FX_IMPACT: Record<string, number> = { steel: 13, swarmhive: 16, covenant: 15 };
 const FX_DEATH: Record<string, number> = { steel: 19, swarmhive: 22, covenant: 21 };
+
+/**
+ * 지형 타일셋(`terrain.png`)의 칸 배정 — 4행 6열을 행 우선으로 편 24칸.
+ *
+ * 1행 잔디(0~5) · 2행 고지 마른 땅(6~11) · 3행 절벽 조각(12~17) ·
+ * 4행 벽 바위(18~23). 변형은 [칸, 가중치] 표에서 좌표 시드 난수로 고른다 —
+ * 민무늬가 대부분이고 들꽃·이끼는 드물어야 바닥이 산만하지 않다.
+ */
+const T_LOW: Array<[number, number]> = [[0, 38], [1, 38], [2, 8], [3, 8], [4, 4], [5, 4]];
+const T_HIGH: Array<[number, number]> = [[6, 38], [7, 38], [8, 8], [9, 8], [10, 4], [11, 4]];
+/** 남쪽(화면 아래)이 저지인 고지 타일 — 절벽면이 드러난다 */
+const T_CLIFF_S: Array<[number, number]> = [[12, 50], [17, 50]];
+/** 서/동쪽 가장자리 기둥 절벽 */
+const T_CLIFF_W = 14;
+const T_CLIFF_E = 15;
+const T_WALL: Array<[number, number]> = [[18, 30], [19, 30], [20, 12], [21, 12], [22, 8], [23, 8]];
+
+/** [칸, 가중치] 표에서 0~1 난수로 하나 고른다 */
+function pickCell(table: Array<[number, number]>, n: number): number {
+  const total = table.reduce((s, [, w]) => s + w, 0);
+  let acc = 0;
+  for (const [cell, w] of table) {
+    acc += w;
+    if (n * total < acc) return cell;
+  }
+  return table[table.length - 1][0];
+}
 const FX_COLOR: Record<string, number> = {
   steel: 0xf97316,
   swarmhive: 0xa855f7,
@@ -106,6 +134,8 @@ export interface RenderInput {
 export class Renderer {
   readonly app = new Application();
   private readonly world = new Container();
+  /** 지형 타일 스프라이트 — 시트가 있을 때만 채워진다. 맨 아래 층 */
+  private readonly gTiles = new Container();
   private readonly gTerrain = new Graphics();
   private readonly gField = new Graphics();
   private readonly gZone = new Graphics();
@@ -135,6 +165,7 @@ export class Renderer {
     host.appendChild(this.app.canvas);
     this.sprites.sortableChildren = true;
     this.world.addChild(
+      this.gTiles,
       this.gTerrain,
       this.gField,
       this.gZone,
@@ -190,17 +221,20 @@ export class Renderer {
   private drawTerrain(myTeam: Team): void {
     const g = this.gTerrain;
     g.clear();
+    this.gTiles.removeChildren();
 
     const t = PX_PER_TILE;
     const W = ARENA_W / SCALE;
     const H = ARENA_H / SCALE;
+    // 타일셋이 있으면 이미지로, 없으면 페인트로. 한 판 안에서 섞지 않는다
+    const hasTiles = art.terrain(0) !== null;
 
     // 지형 좌표는 시점(myTeam)에 따라 화면이 뒤집히므로, 화면 타일 → 월드
     // 타일로 역변환해서 조회한다
     const worldTile = (sx: number, sy: number): [number, number] =>
       myTeam === 0 ? [sx, sy] : [W - 1 - sx, H - 1 - sy];
 
-    // 렌더 전용 의사난수 — 잔디 얼룩. 시뮬과 무관하다
+    // 렌더 전용 의사난수 — 잔디 얼룩과 타일 변형. 시뮬과 무관하다
     const noise = (x: number, y: number): number => {
       let h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
       h = (h ^ (h >> 13)) * 1274126177;
@@ -213,7 +247,44 @@ export class Renderer {
         const high = elevTile(wx, wy) === 1;
         const n = noise(wx, wy);
 
-        // 저지 = 짙은 초원, 고지 = 마른 볕이 드는 톤. 얼룩으로 단조로움을 깬다
+        // 절벽 가장자리 — 고지가 저지와 만나는 변. 화면 기준으로 판정해서
+        // 어느 팀 시점이든 그림자가 화면 아래쪽으로 떨어진다
+        const edge = (dx: number, dy: number): boolean => {
+          const [ax, ay] = worldTile(sx + dx, sy + dy);
+          return sx + dx >= 0 && sy + dy >= 0 && sx + dx < W && sy + dy < H
+            ? elevTile(ax, ay) === 0
+            : false;
+        };
+
+        if (hasTiles) {
+          let cell: number;
+          if (blockedTile(wx, wy)) cell = pickCell(T_WALL, n);
+          else if (!high) cell = pickCell(T_LOW, n);
+          else if (edge(0, 1)) cell = pickCell(T_CLIFF_S, n);
+          else if (edge(-1, 0)) cell = T_CLIFF_W;
+          else if (edge(1, 0)) cell = T_CLIFF_E;
+          else cell = pickCell(T_HIGH, n);
+
+          const sp = new Sprite(art.terrain(cell)!);
+          sp.position.set(sx * t, sy * t);
+          sp.width = t;
+          sp.height = t;
+          this.gTiles.addChild(sp);
+
+          // 북쪽 능선 조각은 시트에 없어서(위·아래가 섞인 칸뿐) 페인트로 잇는다
+          if (high && !blockedTile(wx, wy) && edge(0, -1) && !edge(0, 1)) {
+            g.rect(sx * t, sy * t, t, 3);
+            g.fill({ color: 0xd9cf9a, alpha: 0.55 });
+          }
+          // 절벽 발치 그림자 — 저지 쪽으로 한 뼘 떨어뜨려 높이차를 만든다
+          if (high && edge(0, 1)) {
+            g.rect(sx * t, (sy + 1) * t, t, 4);
+            g.fill({ color: 0x000000, alpha: 0.25 });
+          }
+          continue;
+        }
+
+        // ── 페인트 폴백 (시트가 없을 때) ──
         let c: number;
         if (high) c = n < 0.15 ? 0x8a7a4a : n < 0.5 ? 0x7d8f4e : 0x74884a;
         else c = n < 0.12 ? 0x145a30 : (sx + sy) % 2 === 0 ? COLORS.ground : COLORS.groundAlt;
@@ -221,14 +292,6 @@ export class Renderer {
         g.fill(c);
 
         if (!high) continue;
-        // 절벽 가장자리 — 고지가 저지와 만나는 변에 명암을 넣어 높이를 만든다
-        const edge = (dx: number, dy: number): boolean => {
-          const [ax, ay] = worldTile(sx + dx, sy + dy);
-          return sx + dx >= 0 && sy + dy >= 0 && sx + dx < W && sy + dy < H
-            ? elevTile(ax, ay) === 0
-            : false;
-        };
-        // 아래쪽 절벽(빛을 등짐)은 진하게, 위쪽은 밝은 능선으로
         if (edge(0, 1)) {
           g.rect(sx * t, sy * t + t - 5, t, 5);
           g.fill({ color: 0x3f3626, alpha: 0.9 });
@@ -258,6 +321,18 @@ export class Renderer {
       const ry = Math.min(ay, by);
       const rw = Math.abs(bx - ax);
       const rh = Math.abs(by - ay);
+
+      if (hasTiles) {
+        // 바위 타일이 몸통이다. 여기서는 블록 밖으로 떨어지는 그림자와
+        // 옅은 윤곽만 얹어 "지나갈 수 없다"를 붙잡아 둔다
+        g.rect(rx + 3, ry + rh, rw, 4);
+        g.fill({ color: 0x000000, alpha: 0.3 });
+        g.rect(rx + rw, ry + 4, 3, rh);
+        g.fill({ color: 0x000000, alpha: 0.3 });
+        g.rect(rx, ry, rw, rh);
+        g.stroke({ width: 1.5, color: 0x1c1c20, alpha: 0.55 });
+        continue;
+      }
 
       g.rect(rx + 3, ry + 4, rw, rh);
       g.fill({ color: 0x000000, alpha: 0.35 });
