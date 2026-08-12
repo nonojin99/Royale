@@ -257,6 +257,65 @@
       overflow-y: auto;
     }
     #tech-panel.hidden { display: none; }
+    /* ── 통합 테크트리 — 연구와 생산이 한 판이다 ── */
+    #palette { position: relative; display: flex; gap: 14px; align-items: flex-start; }
+    #tree-links { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+    .tcol { display: flex; flex-direction: column; gap: 8px; flex: 1; z-index: 1; }
+    .tcol-head {
+      font-size: 10px; font-weight: 700; color: var(--muted);
+      letter-spacing: .08em; text-align: center; margin-bottom: 2px;
+    }
+    .tnode {
+      --unit-color: #64748b;
+      position: relative;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      border: 2px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--text);
+      font-family: inherit;
+      cursor: pointer;
+      padding: 6px 4px 5px;
+      transition: transform 90ms ease, border-color 90ms ease, opacity 120ms ease;
+    }
+    .tnode:hover { transform: translateY(-1px); border-color: var(--unit-color); }
+    .tnode .nicon {
+      width: 46px; height: 46px;
+      border-radius: 8px;
+      background-color: #0b1526;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      box-shadow: inset 0 0 0 1.5px var(--unit-color);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 800; color: var(--unit-color);
+    }
+    .tnode .nname { font-size: 10.5px; font-weight: 700; letter-spacing: -.3px; }
+    .tnode .ncost {
+      position: absolute; right: 4px; bottom: 4px;
+      font-size: 10px; font-weight: 800;
+      background: var(--mineral); color: #06232b;
+      border-radius: 999px; padding: 1px 5px;
+    }
+    .tnode .ukey { position: absolute; top: 3px; left: 5px; right: auto; }
+    .tnode .nlock {
+      position: absolute; top: 3px; right: 5px; font-size: 11px;
+      filter: grayscale(1); opacity: .9;
+    }
+    .tnode .nprog {
+      position: absolute; left: 4px; right: 4px; bottom: 0;
+      height: 3px; border-radius: 2px; background: #0f172a; overflow: hidden;
+      display: none;
+    }
+    .tnode .nprog i { display: block; height: 100%; width: 0; background: var(--deploy, #facc15); }
+    .tnode.selected { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+    .tnode.unaffordable { opacity: .45; }
+    .tnode.locked { opacity: .5; }
+    .tnode.locked .nicon { filter: grayscale(.85) brightness(.7); }
+    .tnode.researchable { opacity: .95; border-style: dashed; border-color: #a78bfa; }
+    .tnode.researchable .ncost { background: #a78bfa; color: #1e1533; }
+    .tnode.researching { opacity: 1; border-color: #facc15; }
+    .tnode.researching .nprog { display: block; }
+
     .tech-tier { font-size: 10px; color: var(--muted); margin: 4px 0 3px; }
     .tech-row { display: flex; gap: 6px; flex-wrap: wrap; }
     .tech {
@@ -413,10 +472,8 @@
     <div id="actions">
       <button id="btn-worker" type="button">일꾼 (2)</button>
       <button id="btn-base" type="button">기지 건설 (8)</button>
-      <button id="btn-tech" type="button">테크트리 <kbd>T</kbd></button>
     </div>
 
-    <div id="tech-panel" class="hidden"></div>
     <div id="palette"></div>
 
     <div id="meta">

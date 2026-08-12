@@ -72,7 +72,6 @@ let selectedFaction = new URLSearchParams(location.search).get('faction') ?? DEF
 let selectedUnit = '';
 /** 기지 건설 모드 */
 let baseMode = false;
-let techOpen = false;
 let cursor: [number, number] | null = null;
 const prevPos = new Map<number, [number, number]>();
 let lastFrameMs = performance.now();
@@ -84,7 +83,6 @@ const net = new NetClient(withSolo(serverUrl()), {
     $('overlay').classList.add('hidden');
     $('opponent').textContent = `vs ${opponent}`;
     buildPalette();
-    buildTechPanel();
     startOnboarding();
   },
   onOver: (winner, bases, mined, replayId) => {
@@ -182,13 +180,6 @@ async function boot(): Promise<void> {
 
   $('btn-worker').addEventListener('click', requestWorker);
   $('btn-base').addEventListener('click', toggleBaseMode);
-  const toggleTech = (): void => {
-    techOpen = !techOpen;
-    $('tech-panel').classList.toggle('hidden', !techOpen);
-    $('btn-tech').classList.toggle('open', techOpen);
-    fitCanvas();
-  };
-  $('btn-tech').addEventListener('click', toggleTech);
 
   const muteBtn = $('btn-mute');
   const drawMute = (): void => {
@@ -207,7 +198,6 @@ async function boot(): Promise<void> {
       drawMute();
     }
     if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
-    if (e.key === 't' || e.key === 'ㅅ') toggleTech();
     if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
     if (e.key === 'Escape') {
       selectedUnit = '';
@@ -299,27 +289,104 @@ function factionOfMe(): ReturnType<typeof getFaction> {
   return getFaction(s ? s.players[net.myTeam].faction : selectedFaction);
 }
 
+/**
+ * 통합 테크트리 — 연구와 생산이 한 판이다.
+ *
+ * 열 = 단계(시작/1단계/2단계), 노드 = 유닛 초상 카드. 해금된 노드를 누르면
+ * 생산 선택, 잠긴 노드를 누르면 연구다. 선행 관계는 연결선으로 그린다.
+ * 글자 대신 그림으로 고르게 하는 것이 목적이므로 초상이 카드의 주인공이다.
+ */
+const ICON_ZOOM = 1.5; // 프레임 0을 확대해 몸통·얼굴이 카드를 채우게
+const ICON_PX = 46;
+
+function nodeIcon(el: HTMLElement, unitId: string): void {
+  const u = getUnit(unitId);
+  const icon = el.querySelector<HTMLElement>('.nicon')!;
+  const anim = u.kind === 'building' ? 'idle' : 'walk';
+  if (!art.clip(unitId, anim) && !art.clip(unitId, 'attack')) {
+    icon.textContent = u.name[0]; // 이미지가 없으면 첫 글자
+    return;
+  }
+  const used = art.clip(unitId, anim) ? anim : 'attack';
+  const w = ICON_PX * ICON_ZOOM;
+  icon.style.backgroundImage =
+    `url('${import.meta.env.BASE_URL}art/units/${unitId}.${used}.png')`;
+  // 스트립 5프레임 중 0번만, 위쪽(얼굴)에 살짝 치우쳐 확대
+  icon.style.backgroundSize = `${w * 5}px ${w}px`;
+  icon.style.backgroundPosition = `${(ICON_PX - w) / 2}px ${(ICON_PX - w) * 0.3}px`;
+}
+
 function buildPalette(): void {
   const root = $('palette');
   root.replaceChildren();
   paletteEls = [];
 
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'tree-links';
+  root.appendChild(svg);
+
+  const cols = new Map<number, HTMLElement>();
+  for (const [tier, label] of [[0, '시작'], [1, '1단계'], [2, '2단계']] as const) {
+    const col = document.createElement('div');
+    col.className = 'tcol';
+    col.innerHTML = `<div class="tcol-head">${label}</div>`;
+    cols.set(tier, col);
+    root.appendChild(col);
+  }
+
+  let key = 0;
   for (const node of factionOfMe().tech) {
     const u = getUnit(node.unit);
     const el = document.createElement('button');
-    el.className = 'unit';
+    el.className = 'tnode';
+    el.dataset.unit = node.unit;
     el.style.setProperty('--unit-color', hex(u.color));
-    el.innerHTML = `<span class="ukey"></span><span class="uname"></span><span class="ucost"></span>`;
-    el.querySelector<HTMLElement>('.uname')!.innerHTML =
-      u.name + (u.flying ? ' <span class="air">✈</span>' : '');
-    el.querySelector<HTMLElement>('.ucost')!.textContent = String(u.cost);
-    // 1~8 단축키 — 9번째부터는 키가 없다
-    el.querySelector<HTMLElement>('.ukey')!.textContent =
-      paletteEls.length < 8 ? String(paletteEls.length + 1) : '';
-    el.addEventListener('click', () => selectUnit(node.unit));
+    el.innerHTML =
+      `<span class="ukey"></span><span class="nlock"></span>` +
+      `<span class="nicon"></span><span class="nname"></span>` +
+      `<span class="ncost"></span><span class="nprog"><i></i></span>`;
+    el.querySelector<HTMLElement>('.nname')!.innerHTML = u.name + (u.flying ? ' ✈' : '');
+    nodeIcon(el, node.unit);
+    key++;
+    el.querySelector<HTMLElement>('.ukey')!.textContent = key <= 8 ? String(key) : '';
+    el.addEventListener('click', () => {
+      const st = net.state;
+      const me = st ? st.players[net.myTeam] : null;
+      if (me && isUnlocked(me, node.unit)) selectUnit(node.unit);
+      else requestTech(node.unit);
+    });
     attachTip(el, node.unit);
-    root.appendChild(el);
+    (cols.get(node.tier) ?? cols.get(2))!.appendChild(el);
     paletteEls.push({ el, unit: node.unit });
+  }
+
+  // 선행 관계 연결선 — 카드 배치가 끝난 뒤 좌표를 실측해 그린다
+  requestAnimationFrame(() => drawTreeLinks(root, svg));
+  window.addEventListener('resize', () => drawTreeLinks(root, svg));
+}
+
+function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
+  const base = root.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${base.width} ${base.height}`);
+  svg.replaceChildren();
+  for (const node of factionOfMe().tech) {
+    if (!node.requires) continue;
+    const from = root.querySelector<HTMLElement>(`[data-unit="${node.requires}"]`);
+    const to = root.querySelector<HTMLElement>(`[data-unit="${node.unit}"]`);
+    if (!from || !to) continue;
+    const a = from.getBoundingClientRect();
+    const b = to.getBoundingClientRect();
+    const x1 = a.right - base.left;
+    const y1 = a.top + a.height / 2 - base.top;
+    const x2 = b.left - base.left;
+    const y2 = b.top + b.height / 2 - base.top;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const mx = (x1 + x2) / 2;
+    path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', '#334155');
+    path.setAttribute('stroke-width', '2');
+    svg.appendChild(path);
   }
 }
 
@@ -360,37 +427,6 @@ function toggleBaseMode(): void {
 
 function refreshActionButtons(): void {
   $('btn-base').classList.toggle('active', baseMode);
-}
-
-function buildTechPanel(): void {
-  const root = $('tech-panel');
-  root.replaceChildren();
-  const f = factionOfMe();
-
-  for (const tier of [1, 2]) {
-    const nodes = f.tech.filter((n) => n.tier === tier);
-    if (!nodes.length) continue;
-    const head = document.createElement('div');
-    head.className = 'tech-tier';
-    head.textContent = `${tier}단계`;
-    root.appendChild(head);
-
-    const row = document.createElement('div');
-    row.className = 'tech-row';
-    for (const node of nodes) {
-      const u = getUnit(node.unit);
-      const el = document.createElement('button');
-      el.className = 'tech';
-      el.dataset.unit = node.unit;
-      el.style.setProperty('--unit-color', hex(u.color));
-      el.innerHTML = `<span class="tname"></span><span class="tmeta"></span>`;
-      el.querySelector<HTMLElement>('.tname')!.textContent = u.name;
-      el.addEventListener('click', () => requestTech(node.unit));
-      attachTip(el, node.unit);
-      row.appendChild(el);
-    }
-    root.appendChild(row);
-  }
 }
 
 function requestTech(unit: string): void {
@@ -601,14 +637,36 @@ function updateHud(s: GameState): void {
   $('timer').textContent =
     `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 
-  // 유닛 팔레트
+  // 통합 트리 — 해금 노드는 생산 카드, 잠긴 노드는 연구 카드로 갱신한다
+  const f = factionOfMe();
   for (const { el, unit } of paletteEls) {
     const u = getUnit(unit);
+    const node = f.tech.find((n) => n.unit === unit)!;
     const unlocked = isUnlocked(me, unit);
-    const affordable = me.minerals >= u.cost * MINERAL_SCALE;
+    const researching = me.research?.unit === unit;
+    const researchable =
+      !unlocked && !researching && canResearch(me, unit);
+
     el.classList.toggle('selected', selectedUnit === unit);
-    el.classList.toggle('unaffordable', !unlocked || !affordable);
-    el.title = unlocked ? '' : '테크트리에서 해금이 필요합니다';
+    el.classList.toggle(
+      'unaffordable',
+      unlocked && me.minerals < u.cost * MINERAL_SCALE,
+    );
+    el.classList.toggle('locked', !unlocked && !researching && !researchable);
+    el.classList.toggle('researchable', researchable);
+    el.classList.toggle('researching', researching);
+
+    const lock = el.querySelector<HTMLElement>('.nlock')!;
+    lock.textContent = unlocked || researching ? '' : researchable ? '🔬' : '🔒';
+
+    const cost = el.querySelector<HTMLElement>('.ncost')!;
+    cost.textContent = unlocked ? String(u.cost) : String(node.cost);
+
+    if (researching && me.research) {
+      const frac = 1 - me.research.ticks / node.researchTicks;
+      el.querySelector<HTMLElement>('.nprog i')!.style.width =
+        `${Math.round(frac * 100)}%`;
+    }
   }
 
   // 일꾼 버튼
@@ -623,9 +681,6 @@ function updateHud(s: GameState): void {
     ? '자리를 클릭하세요'
     : `기지 건설 (${BASE_BUILD_COST / MINERAL_SCALE}) <kbd>B</kbd>`;
 
-  // 테크 패널
-  if (techOpen) updateTechPanel(me);
-
   $('research').textContent = me.research
     ? `연구 중: ${getUnit(me.research.unit).name} ${Math.ceil(me.research.ticks / TICK_RATE)}초`
     : '';
@@ -635,29 +690,6 @@ function updateHud(s: GameState): void {
   $('netinfo').classList.toggle('bad', st.desyncs > 0);
 }
 
-function updateTechPanel(me: GameState['players'][number]): void {
-  const f = factionOfMe();
-  for (const el of Array.from($('tech-panel').querySelectorAll<HTMLElement>('.tech'))) {
-    const unit = el.dataset.unit!;
-    const node = f.tech.find((n) => n.unit === unit);
-    if (!node) continue;
-
-    const done = isUnlocked(me, unit);
-    const active = me.research?.unit === unit;
-    const available = canResearch(me, unit) && me.minerals >= node.cost * MINERAL_SCALE;
-
-    el.classList.toggle('done', done);
-    el.classList.toggle('researching', active);
-    el.classList.toggle('locked', !done && !active && !available);
-
-    const meta = el.querySelector<HTMLElement>('.tmeta')!;
-    if (done) meta.textContent = '해금됨';
-    else if (active) meta.textContent = `${Math.ceil(me.research!.ticks / TICK_RATE)}초 남음`;
-    else if (node.requires && !isUnlocked(me, node.requires))
-      meta.textContent = `선행: ${getUnit(node.requires).name}`;
-    else meta.textContent = `${node.cost} · ${Math.round(node.researchTicks / TICK_RATE)}초`;
-  }
-}
 
 /* ── 리플레이 모드 ─────────────────────────────────────────────────────── */
 
