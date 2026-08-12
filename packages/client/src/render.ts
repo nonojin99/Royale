@@ -28,6 +28,8 @@ import {
   WALLS,
   blockedTile,
   elevTile,
+  wallTile,
+  waterTile,
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
   Team,
@@ -87,7 +89,7 @@ const T_CLIFF_S: Array<[number, number]> = [[12, 50], [17, 50]];
 /** 서/동쪽 가장자리 기둥 절벽 */
 const T_CLIFF_W = 14;
 const T_CLIFF_E = 15;
-const T_WALL: Array<[number, number]> = [[18, 30], [19, 30], [20, 12], [21, 12], [22, 8], [23, 8]];
+// 4행 바위(18~23)는 벽이 메사가 되면서 지형에서는 은퇴 — 소품용으로 남겨둔다
 
 /** [칸, 가중치] 표에서 0~1 난수로 하나 고른다 */
 function pickCell(table: Array<[number, number]>, n: number): number {
@@ -226,6 +228,18 @@ export class Renderer {
     this.drawOverlay(input);
   }
 
+  /** 화면 좌표의 이웃 타일이 협곡인지 — 벼랑 입술 판정용 */
+  private chasmAt(
+    worldTile: (sx: number, sy: number) => [number, number],
+    sx: number,
+    sy: number,
+    W: number,
+    H: number,
+  ): boolean {
+    if (sx < 0 || sy < 0 || sx >= W || sy >= H) return true;
+    return waterTile(...worldTile(sx, sy));
+  }
+
   /** 지형은 매 프레임 다시 그릴 이유가 없다 */
   private drawTerrain(myTeam: Team): void {
     const g = this.gTerrain;
@@ -266,9 +280,50 @@ export class Renderer {
         };
 
         if (hasTiles) {
+          // 협곡 — 파인 지형. 어두운 구덩이로 그리고 타일은 깔지 않는다
+          if (waterTile(wx, wy)) {
+            g.rect(sx * t, sy * t, t, t);
+            g.fill(n < 0.5 ? 0x0e1822 : 0x101c27);
+            const landAbove = !this.chasmAt(worldTile, sx, sy - 1, W, H);
+            const landBelow = !this.chasmAt(worldTile, sx, sy + 1, W, H);
+            if (landAbove) {
+              // 북쪽 벼랑 입술 — 빛을 받아 밝다
+              g.rect(sx * t, sy * t, t, 3);
+              g.fill({ color: 0x3d5166, alpha: 0.9 });
+            }
+            if (landBelow) {
+              g.rect(sx * t, sy * t + t - 2, t, 2);
+              g.fill({ color: 0x000000, alpha: 0.5 });
+            }
+            continue;
+          }
+
           let cell: number;
-          if (blockedTile(wx, wy)) cell = pickCell(T_WALL, n);
-          else if (!high) cell = pickCell(T_LOW, n);
+          if (wallTile(wx, wy)) {
+            // 벽 = 절벽 메사 — 바위 덩어리가 아니라 솟은 지형으로 그린다.
+            // 남쪽이 트여 있으면 절벽면, 양옆이 트여 있으면 기둥 단면,
+            // 안쪽은 고지 마른 땅. 스타크래프트 절벽 문법 그대로다
+            const openS = !wallTile(...worldTile(sx, sy + 1)) || sy + 1 >= H;
+            const openW = sx - 1 < 0 || !wallTile(...worldTile(sx - 1, sy));
+            const openE = sx + 1 >= W || !wallTile(...worldTile(sx + 1, sy));
+            const openN = sy - 1 < 0 || !wallTile(...worldTile(sx, sy - 1));
+            if (openS) cell = pickCell(T_CLIFF_S, n);
+            else if (openW) cell = T_CLIFF_W;
+            else if (openE) cell = T_CLIFF_E;
+            else cell = pickCell(T_HIGH, n);
+            const sp = new Sprite(art.terrain(cell)!);
+            sp.position.set(sx * t, sy * t);
+            sp.width = t;
+            sp.height = t;
+            this.gTiles.addChild(sp);
+            if (openN) {
+              // 북쪽 능선 — 밝은 모래빛 테
+              g.rect(sx * t, sy * t, t, 2);
+              g.fill({ color: 0xd9cf9a, alpha: 0.6 });
+            }
+            continue;
+          }
+          if (!high) cell = pickCell(T_LOW, n);
           else if (edge(0, 1)) cell = pickCell(T_CLIFF_S, n);
           else if (edge(-1, 0)) cell = T_CLIFF_W;
           else if (edge(1, 0)) cell = T_CLIFF_E;
@@ -332,14 +387,11 @@ export class Renderer {
       const rh = Math.abs(by - ay);
 
       if (hasTiles) {
-        // 바위 타일이 몸통이다. 여기서는 블록 밖으로 떨어지는 그림자와
-        // 옅은 윤곽만 얹어 "지나갈 수 없다"를 붙잡아 둔다
-        g.rect(rx + 3, ry + rh, rw, 4);
+        // 메사(절벽 타일)가 몸통이다 — 블록 밖으로 떨어지는 그림자만 얹는다
+        g.rect(rx + 2, ry + rh, rw, 3);
         g.fill({ color: 0x000000, alpha: 0.3 });
-        g.rect(rx + rw, ry + 4, 3, rh);
+        g.rect(rx + rw, ry + 3, 2, rh);
         g.fill({ color: 0x000000, alpha: 0.3 });
-        g.rect(rx, ry, rw, rh);
-        g.stroke({ width: 1.5, color: 0x1c1c20, alpha: 0.55 });
         continue;
       }
 

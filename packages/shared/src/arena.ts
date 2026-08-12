@@ -63,7 +63,50 @@ const WALL_RECTS: readonly (readonly [number, number, number, number])[] = [
   [8, 22, 9, 23],
   [16, 30, 17, 31],
   [30, 21, 31, 21],
+
+  // ── 확장지 엄폐물 — 지점을 그냥 벌판에 두면 지킬 방법이 없다 ──
+  // 앞마당(7,18) 동쪽 가림벽: 중앙 방면 접근을 좁힌다
+  [10, 17, 10, 19],
+  // 측면(19,5) 남쪽 조각: 중앙에서 오는 길을 굽힌다
+  [22, 3, 22, 4],
 ];
+
+/**
+ * 협곡 — 지상 유닛이 **걸어서 못 가는** 필드. 공중 유닛은 그대로 넘는다.
+ *
+ * 스타크래프트의 바다·우주 공백과 같은 역할: 지상 병력을 길로 몰아넣고,
+ * 공중 유닛에게 지름길이라는 존재 이유를 준다. 벽(절벽 메사)과 달리
+ * 파인 지형이라 렌더러가 어둡게 그린다.
+ */
+const WATER_RECTS: readonly (readonly [number, number, number, number])[] = [
+  // 서쪽 중앙의 큰 협곡 — 왼쪽 우회로를 지상에게 막고 공중에게만 연다
+  [0, 20, 4, 27],
+  // 벌판 남서쪽의 웅덩이 — 앞마당→중앙 행군로를 굽힌다
+  [9, 31, 12, 34],
+];
+
+/** 점대칭 복제된 전체 협곡 목록 */
+export const WATERS: readonly (readonly [number, number, number, number])[] = (() => {
+  const out: [number, number, number, number][] = [];
+  for (const [x0, y0, x1, y1] of WATER_RECTS) {
+    out.push([x0, y0, x1, y1]);
+    out.push([
+      ARENA_W_TILES - 1 - x1,
+      ARENA_H_TILES - 1 - y1,
+      ARENA_W_TILES - 1 - x0,
+      ARENA_H_TILES - 1 - y0,
+    ]);
+  }
+  return out;
+})();
+
+/** 타일이 협곡인가 (렌더 구분용 — 이동 차단은 blockedTile이 겸한다) */
+export function waterTile(tx: number, ty: number): boolean {
+  for (const [x0, y0, x1, y1] of WATERS) {
+    if (tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1) return true;
+  }
+  return false;
+}
 
 /** 점대칭으로 복제한 전체 벽 목록 */
 export const WALLS: readonly (readonly [number, number, number, number])[] = (() => {
@@ -126,12 +169,17 @@ export function elevAt(x: number, y: number): number {
   return elevTile(Math.floor(x / 1000), Math.floor(y / 1000));
 }
 
-/** 타일이 벽인가 */
-export function blockedTile(tx: number, ty: number): boolean {
+/** 타일이 벽(절벽 메사)인가 — 협곡과 달리 솟은 지형. 렌더 구분용 */
+export function wallTile(tx: number, ty: number): boolean {
   for (const [x0, y0, x1, y1] of WALLS) {
     if (tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1) return true;
   }
   return false;
+}
+
+/** 타일이 지상 통행 불가인가 — 벽(솟음)과 협곡(파임) 모두 */
+export function blockedTile(tx: number, ty: number): boolean {
+  return wallTile(tx, ty) || waterTile(tx, ty);
 }
 
 /** 밀리타일 좌표가 벽 위인가 */
