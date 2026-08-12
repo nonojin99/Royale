@@ -146,6 +146,9 @@ export class Bot {
     for (const id of me.unlocked) {
       if (!isUnlocked(me, id)) continue;
       const u = getUnit(id);
+      // 주문은 자리 계산 없이 던지면 낭비다 — 봇 v1은 유닛·건물만 다룬다.
+      // (방어 건물이 시작 해금되면서 여기로 들어온다 — 봇도 포탑을 깐다)
+      if (u.kind === 'spell') continue;
       if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
       if (u.cost > bestCost) {
         bestCost = u.cost;

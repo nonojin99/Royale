@@ -273,10 +273,16 @@ export const MAIN_BASE_STATS: BaseStats = {
   range: tiles(6.5),
 };
 
-/** 확장 기지는 본진보다 약하다 — 지켜야 하는 대상이라야 공방이 생긴다 */
+/**
+ * 확장 기지는 본진보다 약하다 — 지켜야 하는 대상이라야 공방이 생긴다.
+ *
+ * 자체 방어(뎀 55)가 너무 강해 러시가 확장 상대로도 손해를 봤고, 그 결과
+ * "무조건 배 불리기"가 지배 전략이 됐다(실측: 러시 상대 77% — COUNCIL 라운드 2).
+ * 일꾼 몇 기 지킬 화력만 남기고, 병력 방어는 병력으로 하게 한다.
+ */
 export const EXPANSION_BASE_STATS: BaseStats = {
   hp: 1500,
-  damage: 55,
+  damage: 30,
   hitSpeed: seconds(1.2, TICK_RATE),
-  range: tiles(6.0),
+  range: tiles(5.0),
 };

@@ -62,7 +62,7 @@ const defs: FactionDef[] = [
       start('rifleman'), // 지상+공중 원거리 — 초반 만능
       start('flamer'), // 근접 광역 — 스웜을 막는 방어의 축 ("방어형"의 시작다운 구성)
       tier1('scoutcar'), // 건물 직행 견제 — 군체의 굴착충처럼 "테크를 태운 러시"로
-      tier1('bulwark'),
+      start('bulwark'), // 방어 건물은 시작부터 — 러시의 카운터가 0초부터 존재해야 한다 (COUNCIL 라운드 3)
       tier1('ironwalker'),
       tier2('siegetank', 'scoutcar'),
       tier2('gunship', 'ironwalker'),
@@ -79,7 +79,7 @@ const defs: FactionDef[] = [
       start('gnawer'), // 초저가 근접 스웜
       start('spitter'), // 지상+공중 원거리
       tier1('tunneler'),
-      tier1('spinetentacle'),
+      start('spinetentacle'), // 방어 건물은 시작부터 (COUNCIL 라운드 3)
       tier1('burrower'),
       tier2('sporetentacle', 'spinetentacle'),
       tier2('wingswarm', 'burrower'),

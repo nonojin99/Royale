@@ -114,23 +114,27 @@ function expand(s, team, max = 4) {
   return site ? { kind: 'base', id: '', x: site.x, y: site.y } : null;
 }
 
-function research(s, team, spare = BASE_BUILD_COST) {
+function research(s, team, spare = BASE_BUILD_COST, preferDefense = false) {
   const me = s.players[team];
   if (me.research) return null;
   const f = getFaction(me.faction);
   let best = null;
-  let bestCost = Infinity;
+  let bestScore = Infinity;
   for (const node of f.tech) {
     if (!canResearch(me, node.unit)) continue;
-    if (node.cost < bestCost && me.minerals >= node.cost * MINERAL_SCALE + spare) {
-      bestCost = node.cost;
+    if (me.minerals < node.cost * MINERAL_SCALE + spare) continue;
+    // 웅크림 원형은 방어 건물부터 — 포탑 없이 테크만 올리면 러시에 죽는다
+    const isDef = getUnit(node.unit).kind === 'building';
+    const score = node.cost + (preferDefense && !isDef ? 100 : 0);
+    if (score < bestScore) {
+      bestScore = score;
       best = node.unit;
     }
   }
   return best ? { kind: 'tech', id: best, x: 0, y: 0 } : null;
 }
 
-/** wantCheap이면 싼 것(물량), 아니면 비싼 것(질) */
+/** wantCheap이면 싼 것(물량), 아니면 비싼 것(질). 건물은 buildDefense 전용 */
 function produce(s, team, rng, { reserve = 0, cheap = false, defend = false } = {}) {
   const me = s.players[team];
   const bases = ownBasePositions(s, team);
@@ -140,7 +144,7 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false } = 
   for (const id of me.unlocked) {
     if (!isUnlocked(me, id)) continue;
     const u = getUnit(id);
-    if (u.kind === 'spell') continue;
+    if (u.kind !== 'unit') continue; // 건물은 명시적 웅크림 채널로만
     if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
     if (cheap ? u.cost < bestCost : u.cost > bestCost) {
       bestCost = u.cost;
@@ -158,6 +162,35 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false } = 
     spot = forwardSpot(s, team, rng);
   }
   return spot ? { kind: 'unit', id: best, x: spot[0], y: spot[1] } : null;
+}
+
+/** 방어 건물(bulwark/spinetentacle/lightpylon 계열)을 본진 곁에 깐다 */
+function buildDefense(s, team, rng, want = 2) {
+  const me = s.players[team];
+  let have = 0;
+  for (const e of s.entities) if (e.team === team && e.kind === 'building') have++;
+  if (have >= want) return null;
+  let best = null;
+  for (const id of me.unlocked) {
+    const u = getUnit(id);
+    if (u.kind !== 'building') continue;
+    if (me.minerals < u.cost * MINERAL_SCALE) continue;
+    if (u.targets === 'air') continue; // 러시는 지상으로 온다
+    best = id;
+  }
+  if (!best) return null;
+  const bases = ownBasePositions(s, team);
+  const [ex, ey] = enemyMain(team);
+  const main = bases[0];
+  // 적 방향으로 약간 앞에 세운다 — 뒤에 세우면 러시가 기지부터 문다
+  const dx = ex - main[0] > 0 ? 1 : -1;
+  const dy = ey - main[1] > 0 ? 1 : -1;
+  for (let k = 0; k < 5; k++) {
+    const x = main[0] + dx * (800 + nextInt(rng, 800));
+    const y = main[1] + dy * (800 + nextInt(rng, 800));
+    if (canDeployAt(x, y, bases)) return { kind: 'unit', id: best, x, y };
+  }
+  return null;
 }
 
 /**
@@ -211,11 +244,24 @@ const STRATS = {
     trainWorker(s, team) ??
     expand(s, team) ??
     produce(s, team, rng, { reserve: BASE_BUILD_COST }),
-  TECH: (s, team, rng) =>
-    trainWorker(s, team) ??
-    research(s, team, 0) ??
-    castSpell(s, team) ??
-    produce(s, team, rng, { reserve: 4 * MINERAL_SCALE }),
+  // 테크의 원형: 포탑 뒤에서 웅크리고 테크 → T2가 나오면 밀고 나간다.
+  // 영원히 웅크리면 기지 수 판정에서 자동으로 진다 — 웅크림은 수단이지 목표가 아니다
+  TECH: (s, team, rng) => {
+    const me = s.players[team];
+    const f = getFaction(me.faction);
+    const t2 = f.tech.some((n) => n.tier === 2 && me.unlocked.includes(n.unit));
+    return (
+      // 첫 포탑이 일꾼보다 먼저다 — 러시는 34초에 도착한다
+      buildDefense(s, team, rng, 1) ??
+      trainWorker(s, team) ??
+      buildDefense(s, team, rng) ??
+      research(s, team, 0, true) ??
+      (t2 ? expand(s, team, 2) : null) ??
+      castSpell(s, team) ??
+      // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다), 이후엔 전진
+      produce(s, team, rng, { reserve: 4 * MINERAL_SCALE, defend: !t2 })
+    );
+  },
   BAL: (s, team, rng) =>
     trainWorker(s, team) ??
     expand(s, team) ??
