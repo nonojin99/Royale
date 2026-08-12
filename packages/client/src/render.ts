@@ -313,7 +313,7 @@ export class Renderer {
       if (tex) {
         // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
         if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
-        this.place(tex, sx, by, UNIT_SPRITE_H, 0.88);
+        this.place(tex, sx, by, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam));
       } else {
         g.circle(sx, by, r);
         g.fill(u.color);
@@ -437,7 +437,14 @@ export class Renderer {
    * 이미지 안에서 캔버스 대비 55/70/90%로 표현하기로 했으므로(ART_PIPELINE
    * §3.3), 여기서 유닛별로 배율을 따로 주면 그 규격이 두 번 적용된다.
    */
-  private place(tex: Texture, x: number, y: number, height: number, anchorY: number): Sprite {
+  private place(
+    tex: Texture,
+    x: number,
+    y: number,
+    height: number,
+    anchorY: number,
+    flip = 1,
+  ): Sprite {
     let sp = this.spritePool[this.spriteCount];
     if (!sp) {
       sp = new Sprite();
@@ -447,7 +454,8 @@ export class Renderer {
     this.spriteCount++;
     sp.texture = tex;
     sp.anchor.set(0.5, anchorY);
-    sp.scale.set(height / tex.height);
+    const k = height / tex.height;
+    sp.scale.set(k * flip, k);
     sp.position.set(x, y);
     // 아래쪽(= y가 큰) 것이 위에 그려져야 겹침이 자연스럽다
     sp.zIndex = Math.round(y);
@@ -506,12 +514,33 @@ export class Renderer {
     this.workerPhase = (this.workerPhase + deltaMs / 1600) % 1;
   }
 
+  /** 엔티티별 마지막 좌우 방향 (1 = 원본, -1 = 거울상) */
+  private readonly facing = new Map<number, 1 | -1>();
+
+  /**
+   * 이동 방향에 따른 좌우 반전.
+   *
+   * 아트는 화면 아래(약간 왼쪽)를 향한 한 장뿐이다. 위/아래 방향까지 아트로
+   * 해결하려면 시트에 등 방향 행이 더 필요하지만, 좌우는 **거울상으로 공짜**다.
+   * 수평 이동이 거의 없을 때는 마지막 방향을 유지한다 — 매 프레임 뒤집히면
+   * 유닛이 파닥거린다.
+   */
+  private facingOf(e: Entity, prev: [number, number] | undefined, myTeam: Team): number {
+    if (prev) {
+      const dx = myTeam === 0 ? e.x - prev[0] : prev[0] - e.x; // 화면 기준 dx
+      if (dx > 8) this.facing.set(e.id, -1);
+      else if (dx < -8) this.facing.set(e.id, 1);
+    }
+    return this.facing.get(e.id) ?? 1;
+  }
+
   /** 죽은 엔티티가 남긴 항목을 걷어낸다 — 경기가 길어지면 계속 쌓인다 */
   private pruneAnimState(state: GameState): void {
     if (this.animState.size < state.entities.length * 2 + 32) return;
     const live = new Set(state.entities.map((e) => e.id));
     for (const id of this.animState.keys()) if (!live.has(id)) this.animState.delete(id);
     for (const id of this.prevCd.keys()) if (!live.has(id)) this.prevCd.delete(id);
+    for (const id of this.facing.keys()) if (!live.has(id)) this.facing.delete(id);
   }
 
   private hpBar(g: Graphics, cx: number, cy: number, w: number, e: Entity): void {
