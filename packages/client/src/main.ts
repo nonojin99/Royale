@@ -157,8 +157,11 @@ async function boot(): Promise<void> {
   // 브라우저 자동재생 정책 — 소리는 첫 입력 이후에만 낼 수 있다
   window.addEventListener('pointerdown', () => sound.unlock());
   window.addEventListener('keydown', () => sound.unlock());
-  renderer.onFx = (kind, faction) =>
-    sound.play(kind === 'death' ? 'death' : (`impact_${faction}` as Parameters<typeof sound.play>[0]));
+  renderer.onFx = (kind, faction, sx) =>
+    sound.play(
+      kind === 'death' ? 'death' : (`impact_${faction}` as Parameters<typeof sound.play>[0]),
+      (sx / VIEW_W) * 2 - 1,
+    );
 
   const canvas = renderer.canvas;
   canvas.addEventListener('pointermove', onPointerMove);

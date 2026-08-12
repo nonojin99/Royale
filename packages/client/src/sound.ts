@@ -72,8 +72,14 @@ class SoundBank {
     return this.muted;
   }
 
-  play(name: Sfx): void {
+  /** 이번 재생의 좌우 위치 (-1 왼쪽 ~ 1 오른쪽). play()가 설정한다 */
+  private panVal = 0;
+
+  play(name: Sfx, pan = 0): void {
     if (!this.ctx || !this.master || this.muted) return;
+    // 화면 위치를 스테레오에 싣는다 — 어디서 싸우는지 눈 감고도 알 수 있게.
+    // 끝까지 몰지 않는 것은 한쪽 귀가 완전히 비면 오히려 어색하기 때문이다
+    this.panVal = Math.max(-1, Math.min(1, pan)) * 0.6;
     // 같은 소리는 70ms에 한 번 — 물량전 보호. 승패 스팅어는 제한 없음
     const now = performance.now();
     const gap = name === 'win' || name === 'lose' || name === 'draw' ? 0 : 70;
@@ -82,29 +88,34 @@ class SoundBank {
     this.last.set(name, now);
 
     const t = this.ctx.currentTime;
+    // 전투음은 피치를 흔든다 — 물량전에서 같은 소리가 수십 번 겹칠 때
+    // 지터가 없으면 기계음이 된다. UI·스팅어는 음정이 정보라 흔들지 않는다
+    const battle =
+      name.startsWith('impact_') || name === 'death' || name === 'deploy';
+    const j = battle ? 1 + (Math.random() * 2 - 1) * (name === 'death' ? 0.12 : 0.08) : 1;
     switch (name) {
       case 'impact_steel':
         // 총격: 짧은 노이즈 + 급강하 사각파
-        this.noise(t, 0.07, 0.25, 1800, 'highpass');
-        this.tone(t, 0.08, 0.2, 'square', 220, 70);
+        this.noise(t, 0.07, 0.25, 1800 * j, 'highpass');
+        this.tone(t, 0.08, 0.2, 'square', 220 * j, 70 * j);
         break;
       case 'impact_swarmhive':
         // 유기체 타격: 낮은 톱니 + 둔탁한 노이즈
-        this.tone(t, 0.12, 0.25, 'sawtooth', 150, 45);
-        this.noise(t, 0.1, 0.15, 500, 'lowpass');
+        this.tone(t, 0.12, 0.25, 'sawtooth', 150 * j, 45 * j);
+        this.noise(t, 0.1, 0.15, 500 * j, 'lowpass');
         break;
       case 'impact_covenant':
         // 에너지: 높은 사인 글라이드
-        this.tone(t, 0.11, 0.22, 'sine', 990, 330);
-        this.tone(t, 0.09, 0.1, 'triangle', 1480, 660);
+        this.tone(t, 0.11, 0.22, 'sine', 990 * j, 330 * j);
+        this.tone(t, 0.09, 0.1, 'triangle', 1480 * j, 660 * j);
         break;
       case 'death':
-        this.noise(t, 0.22, 0.3, 420, 'lowpass');
-        this.tone(t, 0.18, 0.25, 'sine', 130, 40);
+        this.noise(t, 0.22, 0.3, 420 * j, 'lowpass');
+        this.tone(t, 0.18, 0.25, 'sine', 130 * j, 40 * j);
         break;
       case 'deploy':
-        this.tone(t, 0.05, 0.2, 'square', 520, 520);
-        this.tone(t + 0.06, 0.06, 0.2, 'square', 700, 700);
+        this.tone(t, 0.05, 0.2, 'square', 520 * j, 520 * j);
+        this.tone(t + 0.06, 0.06, 0.2, 'square', 700 * j, 700 * j);
         break;
       case 'build':
         for (const [i, f] of [330, 415, 495].entries()) {
@@ -140,6 +151,16 @@ class SoundBank {
     }
   }
 
+  /** 현재 팬 값을 실은 출력 노드 — 팬이 0이면 마스터 직결 */
+  private out(): AudioNode {
+    if (!this.ctx || !this.master) throw new Error('unreachable');
+    if (this.panVal === 0 || !this.ctx.createStereoPanner) return this.master;
+    const p = this.ctx.createStereoPanner();
+    p.pan.value = this.panVal;
+    p.connect(this.master);
+    return p;
+  }
+
   /** 감쇠 포락선을 씌운 오실레이터 한 발 */
   private tone(
     at: number,
@@ -158,7 +179,7 @@ class SoundBank {
     g.gain.setValueAtTime(vol, at);
     g.gain.exponentialRampToValueAtTime(0.001, at + dur);
     osc.connect(g);
-    g.connect(this.master);
+    g.connect(this.out());
     osc.start(at);
     osc.stop(at + dur + 0.02);
   }
@@ -184,7 +205,7 @@ class SoundBank {
     g.gain.exponentialRampToValueAtTime(0.001, at + dur);
     src.connect(filter);
     filter.connect(g);
-    g.connect(this.master);
+    g.connect(this.out());
     src.start(at, offset, dur + 0.02);
     src.stop(at + dur + 0.04);
   }

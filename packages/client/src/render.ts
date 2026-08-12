@@ -456,6 +456,8 @@ export class Renderer {
       if (e.kind === 'building') {
         const size = PX_PER_TILE * 1.5;
         if (tex) {
+          g.ellipse(sx, sy + size * 0.12, size * 0.52, size * 0.22);
+          g.fill({ color: 0x000000, alpha: 0.22 });
           this.groundRing(g, sx, sy, size * 0.5, teamColor);
           this.place(tex, sx, sy, PX_PER_TILE * 2.0, 0.85);
         } else {
@@ -479,6 +481,12 @@ export class Renderer {
       }
 
       if (tex) {
+        // 접지 그림자 — 이게 없으면 스프라이트가 바닥에 붙은 스티커로 보인다.
+        // 공중 유닛의 "그림자가 떨어져 있음"도 지상 그림자가 있어야 대비가 산다
+        if (!e.flying) {
+          g.ellipse(sx, sy + r * 0.18, r * 0.95, r * 0.4);
+          g.fill({ color: 0x000000, alpha: 0.22 });
+        }
         // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
         if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
         this.place(tex, sx, by, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam));
@@ -728,7 +736,7 @@ export class Renderer {
    * 렌더러가 직접 소리를 내지 않는 것은 층을 지키기 위해서다: 발사·죽음
    * 감지는 이미 여기서 하고 있으므로 감지를 두 번 하지 않고 결과만 넘긴다.
    */
-  onFx: ((kind: 'impact' | 'death', faction: string) => void) | null = null;
+  onFx: ((kind: 'impact' | 'death', faction: string, sx: number) => void) | null = null;
 
   /** 발사 감지용 — frameFor의 prevCd와 별도로 둬서 서로 간섭하지 않는다 */
   private readonly fxPrevCd = new Map<number, number>();
@@ -767,7 +775,7 @@ export class Renderer {
       const [sx, sy] = this.toScreen(victim.x, victim.y, myTeam);
       const lift = victim.flying ? PX_PER_TILE * 0.55 : 0;
       this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
-      this.onFx?.('impact', faction);
+      this.onFx?.('impact', faction, sx);
     }
 
     // 지난 프레임엔 있었는데 지금 없다 = 죽었다. 마지막 자리에 연기를 남긴다
@@ -783,7 +791,7 @@ export class Renderer {
         550,
         PX_PER_TILE * 1.3,
       );
-      this.onFx?.('death', seen.faction);
+      this.onFx?.('death', seen.faction, seen.sx);
     }
     for (const e of state.entities) {
       const [sx, sy] = this.toScreen(e.x, e.y, myTeam);
