@@ -872,14 +872,14 @@ test('언덕 — 저지에서 고지를 때리면 데미지가 깎인다 (원거
   // 본진 주머니는 고지, 출구 밖은 저지 (맵 전제)
   const m1 = BASE_SITES.find((b) => b.startFor === 1);
   assert.equal(elevAt(m1.x, m1.y), 1, '본진이 고지가 아니다');
-  assert.equal(elevAt(11500, 15500), 0, '본진 출구 밖이 저지가 아니다');
+  assert.equal(elevAt(4500, 14500), 0, '본진 출구 밖이 저지가 아니다');
 
   // 같은 표적(고지 위 광전사)을 원거리 소총병으로 때린다.
   // 근접 유닛은 붙는 동안 자기도 고지에 올라가므로 이 규칙의 대상이 아니다 —
   // 원거리로 사거리 안·고도 밖에서 쏘는 상황만 감쇄된다.
   const firstVolley = (ax, ay) => {
     const s = createState(9, MIRROR);
-    const target = place(s, 1, 'zealot', 11500, 12500); // 고지 램프 위 (11,12)
+    const target = place(s, 1, 'zealot', 4500, 11500); // 고지 램프 위 (4,11)
     place(s, 0, 'rifleman', ax, ay);
     const hp0 = target.hp;
     for (let i = 0; i < 100; i++) {
@@ -891,8 +891,8 @@ test('언덕 — 저지에서 고지를 때리면 데미지가 깎인다 (원거
     return 0;
   };
 
-  const fromLow = firstVolley(11500, 16500); // 저지 (11,16) — 램프 아래, 사거리 안
-  const fromHigh = firstVolley(11500, 9500); // 고지 (11,9)
+  const fromLow = firstVolley(4500, 14500); // 저지 (4,14) — 램프 아래, 사거리 안
+  const fromHigh = firstVolley(4500, 8500); // 고지 (4,8)
   assert.ok(fromLow > 0, '저지 공격자가 때리지 못했다');
   assert.ok(fromHigh > 0, '고지 공격자가 때리지 못했다');
   assert.ok(
