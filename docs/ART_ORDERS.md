@@ -83,32 +83,32 @@
 
 기갑단 (steel)
 - [x] `rifleman` 소총병 — **화풍 기준 확정** ✅
-- [ ] `scoutcar` 정찰차
-- [ ] `flamer` 화염병
-- [ ] `bulwark` 방벽 *(건물)*
-- [ ] `ironwalker` 강철거인
-- [ ] `siegetank` 공성전차
-- [ ] `gunship` 전투비행선 *(공중)*
+- [x] `scoutcar` 정찰차
+- [x] `flamer` 화염병
+- [x] `bulwark` 방벽 *(건물)*
+- [x] `ironwalker` 강철거인
+- [x] `siegetank` 공성전차
+- [x] `gunship` 전투비행선 *(공중)*
 - [ ] ~~`carpetbomb` 융단폭격~~ *(주문 — 유닛 아트 없음)*
 
 군체 (swarmhive)
-- [ ] `gnawer` 물어뜯는것
-- [ ] `spitter` 가시뱉는것
-- [ ] `tunneler` 굴착충
-- [ ] `spinetentacle` 가시촉수 *(건물)*
+- [x] `gnawer` 물어뜯는것
+- [x] `spitter` 가시뱉는것
+- [x] `tunneler` 굴착충
+- [x] `spinetentacle` 가시촉수 *(건물)*
 - [ ] `burrower` 땅속의것
-- [ ] `sporetentacle` 포자촉수 *(건물)*
-- [ ] `wingswarm` 날개무리 *(공중)*
-- [ ] `devourer` 거대포식자
+- [x] `sporetentacle` 포자촉수 *(건물)*
+- [x] `wingswarm` 날개무리 *(공중)*
+- [x] `devourer` 거대포식자
 
 신념단 (covenant)
-- [ ] `zealot` 광전사
-- [ ] `lightpylon` 빛기둥 *(건물)*
-- [ ] `strider` 사격보행기
-- [ ] `shade` 그림자
-- [ ] `mystic` 술사
-- [ ] `fusionite` 융합체
-- [ ] `skiff` 부유선 *(공중)*
+- [x] `zealot` 광전사
+- [x] `lightpylon` 빛기둥 *(건물)*
+- [x] `strider` 사격보행기
+- [x] `shade` 그림자
+- [x] `mystic` 술사
+- [x] `fusionite` 융합체
+- [x] `skiff` 부유선 *(공중)*
 - [ ] ~~`mindbreak` 정신붕괴~~ *(주문 — 유닛 아트 없음)*
 
 유닛 외

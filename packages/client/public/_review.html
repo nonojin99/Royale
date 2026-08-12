@@ -1,0 +1,55 @@
+<meta charset="utf-8">
+<title>스프라이트 확인</title>
+<style>
+  body { background:#2f7d4f; color:#fff; font:13px sans-serif; margin:0; padding:14px 18px; }
+  h2 { margin:16px 0 8px; font-size:14px; letter-spacing:.04em; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; }
+  .c { width:150px; background:rgba(0,0,0,.18); border-radius:6px; padding:6px 0 5px; text-align:center; }
+  .f { display:flex; justify-content:center; align-items:flex-end; gap:6px; height:64px; }
+  .cell { width:60px; height:60px; background-repeat:no-repeat; image-rendering:pixelated; }
+  .n { font-size:11px; opacity:.9; margin-top:4px; }
+  .k { font-size:10px; opacity:.5; }
+</style>
+<div id="out"></div>
+<script>
+const NAMES = { rifleman:'소총병', scoutcar:'정찰차', flamer:'화염병', bulwark:'방벽',
+  ironwalker:'강철거인', siegetank:'공성전차', gunship:'전투비행선',
+  gnawer:'물어뜯는것', spitter:'가시뱉는것', tunneler:'굴착충', spinetentacle:'가시촉수',
+  sporetentacle:'포자촉수', wingswarm:'날개무리', devourer:'거대포식자',
+  zealot:'광전사', lightpylon:'빛기둥', strider:'사격보행기', shade:'그림자',
+  mystic:'술사', fusionite:'융합체', skiff:'부유선' };
+const GROUPS = {
+  '기갑단': ['rifleman','scoutcar','flamer','bulwark','ironwalker','siegetank','gunship'],
+  '군체':   ['gnawer','spitter','tunneler','spinetentacle','sporetentacle','wingswarm','devourer'],
+  '신념단': ['zealot','lightpylon','strider','shade','mystic','fusionite','skiff'],
+};
+// 게임과 같은 크기: 128px 셀을 60px 높이로 그린다
+const H = 60, CELL = 128, S = H / CELL;
+fetch('art/manifest.json').then(r => r.json()).then(m => {
+  let html = '';
+  for (const [g, list] of Object.entries(GROUPS)) {
+    html += '<h2>' + g + '</h2><div class="row">';
+    for (const u of list) {
+      const a = m.units[u];
+      if (!a) {
+        html += '<div class="c"><div class="f"></div><div class="n">' + NAMES[u]
+             +  ' <span class="k">없음</span></div></div>';
+        continue;
+      }
+      const move = a.walk ? 'walk' : 'idle';
+      html += '<div class="c"><div class="f">';
+      for (const pair of [[move, 0], ['attack', 2]]) {
+        const url = 'art/units/' + u + '.' + pair[0] + '.png';
+        html += '<div class="cell" style="background-image:url(\'' + url + '\');'
+             +  'background-size:' + (CELL * 5 * S) + 'px ' + (CELL * S) + 'px;'
+             +  'background-position:-' + (pair[1] * CELL * S) + 'px 0"></div>';
+      }
+      html += '</div><div class="n">' + NAMES[u] + '</div>'
+           +  '<div class="k">' + move + ' · attack</div></div>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('out').innerHTML = html;
+  document.title = 'ready';
+});
+</script>
