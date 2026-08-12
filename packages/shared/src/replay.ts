@@ -32,7 +32,7 @@ import {
 
 /** 포맷 버전. 시뮬 규칙이 바뀌어 과거 리플레이가 재현 불가능해지면 올린다. */
 // v4: 언덕(고지) 데미지 감쇄 도입 — 이전 리플레이는 재현 불가
-export const REPLAY_VERSION = 4;
+export const REPLAY_VERSION = 5; // v5 = 주문 전장 전체 시전
 
 /** 경기가 진행될 수 있는 최대 틱 (정규 + 연장) */
 export const MAX_MATCH_TICKS = MATCH_TICKS + OVERTIME_TICKS;

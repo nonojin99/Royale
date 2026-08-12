@@ -1037,3 +1037,29 @@ test('리플레이 요약이 커맨드 종류별로 정확히 집계된다', () 
   assert.ok(s.baseBuilds[0] + s.baseBuilds[1] > 0, '기지 건설 커맨드가 하나도 없다');
   assert.ok(s.techUnlocks[0] + s.techUnlocks[1] > 0, '테크 커맨드가 하나도 없다');
 });
+
+test('주문은 자기 기지 반경 밖에도 시전된다 (라운드 1 안건 D)', () => {
+  const s = createState(1, ['steel', 'swarmhive']);
+  s.players[0].unlocked.push('carpetbomb');
+  s.players[0].minerals = 99 * MINERAL_SCALE;
+  s.players[1].minerals = 99 * MINERAL_SCALE;
+
+  // 팀1이 자기 진영(팀0 반경에서 한참 밖)에 무리를 깐다
+  const site1 = BASE_SITES.find((b) => b.startFor === 1);
+  step(s, [{ execTick: 0, team: 1, kind: 'unit', id: 'gnawer', x: site1.x, y: site1.y }]);
+  for (let i = 0; i < 40; i++) step(s, []);
+
+  const hpOf = () =>
+    s.entities.filter((e) => e.kind === 'unit' && e.team === 1).reduce((a, e) => a + e.hp, 0);
+  const before = hpOf();
+  assert.ok(before > 0, '전제: 적 유닛이 깔려 있어야 한다');
+
+  step(s, [{ execTick: s.tick, team: 0, kind: 'unit', id: 'carpetbomb', x: site1.x, y: site1.y }]);
+  assert.ok(hpOf() < before, '반경 밖 시전이 적 유닛에게 피해를 주지 않았다');
+
+  // 전장 밖 좌표는 거부된다 — 자원이 줄지 않아야 한다
+  const minerals = s.players[0].minerals;
+  step(s, [{ execTick: s.tick, team: 0, kind: 'unit', id: 'carpetbomb', x: -5000, y: 0 }]);
+  // 채굴이 한 틱 들어오므로 "줄지 않았다"로 본다 — 시전됐다면 3코스트가 빠졌을 것
+  assert.ok(s.players[0].minerals >= minerals, '전장 밖 시전이 자원을 소모했다');
+});

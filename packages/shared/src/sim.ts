@@ -445,14 +445,17 @@ function produceUnit(s: GameState, cmd: Command): boolean {
 
   const cost = u.cost * MINERAL_SCALE;
   if (p.minerals < cost) return false;
-  if (!canDeployAt(cmd.x, cmd.y, ownBasePositions(s, cmd.team))) return false;
-
-  p.minerals -= cost;
-
+  // 주문은 전장 어디든 떨어진다 — 기지 반경에 묶으면 공격 주문을 자기
+  // 앞마당에만 쓸 수 있어 사실상 죽은 콘텐츠가 된다 (협의회 라운드 1 안건 D)
   if (u.kind === 'spell') {
+    if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
+    p.minerals -= cost;
     applySpell(s, cmd.team, u, cmd.x, cmd.y);
     return true;
   }
+  if (!canDeployAt(cmd.x, cmd.y, ownBasePositions(s, cmd.team))) return false;
+
+  p.minerals -= cost;
   for (let i = 0; i < u.count; i++) {
     const [ox, oy] = formationOffset(u.count, i);
     spawnUnit(s, cmd.team, u, cmd.x + ox, cmd.y + oy);

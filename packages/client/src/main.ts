@@ -527,7 +527,8 @@ function onPointerDown(ev: PointerEvent): void {
     flash('미네랄 부족');
     return;
   }
-  if (!deployable(s, x, y)) {
+  // 주문은 전장 어디든 떨어진다 — 반경 검사는 유닛·건물에만
+  if (getUnit(selectedUnit).kind !== 'spell' && !deployable(s, x, y)) {
     flash('내 기지 반경 안에만 배치할 수 있습니다');
     return;
   }

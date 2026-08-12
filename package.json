@@ -10,7 +10,8 @@
     "test": "pnpm --filter @royale/shared test",
     "dev:server": "pnpm --filter @royale/server dev",
     "dev:client": "pnpm --filter @royale/client dev",
-    "dev": "pnpm --parallel --filter @royale/server --filter @royale/client dev"
+    "dev": "pnpm --parallel --filter @royale/server --filter @royale/client dev",
+    "balance": "node tools/balance.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.2"
