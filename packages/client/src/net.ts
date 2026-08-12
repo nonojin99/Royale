@@ -42,7 +42,12 @@ export interface NetStats {
 export interface NetEvents {
   onMatch?: (team: Team, opponent: string) => void;
   onQueued?: () => void;
-  onOver?: (winner: Team | -1, bases: [number, number], mined: [number, number]) => void;
+  onOver?: (
+    winner: Team | -1,
+    bases: [number, number],
+    mined: [number, number],
+    replayId?: string,
+  ) => void;
   onOpponentLeft?: () => void;
   onReject?: (reason: string) => void;
   /** 시뮬이 한 틱 진행되기 직전에 호출 (보간용 이전 위치 스냅샷) */
@@ -178,7 +183,7 @@ export class NetClient {
         return;
 
       case 'over':
-        this.events.onOver?.(msg.winner, msg.bases, msg.mined);
+        this.events.onOver?.(msg.winner, msg.bases, msg.mined, msg.replayId);
         return;
 
       case 'opponent-left':

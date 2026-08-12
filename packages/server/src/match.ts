@@ -230,6 +230,7 @@ export class Match {
       winner: this.state.winner,
       bases: [baseCount(this.state, 0), baseCount(this.state, 1)],
       mined: [this.state.players[0].mined, this.state.players[1].mined],
+      replayId: this.id,
     });
     for (const c of this.conns) {
       if (c) c.match = null;

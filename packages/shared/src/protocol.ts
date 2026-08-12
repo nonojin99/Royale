@@ -108,6 +108,8 @@ export interface SOver {
   winner: Team | -1;
   bases: [number, number];
   mined: [number, number];
+  /** 이 경기의 리플레이 id — 종료 화면에서 바로 볼 수 있게 */
+  replayId?: string;
 }
 
 export interface SOpponentLeft {

@@ -84,8 +84,10 @@ const net = new NetClient(withSolo(serverUrl()), {
     $('opponent').textContent = `vs ${opponent}`;
     buildPalette();
     buildTechPanel();
+    startOnboarding();
   },
-  onOver: (winner, bases, mined) => {
+  onOver: (winner, bases, mined, replayId) => {
+    stopOnboarding();
     const me = net.myTeam;
     const foe = me === 0 ? 1 : 0;
     const text = winner === -1 ? '무승부' : winner === me ? '승리!' : '패배';
@@ -95,8 +97,13 @@ const net = new NetClient(withSolo(serverUrl()), {
       `기지 ${bases[me]} : ${bases[foe]}\n` +
         `총 채굴 ${Math.floor(mined[me] / MINERAL_SCALE)} : ${Math.floor(mined[foe] / MINERAL_SCALE)}`,
     );
+    showOverActions(replayId);
   },
-  onOpponentLeft: () => showOverlay('상대가 나갔습니다', '새로고침하면 다시 시작합니다'),
+  onOpponentLeft: () => {
+    stopOnboarding();
+    showOverlay('상대가 나갔습니다', '');
+    showOverActions();
+  },
   onReject: (reason) => {
     sound.play('error');
     flash(rejectText(reason));
@@ -171,12 +178,13 @@ async function boot(): Promise<void> {
 
   $('btn-worker').addEventListener('click', requestWorker);
   $('btn-base').addEventListener('click', toggleBaseMode);
-  $('btn-tech').addEventListener('click', () => {
+  const toggleTech = (): void => {
     techOpen = !techOpen;
     $('tech-panel').classList.toggle('hidden', !techOpen);
     $('btn-tech').classList.toggle('open', techOpen);
     fitCanvas();
-  });
+  };
+  $('btn-tech').addEventListener('click', toggleTech);
 
   const muteBtn = $('btn-mute');
   const drawMute = (): void => {
@@ -195,6 +203,7 @@ async function boot(): Promise<void> {
       drawMute();
     }
     if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
+    if (e.key === 't' || e.key === 'ㅅ') toggleTech();
     if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
     if (e.key === 'Escape') {
       selectedUnit = '';
@@ -296,10 +305,13 @@ function buildPalette(): void {
     const el = document.createElement('button');
     el.className = 'unit';
     el.style.setProperty('--unit-color', hex(u.color));
-    el.innerHTML = `<span class="uname"></span><span class="ucost"></span>`;
+    el.innerHTML = `<span class="ukey"></span><span class="uname"></span><span class="ucost"></span>`;
     el.querySelector<HTMLElement>('.uname')!.innerHTML =
       u.name + (u.flying ? ' <span class="air">✈</span>' : '');
     el.querySelector<HTMLElement>('.ucost')!.textContent = String(u.cost);
+    // 1~8 단축키 — 9번째부터는 키가 없다
+    el.querySelector<HTMLElement>('.ukey')!.textContent =
+      paletteEls.length < 8 ? String(paletteEls.length + 1) : '';
     el.addEventListener('click', () => selectUnit(node.unit));
     attachTip(el, node.unit);
     root.appendChild(el);
@@ -592,14 +604,14 @@ function updateHud(s: GameState): void {
   // 일꾼 버튼
   const workerBtn = $('btn-worker') as HTMLButtonElement;
   workerBtn.disabled = me.minerals < WORKER_COST || me.workers >= cap;
-  workerBtn.textContent = `일꾼 (${WORKER_COST / MINERAL_SCALE})`;
+  workerBtn.innerHTML = `일꾼 (${WORKER_COST / MINERAL_SCALE}) <kbd>W</kbd>`;
 
   // 기지 건설 버튼
   const baseBtn = $('btn-base') as HTMLButtonElement;
   baseBtn.disabled = me.minerals < BASE_BUILD_COST;
-  baseBtn.textContent = baseMode
+  baseBtn.innerHTML = baseMode
     ? '자리를 클릭하세요'
-    : `기지 건설 (${BASE_BUILD_COST / MINERAL_SCALE})`;
+    : `기지 건설 (${BASE_BUILD_COST / MINERAL_SCALE}) <kbd>B</kbd>`;
 
   // 테크 패널
   if (techOpen) updateTechPanel(me);
@@ -715,10 +727,87 @@ function showOverlay(title: string, sub: string): void {
   $('overlay').classList.remove('hidden');
   $('overlay-title').textContent = title;
   $('status').textContent = sub;
+  // 로비 안내문은 경기 결과 화면과 무관하다
+  $('intro').style.display = 'none';
   $('faction-picker').style.display = 'none';
   $('faction-detail').style.display = 'none';
   ($('start') as HTMLButtonElement).style.display = 'none';
   ($('name') as HTMLInputElement).style.display = 'none';
+}
+
+/**
+ * 종료 화면 액션 — 다시 하기 + 리플레이 보기.
+ *
+ * "다시 하기"는 새로고침이다. 세션·매치·리플레이 상태를 전부 처음부터 다시
+ * 만드는 것이 부분 초기화를 유지보수하는 것보다 훨씬 안전하다. 종족 선택은
+ * URL 쿼리에 실려 있어 그대로 살아남는다.
+ */
+function showOverActions(replayId?: string): void {
+  const root = $('over-actions');
+  root.replaceChildren();
+  root.classList.remove('hidden');
+
+  const again = document.createElement('button');
+  again.id = 'btn-again';
+  again.textContent = '다시 하기';
+  again.addEventListener('click', () => {
+    const url = new URL(location.href);
+    url.searchParams.set('faction', selectedFaction);
+    url.searchParams.delete('replay');
+    location.href = url.toString();
+  });
+  root.appendChild(again);
+
+  if (replayId) {
+    const view = document.createElement('a');
+    view.id = 'btn-replay';
+    view.textContent = '리플레이 보기';
+    const url = new URL(location.href);
+    url.searchParams.set('replay', replayId);
+    view.href = url.toString();
+    root.appendChild(view);
+  }
+}
+
+/* ── 첫 판 온보딩 ──────────────────────────────────────────────────────── */
+
+const ONBOARD_KEY = 'royale-onboarded';
+let onboardTimers: ReturnType<typeof setTimeout>[] = [];
+
+/**
+ * 처음 하는 사람에게만, 경기 초반에 힌트 4개를 순서대로 보여준다.
+ *
+ * 미네랄 정원·확장 강제 같은 구조는 화면만 봐서는 알 수 없는데, 이걸 모르면
+ * 첫 판이 "왜 돈이 안 늘지?"로 끝난다. 한 번 본 사람에게는 다시 보여주지
+ * 않는다 — 힌트는 두 번째부터는 소음이다.
+ */
+function startOnboarding(): void {
+  if (localStorage.getItem(ONBOARD_KEY) === '1') return;
+  const hints: Array<[number, string]> = [
+    [2000, '1~8 키로 유닛을 고르고, 내 기지 반경(밝은 원) 안을 클릭해 배치합니다'],
+    [12000, '기지가 미네랄을 캡니다 — 일꾼(W)을 뽑아 수입을 늘리세요'],
+    [24000, '미네랄은 마릅니다 — 기지 건설(B)로 확장해야 전진할 수 있습니다'],
+    [38000, '언덕 아래에서 위로 쏘면 데미지가 30% 깎입니다 — 고지를 차지하세요'],
+  ];
+  for (const [at, text] of hints) onboardTimers.push(setTimeout(() => hint(text), at));
+  onboardTimers.push(
+    setTimeout(() => localStorage.setItem(ONBOARD_KEY, '1'), hints[hints.length - 1][0]),
+  );
+}
+
+function stopOnboarding(): void {
+  for (const t of onboardTimers) clearTimeout(t);
+  onboardTimers = [];
+  $('hint').classList.remove('show');
+}
+
+let hintTimer: ReturnType<typeof setTimeout> | null = null;
+function hint(text: string): void {
+  const el = $('hint');
+  el.textContent = text;
+  el.classList.add('show');
+  if (hintTimer) clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => el.classList.remove('show'), 6500);
 }
 
 let flashTimer: ReturnType<typeof setTimeout> | null = null;

@@ -82,6 +82,69 @@
       line-height: 1;
     }
     #btn-mute:hover { border-color: #334155; }
+    kbd {
+      display: inline-block;
+      min-width: 14px;
+      padding: 1px 4px;
+      border: 1px solid #334155;
+      border-bottom-width: 2px;
+      border-radius: 4px;
+      font: 700 10px/1.3 inherit;
+      color: var(--muted);
+      background: #0f172a;
+      vertical-align: 1px;
+    }
+    .ukey {
+      position: absolute;
+      top: 3px;
+      right: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      opacity: .8;
+    }
+    #over-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      margin-top: 6px;
+    }
+    #over-actions.hidden { display: none; }
+    #btn-again {
+      padding: 10px 26px;
+      border: none;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 15px;
+      color: #fff;
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+      cursor: pointer;
+    }
+    #btn-replay {
+      color: var(--muted);
+      font-size: 13px;
+      text-decoration: underline;
+    }
+    #hint {
+      position: fixed;
+      left: 50%;
+      bottom: 66px;
+      transform: translate(-50%, 8px);
+      max-width: min(85vw, 480px);
+      padding: 10px 16px;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: rgba(10, 18, 32, .94);
+      color: #e2e8f0;
+      font-size: 13px;
+      line-height: 1.5;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .25s, transform .25s;
+      z-index: 30;
+    }
+    #hint.show { opacity: 1; transform: translate(-50%, 0); }
     #opponent { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* 아레나 */
@@ -350,7 +413,7 @@
     <div id="actions">
       <button id="btn-worker" type="button">일꾼 (2)</button>
       <button id="btn-base" type="button">기지 건설 (8)</button>
-      <button id="btn-tech" type="button">테크트리</button>
+      <button id="btn-tech" type="button">테크트리 <kbd>T</kbd></button>
     </div>
 
     <div id="tech-panel" class="hidden"></div>
@@ -378,7 +441,7 @@
 
   <div id="overlay">
     <div id="overlay-title">로얄</div>
-    <p>
+    <p id="intro">
       기지가 미네랄을 캐고, 미네랄로 <strong>병력·확장·테크</strong>를 고릅니다.<br />
       유닛은 <strong>내 기지 반경 안</strong>에만 배치할 수 있으니,
       앞으로 나아가려면 먼저 확장하세요.
@@ -387,8 +450,11 @@
     <div id="faction-detail"></div>
     <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
     <button id="start">시작</button>
+    <div id="over-actions" class="hidden"></div>
     <div id="status"></div>
   </div>
+
+  <div id="hint"></div>
 
   <div id="toast"></div>
 
