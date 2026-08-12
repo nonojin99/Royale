@@ -34,6 +34,7 @@ import {
 
 import { art } from './art.js';
 import { NetClient } from './net.js';
+import { sound } from './sound.js';
 import { Renderer, VIEW_H, VIEW_W } from './render.js';
 import { ReplayStatus, ReplayView, fetchReplay, fetchReplayList } from './replayview.js';
 
@@ -88,6 +89,7 @@ const net = new NetClient(withSolo(serverUrl()), {
     const me = net.myTeam;
     const foe = me === 0 ? 1 : 0;
     const text = winner === -1 ? '무승부' : winner === me ? '승리!' : '패배';
+    sound.play(winner === -1 ? 'draw' : winner === me ? 'win' : 'lose');
     showOverlay(
       text,
       `기지 ${bases[me]} : ${bases[foe]}\n` +
@@ -95,7 +97,10 @@ const net = new NetClient(withSolo(serverUrl()), {
     );
   },
   onOpponentLeft: () => showOverlay('상대가 나갔습니다', '새로고침하면 다시 시작합니다'),
-  onReject: (reason) => flash(rejectText(reason)),
+  onReject: (reason) => {
+    sound.play('error');
+    flash(rejectText(reason));
+  },
   onBeforeStep: (s) => {
     prevPos.clear();
     for (const e of s.entities) prevPos.set(e.id, [e.x, e.y]);
@@ -142,6 +147,12 @@ async function boot(): Promise<void> {
     return;
   }
 
+  // 브라우저 자동재생 정책 — 소리는 첫 입력 이후에만 낼 수 있다
+  window.addEventListener('pointerdown', () => sound.unlock());
+  window.addEventListener('keydown', () => sound.unlock());
+  renderer.onFx = (kind, faction) =>
+    sound.play(kind === 'death' ? 'death' : (`impact_${faction}` as Parameters<typeof sound.play>[0]));
+
   const canvas = renderer.canvas;
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerleave', () => {
@@ -167,7 +178,22 @@ async function boot(): Promise<void> {
     fitCanvas();
   });
 
+  const muteBtn = $('btn-mute');
+  const drawMute = (): void => {
+    muteBtn.textContent = sound.muted ? '🔇' : '🔊';
+    muteBtn.title = sound.muted ? '소리 켜기 (M)' : '소리 끄기 (M)';
+  };
+  drawMute();
+  muteBtn.addEventListener('click', () => {
+    sound.toggleMute();
+    drawMute();
+  });
+
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'm' || e.key === 'ㅡ') {
+      sound.toggleMute();
+      drawMute();
+    }
     if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
     if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
     if (e.key === 'Escape') {
@@ -282,6 +308,7 @@ function buildPalette(): void {
 }
 
 function selectUnit(unit: string): void {
+  sound.play('ui');
   baseMode = false;
   selectedUnit = selectedUnit === unit ? '' : unit;
   refreshActionButtons();
@@ -306,6 +333,7 @@ function requestWorker(): void {
     return;
   }
   net.act('worker', '');
+  sound.play('ui');
 }
 
 function toggleBaseMode(): void {
@@ -364,6 +392,7 @@ function requestTech(unit: string): void {
     return;
   }
   net.act('tech', unit);
+  sound.play('tech');
 }
 
 /* ── 유닛 툴팁 ─────────────────────────────────────────────────────────── */
@@ -467,6 +496,7 @@ function onPointerDown(ev: PointerEvent): void {
       return;
     }
     net.act('base', '', x, y);
+    sound.play('build');
     baseMode = false;
     refreshActionButtons();
     return;
@@ -487,6 +517,7 @@ function onPointerDown(ev: PointerEvent): void {
     return;
   }
   net.act('unit', selectedUnit, x, y);
+  sound.play('deploy');
   // 선택을 유지한다 — 물량전에서 매번 다시 고르게 하면 클릭이 2배가 된다.
   // 해제는 Esc 또는 카드 재클릭(토글).
 }

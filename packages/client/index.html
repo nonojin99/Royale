@@ -72,6 +72,16 @@
     }
     #score { font-weight: 700; }
     #timer { font-variant-numeric: tabular-nums; font-weight: 700; }
+    #btn-mute {
+      background: none;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 14px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    #btn-mute:hover { border-color: #334155; }
     #opponent { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* 아레나 */
@@ -322,6 +332,7 @@
     <span id="score">🏠 1 : 1</span>
     <span id="opponent"></span>
     <span id="timer">4:00</span>
+    <button id="btn-mute" type="button" title="소리 끄기 (M)">🔊</button>
   </div>
 
   <div id="arena"></div>

@@ -722,6 +722,14 @@ export class Renderer {
     durMs: number;
     h: number;
   }> = [];
+  /**
+   * 이펙트가 생길 때 알림 — 사운드가 여기 붙는다.
+   *
+   * 렌더러가 직접 소리를 내지 않는 것은 층을 지키기 위해서다: 발사·죽음
+   * 감지는 이미 여기서 하고 있으므로 감지를 두 번 하지 않고 결과만 넘긴다.
+   */
+  onFx: ((kind: 'impact' | 'death', faction: string) => void) | null = null;
+
   /** 발사 감지용 — frameFor의 prevCd와 별도로 둬서 서로 간섭하지 않는다 */
   private readonly fxPrevCd = new Map<number, number>();
   /** 직전 프레임에 살아 있던 엔티티 — 사라지면 그 자리에 죽음 이펙트 */
@@ -759,6 +767,7 @@ export class Renderer {
       const [sx, sy] = this.toScreen(victim.x, victim.y, myTeam);
       const lift = victim.flying ? PX_PER_TILE * 0.55 : 0;
       this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
+      this.onFx?.('impact', faction);
     }
 
     // 지난 프레임엔 있었는데 지금 없다 = 죽었다. 마지막 자리에 연기를 남긴다
@@ -774,6 +783,7 @@ export class Renderer {
         550,
         PX_PER_TILE * 1.3,
       );
+      this.onFx?.('death', seen.faction);
     }
     for (const e of state.entities) {
       const [sx, sy] = this.toScreen(e.x, e.y, myTeam);
