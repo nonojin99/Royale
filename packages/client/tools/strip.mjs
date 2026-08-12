@@ -11,9 +11,14 @@
  *
  * 입력은 배경이 투명한 PNG여야 한다 (`dealpha.mjs` 먼저).
  *
+ * 세로 정렬은 기본이 바닥이다(일꾼처럼 땅에 서는 것). 폭발·연기처럼 중심에
+ * 찍히는 것은 `--align center`로 가운데 정렬한다.
+ *
  * 사용:
  *   node tools/strip.mjs ../../art-src/clean/worker.png --out worker.png \
  *        --grid 2x5 --cell 64 --take 1,1-1,5
+ *   node tools/strip.mjs ../../art-src/clean/fx.png --out fx.png \
+ *        --grid 4x6 --cell 64 --align center
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -22,8 +27,11 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 
 const ALPHA_MIN = 24;
-/** 셀 대비 내용물 크기 — 가장자리가 잘리지 않게 조금 남긴다 */
-const FILL = 0.92;
+/**
+ * 셀 대비 내용물 크기 — 가장자리가 잘리지 않게 조금 남긴다.
+ * 지형 타일처럼 셀을 끝까지 채워 이어 붙여야 하는 것은 `--fill 1`로 켠다.
+ */
+const DEFAULT_FILL = 0.92;
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -143,6 +151,11 @@ for (const [r, c] of picks) {
   boxes.push(b);
 }
 const maxSpan = Math.max(...boxes.map((b) => Math.max(b.w, b.h)));
+const FILL = args.fill !== undefined ? Number(args.fill) : DEFAULT_FILL;
+if (!(FILL > 0 && FILL <= 1)) {
+  console.error('--fill 은 0보다 크고 1 이하여야 한다');
+  process.exit(1);
+}
 const scale = (cell * FILL) / maxSpan;
 
 const out = new PNG({ width: cell * boxes.length, height: cell });
@@ -150,9 +163,12 @@ out.data.fill(0);
 boxes.forEach((b, i) => {
   const dw = Math.max(1, Math.round(b.w * scale));
   const dh = Math.max(1, Math.round(b.h * scale));
-  // 가로는 가운데, 세로는 바닥 정렬 — 발밑이 같은 높이여야 줄이 맞는다
+  // 가로는 가운데. 세로는 바닥(발밑이 같은 높이) 또는 가운데(중심에 찍히는 것)
   const dx = i * cell + Math.round((cell - dw) / 2);
-  const dy = cell - dh - Math.round(cell * (1 - FILL) * 0.5);
+  const dy =
+    args.align === 'center'
+      ? Math.round((cell - dh) / 2)
+      : cell - dh - Math.round(cell * (1 - FILL) * 0.5);
   resampleInto(png, b.x, b.y, b.w, b.h, out, dx, dy, dw, dh);
 });
 

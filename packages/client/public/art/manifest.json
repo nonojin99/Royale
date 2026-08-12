@@ -243,5 +243,9 @@
   "mineral": {
     "frames": 10,
     "fps": 8
+  },
+  "fx": {
+    "frames": 24,
+    "fps": 8
   }
 }
