@@ -25,6 +25,7 @@ import {
   Team,
   blockedAt,
   canDeployAt,
+  elevAt,
   getSite,
   nearestFreeSite,
 } from './arena.js';
@@ -36,6 +37,7 @@ import {
   BASE_RADIUS,
   BUILDING_RADIUS,
   DEPLOY_TICKS,
+  HIGH_GROUND_DAMAGE_PCT,
   MATCH_TICKS,
   MINERAL_MAX,
   MINERAL_SCALE,
@@ -235,10 +237,23 @@ function statsOf(e: Entity): {
   };
 }
 
-/** 피격자가 구조물이면 siege 배율을 적용한 데미지 (정수 유지) */
-function damageTo(st: { damage: number; siege: number }, victim: Entity): number {
-  if (victim.kind === 'unit') return st.damage;
-  return Math.trunc((st.damage * st.siege) / 100);
+/**
+ * 실제 피해량 — 두 배율이 곱해진다 (정수 유지):
+ *   1. siege — 피격자가 구조물이면
+ *   2. 언덕 — 지상 공격자가 저지에서 고지의 지상 대상을 때리면 70%
+ *      (공중은 어느 쪽이든 지형 무관)
+ */
+function damageTo(attacker: Entity, st: { damage: number; siege: number }, victim: Entity): number {
+  let d = st.damage;
+  if (victim.kind !== 'unit') d = Math.trunc((d * st.siege) / 100);
+  if (
+    !attacker.flying &&
+    !victim.flying &&
+    elevAt(attacker.x, attacker.y) < elevAt(victim.x, victim.y)
+  ) {
+    d = Math.trunc((d * HIGH_GROUND_DAMAGE_PCT) / 100);
+  }
+  return d;
 }
 
 /**
@@ -669,10 +684,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         const o = s.entities[j];
         if (o.team === e.team) continue;
         if (!canAttack(e, o)) continue;
-        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(st, o);
+        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(e, st, o);
       }
     } else {
-      dmg[ti] += damageTo(st, t);
+      dmg[ti] += damageTo(e, st, t);
     }
   }
 

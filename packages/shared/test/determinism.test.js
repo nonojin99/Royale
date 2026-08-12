@@ -28,6 +28,8 @@ import {
   WALLS,
   blockedAt,
   blockedTile,
+  elevAt,
+  elevTile,
   navDistance,
   navStep,
   walkable,
@@ -848,6 +850,39 @@ test('길찾기는 지형 데이터만 보고 결정된다 (하드코딩된 지�
   );
 });
 
+test('언덕 — 저지에서 고지를 때리면 데미지가 깎인다 (원거리 기준)', () => {
+  // 본진 주머니는 고지, 출구 밖은 저지 (맵 전제)
+  const m1 = BASE_SITES.find((b) => b.startFor === 1);
+  assert.equal(elevAt(m1.x, m1.y), 1, '본진이 고지가 아니다');
+  assert.equal(elevAt(5500, 7500), 0, '본진 출구 밖이 저지가 아니다');
+
+  // 같은 표적(고지 위 광전사)을 원거리 소총병으로 때린다.
+  // 근접 유닛은 붙는 동안 자기도 고지에 올라가므로 이 규칙의 대상이 아니다 —
+  // 원거리로 사거리 안·고도 밖에서 쏘는 상황만 감쇄된다.
+  const firstVolley = (ax, ay) => {
+    const s = createState(9, MIRROR);
+    const target = place(s, 1, 'zealot', 2500, 5500); // 고지 (2,5)
+    place(s, 0, 'rifleman', ax, ay);
+    const hp0 = target.hp;
+    for (let i = 0; i < 100; i++) {
+      step(s, []);
+      const t = byId(s, target.id);
+      if (!t) return hp0; // 죽었으면 전부 들어간 것
+      if (t.hp !== hp0) return hp0 - t.hp;
+    }
+    return 0;
+  };
+
+  const fromLow = firstVolley(5500, 7500); // 저지 (5,7) — 사거리 안
+  const fromHigh = firstVolley(1500, 2500); // 고지 (1,2)
+  assert.ok(fromLow > 0, '저지 공격자가 때리지 못했다');
+  assert.ok(fromHigh > 0, '고지 공격자가 때리지 못했다');
+  assert.ok(
+    fromLow < fromHigh,
+    `저지→고지(${fromLow})가 같은고도(${fromHigh})와 같거나 크면 안 된다`,
+  );
+});
+
 test('맵은 점대칭이다 (한쪽만 유리한 지형이 없다)', () => {
   // 벽을 절반만 적고 자동 복제하므로, 그 복제가 실제로 맞는지 확인한다.
   for (let ty = 0; ty < 24; ty++) {
@@ -856,6 +891,11 @@ test('맵은 점대칭이다 (한쪽만 유리한 지형이 없다)', () => {
         blockedTile(tx, ty),
         blockedTile(23 - tx, 23 - ty),
         `(${tx},${ty}) 와 대칭점의 지형이 다르다`,
+      );
+      assert.equal(
+        elevTile(tx, ty),
+        elevTile(23 - tx, 23 - ty),
+        `(${tx},${ty}) 와 대칭점의 고도가 다르다`,
       );
     }
   }

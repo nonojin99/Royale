@@ -96,6 +96,15 @@ export const DEPLOY_TICKS = TICK_RATE;
  * 팀 색과 같으면 적 건물이 아군 건물처럼 보인다. 유닛 색은 이 값들과 반드시
  * 달라야 하며, 그 규칙은 테스트로 고정되어 있다.
  */
+/**
+ * 저지 → 고지 공격의 데미지 배율 (백분율 정수).
+ *
+ * 스타크래프트의 언덕 미스(확률)와 달리 결정론이 공짜인 고정 감쇄를 쓴다 —
+ * 확률도 시드 RNG로 가능하지만, 고정 감쇄가 툴팁 한 줄로 설명되고 테스트도
+ * 단순하다. 공중 유닛은 지형 위를 날므로 이 규칙의 영향을 받지 않는다.
+ */
+export const HIGH_GROUND_DAMAGE_PCT = 70;
+
 export const TEAM_COLOR_ME = 0x38bdf8;
 export const TEAM_COLOR_FOE = 0xf87171;
 

@@ -66,6 +66,51 @@ export const WALLS: readonly (readonly [number, number, number, number])[] = (()
   return out;
 })();
 
+/**
+ * 고지 — 언덕 위 타일.
+ *
+ * 절반만 적고 벽과 같은 점대칭으로 복제한다. 고지는 **이동에는 영향이 없다**
+ * (오르내림은 벽의 틈 = 램프로 이미 제한된다). 영향은 전투 한 가지다:
+ * 저지대의 지상 유닛이 고지대를 때리면 데미지가 깎인다 (sim.ts).
+ *
+ * 본진 주머니와 중앙 고원이 고지다 — "본진 램프를 지키는 싸움"과
+ * "중앙 고지를 다투는 싸움"이라는 RTS 문법을 만드는 장치.
+ */
+const HIGH_RECTS: readonly (readonly [number, number, number, number])[] = [
+  // 본진 주머니 (벽 [6,0~6]과 [0~4,7]이 감싸는 영역 + 출구 램프 직전까지)
+  [0, 0, 5, 6],
+  // 중앙 고원 (링 벽 안쪽 전체 — 벽 타일은 어차피 통행 불가라 무해)
+  [9, 9, 14, 14],
+];
+
+/** 점대칭 복제된 전체 고지 목록 */
+export const HIGHS: readonly (readonly [number, number, number, number])[] = (() => {
+  const out: [number, number, number, number][] = [];
+  for (const [x0, y0, x1, y1] of HIGH_RECTS) {
+    out.push([x0, y0, x1, y1]);
+    out.push([
+      ARENA_W_TILES - 1 - x1,
+      ARENA_H_TILES - 1 - y1,
+      ARENA_W_TILES - 1 - x0,
+      ARENA_H_TILES - 1 - y0,
+    ]);
+  }
+  return out;
+})();
+
+/** 타일 고도 — 0 저지 · 1 고지 */
+export function elevTile(tx: number, ty: number): number {
+  for (const [x0, y0, x1, y1] of HIGHS) {
+    if (tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1) return 1;
+  }
+  return 0;
+}
+
+/** 밀리타일 좌표의 고도 */
+export function elevAt(x: number, y: number): number {
+  return elevTile(Math.floor(x / 1000), Math.floor(y / 1000));
+}
+
 /** 타일이 벽인가 */
 export function blockedTile(tx: number, ty: number): boolean {
   for (const [x0, y0, x1, y1] of WALLS) {

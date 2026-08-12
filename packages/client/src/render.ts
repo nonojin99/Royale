@@ -24,6 +24,7 @@ import {
   MINERAL_PATCHES,
   SCALE,
   WALLS,
+  elevTile,
   TEAM_COLOR_FOE,
   TEAM_COLOR_ME,
   Team,
@@ -167,10 +168,61 @@ export class Renderer {
     g.clear();
 
     const t = PX_PER_TILE;
-    for (let ty = 0; ty < ARENA_H / SCALE; ty++) {
-      for (let tx = 0; tx < ARENA_W / SCALE; tx++) {
-        g.rect(tx * t, ty * t, t, t);
-        g.fill((tx + ty) % 2 === 0 ? COLORS.ground : COLORS.groundAlt);
+    const W = ARENA_W / SCALE;
+    const H = ARENA_H / SCALE;
+
+    // 지형 좌표는 시점(myTeam)에 따라 화면이 뒤집히므로, 화면 타일 → 월드
+    // 타일로 역변환해서 조회한다
+    const worldTile = (sx: number, sy: number): [number, number] =>
+      myTeam === 0 ? [sx, sy] : [W - 1 - sx, H - 1 - sy];
+
+    // 렌더 전용 의사난수 — 잔디 얼룩. 시뮬과 무관하다
+    const noise = (x: number, y: number): number => {
+      let h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
+      h = (h ^ (h >> 13)) * 1274126177;
+      return ((h ^ (h >> 16)) >>> 0) % 1000 / 1000;
+    };
+
+    for (let sy = 0; sy < H; sy++) {
+      for (let sx = 0; sx < W; sx++) {
+        const [wx, wy] = worldTile(sx, sy);
+        const high = elevTile(wx, wy) === 1;
+        const n = noise(wx, wy);
+
+        // 저지 = 짙은 초원, 고지 = 마른 볕이 드는 톤. 얼룩으로 단조로움을 깬다
+        let c: number;
+        if (high) c = n < 0.15 ? 0x8a7a4a : n < 0.5 ? 0x7d8f4e : 0x74884a;
+        else c = n < 0.12 ? 0x145a30 : (sx + sy) % 2 === 0 ? COLORS.ground : COLORS.groundAlt;
+        g.rect(sx * t, sy * t, t, t);
+        g.fill(c);
+
+        if (!high) continue;
+        // 절벽 가장자리 — 고지가 저지와 만나는 변에 명암을 넣어 높이를 만든다
+        const edge = (dx: number, dy: number): boolean => {
+          const [ax, ay] = worldTile(sx + dx, sy + dy);
+          return sx + dx >= 0 && sy + dy >= 0 && sx + dx < W && sy + dy < H
+            ? elevTile(ax, ay) === 0
+            : false;
+        };
+        // 아래쪽 절벽(빛을 등짐)은 진하게, 위쪽은 밝은 능선으로
+        if (edge(0, 1)) {
+          g.rect(sx * t, sy * t + t - 5, t, 5);
+          g.fill({ color: 0x3f3626, alpha: 0.9 });
+          g.rect(sx * t, (sy + 1) * t, t, 4);
+          g.fill({ color: 0x000000, alpha: 0.25 });
+        }
+        if (edge(0, -1)) {
+          g.rect(sx * t, sy * t, t, 3);
+          g.fill({ color: 0xd9cf9a, alpha: 0.7 });
+        }
+        if (edge(-1, 0)) {
+          g.rect(sx * t, sy * t, 3, t);
+          g.fill({ color: 0xa89968, alpha: 0.6 });
+        }
+        if (edge(1, 0)) {
+          g.rect(sx * t + t - 3, sy * t, 3, t);
+          g.fill({ color: 0x4a3f2c, alpha: 0.7 });
+        }
       }
     }
 
