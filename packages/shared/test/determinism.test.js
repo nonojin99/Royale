@@ -831,15 +831,27 @@ test('길찾기는 지형 데이터만 보고 결정된다 (하드코딩된 지�
     assert.equal(walkable(x1, y1), false, `벽 (${x1},${y1}) 이 통행 가능으로 잡혔다`);
   }
 
-  // 모든 기지 자리는 서로 도달 가능해야 한다 — 하나라도 고립되면 맵이 망가진 것
-  for (const a of BASE_SITES) {
-    for (const b of BASE_SITES) {
+  // 뭍의 기지 자리는 서로 도달 가능해야 한다 — 하나라도 고립되면 맵이
+  // 망가진 것. 단 섬은 **의도적으로** 지상 불가다 (로스트템플 문법):
+  // 공중만 견제할 수 있는 안전 경제가 섬의 존재 이유다
+  const land = BASE_SITES.filter((b) => !b.label.includes('섬'));
+  const isles = BASE_SITES.filter((b) => b.label.includes('섬'));
+  assert.ok(isles.length >= 2, '섬 확장이 없다 — MAP_RULES 위반');
+  for (const a of land) {
+    for (const b of land) {
       if (a.id >= b.id) continue;
       assert.ok(
         navDistance(a.x, a.y, b.x, b.y) > 0,
         `${a.label} → ${b.label} 이 도달 불가다`,
       );
     }
+  }
+  for (const isle of isles) {
+    assert.equal(
+      navDistance(land[0].x, land[0].y, isle.x, isle.y),
+      -1,
+      `${isle.label} 이 지상으로 도달된다 — 섬이 아니다`,
+    );
   }
 
   // 본진끼리는 벽을 우회해야 하므로 직선 대각선보다 멀어야 한다.

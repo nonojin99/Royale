@@ -79,9 +79,16 @@ const WALL_RECTS: readonly (readonly [number, number, number, number])[] = [
  * 파인 지형이라 렌더러가 어둡게 그린다.
  */
 const WATER_RECTS: readonly (readonly [number, number, number, number])[] = [
-  // 서쪽 중앙의 큰 협곡 — 왼쪽 우회로를 지상에게 막고 공중에게만 연다
-  [0, 20, 4, 27],
-  // 벌판 남서쪽의 웅덩이 — 앞마당→중앙 행군로를 굽힌다
+  // ── 서쪽 바다 — 섬 확장(1..3, 22..25)을 감싼다. 로스트템플 문법:
+  //    섬은 지상으로 못 가고, 기지 건설은 거리만 맞으면 되므로(일꾼이
+  //    걸어갈 필요가 없다) 공중만이 견제할 수 있는 안전 경제가 된다 ──
+  [0, 14, 5, 21],
+  [0, 26, 5, 33],
+  [0, 22, 0, 25],
+  [4, 22, 5, 25],
+  // ── 북쪽 중앙 만 — 지상 공격로를 좁힌다 ("실제 공격로는 앞 하나") ──
+  [20, 0, 26, 3],
+  // ── 벌판 남서쪽 웅덩이 — 앞마당→중앙 행군로를 굽힌다 ──
   [9, 31, 12, 34],
 ];
 
@@ -214,6 +221,10 @@ export const BASE_SITES: readonly BaseSite[] = [
   { id: 5, x: tiles(40), y: tiles(29), startFor: -1, label: '아래 앞마당' },
   { id: 6, x: tiles(28), y: tiles(42), startFor: -1, label: '아래 좌측' },
   { id: 7, x: tiles(41), y: tiles(41), startFor: 0, label: '아래 본진' },
+  // 섬 확장 — 지상으로 못 가는 안전 경제. 앞마당을 먹어야 사슬이 닿고,
+  // 견제 수단은 공중뿐이다. 섬에 지상 유닛을 내리면 나오지 못한다 (의도)
+  { id: 8, x: tiles(2), y: tiles(23), startFor: -1, label: '서쪽 섬' },
+  { id: 9, x: tiles(45), y: tiles(24), startFor: -1, label: '동쪽 섬' },
 ];
 
 /** 아레나 안쪽인가 */
