@@ -45,6 +45,14 @@ const PX_PER_TILE = 30;
  * 소형이 맞아떨어지도록 잡은 값이다.
  */
 const UNIT_SPRITE_H = PX_PER_TILE * 2.0;
+/**
+ * 미네랄 덩이와 일꾼.
+ *
+ * 기지 하나에 덩이 4개와 일꾼 8기가 폭 1.65타일 안에 들어간다. 유닛 규격을
+ * 그대로 쓰면 서로 뭉개지므로 훨씬 작게 잡는다 — 읽히기만 하면 되는 배경 요소다.
+ */
+const MINERAL_SPRITE_H = PX_PER_TILE * 0.85;
+const WORKER_SPRITE_H = PX_PER_TILE * 0.7;
 export const VIEW_W = (ARENA_W / SCALE) * PX_PER_TILE;
 export const VIEW_H = (ARENA_H / SCALE) * PX_PER_TILE;
 
@@ -156,6 +164,8 @@ export class Renderer {
       this.drawTerrain(input.myTeam);
       this.terrainDrawn = true;
     }
+    // 미네랄·일꾼도 스프라이트를 쓰므로 풀 반납은 첫 사용처보다 앞에서 한 번에 한다
+    this.resetSprites();
     this.drawFields(input);
     this.drawZone(input);
     this.drawEntities(input);
@@ -264,7 +274,7 @@ export class Renderer {
       const [sx, sy] = this.toScreen(site.x, site.y, myTeam);
       g.circle(sx, sy, this.pxLen(1200));
       g.stroke({ width: 2, color: COLORS.siteMarker, alpha: 0.35 });
-      this.drawMineralPatches(g, sx, sy, 1, 0.25);
+      this.drawMineralPatches(g, sx, sy, 1, 0.25, site.id);
     }
 
     for (const e of state.entities) {
@@ -281,18 +291,36 @@ export class Renderer {
 
       // 남은 매장량에 비례해 미네랄 덩이를 그린다
       const left = Math.ceil((e.reserve / BASE_MINERAL_RESERVE) * MINERAL_PATCHES);
-      this.drawMineralPatches(g, sx, sy, left, 1);
+      this.drawMineralPatches(g, sx, sy, left, 1, e.siteId);
     }
   }
 
-  /** 기지 아래쪽에 미네랄 덩이를 늘어놓는다 */
-  private drawMineralPatches(g: Graphics, sx: number, sy: number, count: number, alpha: number): void {
+  /**
+   * 기지 아래쪽에 미네랄 덩이를 늘어놓는다.
+   *
+   * `seed`는 지점 번호다 — 덩이마다 다른 변형을 고르되 같은 지점은 매 프레임
+   * 같은 모양이어야 하므로, 난수가 아니라 지점·순번으로 결정한다.
+   */
+  private drawMineralPatches(
+    g: Graphics,
+    sx: number,
+    sy: number,
+    count: number,
+    alpha: number,
+    seed: number,
+  ): void {
     const gap = PX_PER_TILE * 0.55;
     const y = sy + PX_PER_TILE * 1.15;
     const startX = sx - (gap * (MINERAL_PATCHES - 1)) / 2;
     for (let i = 0; i < count && i < MINERAL_PATCHES; i++) {
-      g.rect(startX + gap * i - 4, y - 4, 8, 8);
-      g.fill({ color: COLORS.mineral, alpha });
+      const x = startX + gap * i;
+      const tex = art.mineral(seed * MINERAL_PATCHES + i);
+      if (tex) {
+        this.place(tex, x, y + MINERAL_SPRITE_H * 0.3, MINERAL_SPRITE_H, 1).alpha = alpha;
+      } else {
+        g.rect(x - 4, y - 4, 8, 8);
+        g.fill({ color: COLORS.mineral, alpha });
+      }
     }
   }
 
@@ -317,7 +345,6 @@ export class Renderer {
     g.clear();
     d.clear();
     this.resetLabels();
-    this.resetSprites();
     this.pruneAnimState(state);
 
     for (const e of state.entities) {
@@ -544,8 +571,13 @@ export class Renderer {
       const t = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
       const wx = startX + gap * lane + (row === 1 ? gap * 0.28 : -gap * 0.28);
       const wy = sy + (patchY - sy) * t;
-      g.circle(wx, wy, 2.6);
-      g.fill(COLORS.worker);
+      // 걷기 프레임도 같은 위상에서 고른다 — 왕복 위치와 다리가 따로 놀지 않는다
+      const tex = art.worker(phase);
+      if (tex) this.place(tex, wx, wy, WORKER_SPRITE_H, 1, phase < 0.5 ? 1 : -1);
+      else {
+        g.circle(wx, wy, 2.6);
+        g.fill(COLORS.worker);
+      }
     }
   }
 

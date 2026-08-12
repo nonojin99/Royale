@@ -11,6 +11,16 @@
         "fps": 10
       }
     },
+    "burrower": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
     "devourer": {
       "attack": {
         "frames": 5,
@@ -218,11 +228,20 @@
       "main"
     ],
     "steel": [
+      "expansion",
       "main"
     ],
     "swarmhive": [
+      "expansion",
       "main"
     ]
   },
-  "worker": false
+  "worker": {
+    "frames": 5,
+    "fps": 8
+  },
+  "mineral": {
+    "frames": 10,
+    "fps": 8
+  }
 }

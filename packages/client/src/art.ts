@@ -45,8 +45,19 @@ export interface ArtManifest {
    * (옛 배열 형태 `["main","expansion"]`도 종족 무관 공용으로 읽는다)
    */
   bases?: string[] | Record<string, string[]>;
-  /** 일꾼 이미지가 있는지 */
-  worker?: boolean;
+  /**
+   * 일꾼 — `worker.png`.
+   *
+   * `true`면 정지 이미지 한 장, 정의를 주면 가로 스트립을 걷기 순환으로 읽는다.
+   */
+  worker?: boolean | AnimDef;
+  /**
+   * 미네랄 덩이 — `mineral.png`.
+   *
+   * 애니메이션이 아니라 **변형 모음**이다. 스트립을 프레임 수만큼 쪼개
+   * 덩이마다 다른 칸을 골라 쓴다 (`fps`는 쓰이지 않는다).
+   */
+  mineral?: boolean | AnimDef;
 }
 
 /** 재생 가능한 프레임 묶음 */
@@ -137,7 +148,13 @@ class ArtLibrary {
       }
     }
 
-    if (probe || manifest?.worker) wanted.push(['worker', artUrl('worker.png'), null]);
+    // 일꾼·미네랄은 유닛이 아니라서 매니페스트 항목이 따로다.
+    // `true`면 한 장, 정의가 오면 스트립으로 읽는다.
+    for (const name of ['worker', 'mineral'] as const) {
+      const def = manifest?.[name];
+      if (probe || def === true) wanted.push([name, artUrl(`${name}.png`), null]);
+      else if (def) wanted.push([`clip:${name}:all`, artUrl(`${name}.png`), def]);
+    }
 
     if (!wanted.length) return;
 
@@ -200,8 +217,28 @@ class ArtLibrary {
     return this.tex.get(`base:${faction}:${kind}`) ?? this.tex.get(`base:*:${kind}`) ?? null;
   }
 
-  worker(): Texture | null {
-    return this.tex.get('worker') ?? null;
+  /**
+   * 일꾼의 걷기 프레임.
+   *
+   * `phase`(0~1)로 프레임을 고른다 — 렌더러가 일꾼마다 위상을 어긋나게 주고
+   * 있어서, 같은 값을 쓰면 다리도 저절로 따로 논다.
+   */
+  worker(phase = 0): Texture | null {
+    const still = this.tex.get('worker');
+    if (still) return still;
+    const clip = this.clips.get('clip:worker:all');
+    if (!clip) return null;
+    const n = clip.textures.length;
+    return clip.textures[Math.min(n - 1, Math.floor(phase * n))];
+  }
+
+  /** 미네랄 덩이. 덩이 번호마다 다른 변형을 돌려준다 */
+  mineral(variant = 0): Texture | null {
+    const still = this.tex.get('mineral');
+    if (still) return still;
+    const clip = this.clips.get('clip:mineral:all');
+    if (!clip) return null;
+    return clip.textures[variant % clip.textures.length];
   }
 
   /** 이미지가 한 장이라도 있는지 */
