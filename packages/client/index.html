@@ -378,7 +378,12 @@
     /* 시작 오버레이 */
     #overlay {
       position: fixed; inset: 0;
-      background: rgba(8,13,24,.94);
+      /* 배경 일러스트 훅 — art/lobby.png가 도착하면 자동 반영, 없으면
+         그라데이션만 남는다. 위 어둠막이 UI 가독성을 지킨다 */
+      background:
+        linear-gradient(rgba(6, 10, 20, 0.78), rgba(6, 10, 20, 0.9)),
+        url('/art/lobby.png') center / cover no-repeat,
+        #0b1220;
       display: grid; place-content: center; justify-items: center;
       gap: 14px; padding: 24px; text-align: center; z-index: 10;
       overflow-y: auto;
@@ -388,7 +393,16 @@
     #overlay p { color: var(--muted); font-size: 13px; max-width: 340px; line-height: 1.7; }
     #faction-picker { display: flex; flex-direction: column; gap: 8px; width: min(360px, 88vw); }
     #map-picker { display: flex; flex-direction: column; gap: 8px; width: min(360px, 88vw); }
-    #lobby-label { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .08em; margin-top: 10px; }
+    #lobby-label, .lobby-label { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .08em; margin-top: 10px; }
+    #entry, #setup { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    #entry.hidden, #setup.hidden { display: none; }
+    #btn-solo-start {
+      width: min(360px, 88vw); padding: 11px; border: none; border-radius: 999px;
+      font-weight: 800; font-size: 14px; color: #fff; cursor: pointer;
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+    }
+    #btn-solo-start.hidden { display: none; }
+    #room-map.hidden { display: none; }
     .faction.mappick { border-left-color: var(--mineral); }
     #pvp-row { display: flex; gap: 8px; width: min(360px, 88vw); margin-top: 8px; }
     #pvp-row button {
@@ -549,22 +563,31 @@
       유닛은 <strong>내 기지 반경 안</strong>에만 배치할 수 있으니,
       앞으로 나아가려면 먼저 확장하세요.
     </p>
-    <div id="faction-picker"></div>
-    <div id="lobby-label">맵</div>
-    <div id="map-picker"></div>
-    <div id="faction-detail"></div>
-    <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
-    <button id="start">봇과 연습</button>
-    <div id="pvp-row">
-      <button id="btn-create">방 만들기</button>
-      <input id="join-code" maxlength="4" placeholder="코드" />
-      <button id="btn-join">참가</button>
+    <!-- 1단: 대기실 — 이름을 정하고 어디로 갈지 고른다 -->
+    <div id="entry">
+      <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
+      <button id="start">봇과 연습</button>
+      <div id="pvp-row">
+        <button id="btn-create">방 만들기</button>
+        <input id="join-code" maxlength="4" placeholder="코드" />
+        <button id="btn-join">참가</button>
+      </div>
     </div>
-    <div id="room-panel" class="hidden">
-      <div id="room-code-label">방 코드 — 상대에게 알려주세요</div>
-      <div id="room-code"></div>
-      <div id="room-map"></div>
-      <div id="room-players"></div>
+
+    <!-- 2단: 설정 — 방(또는 솔로)에 들어와서 종족·맵을 고르고 시작한다 -->
+    <div id="setup" class="hidden">
+      <div id="room-panel" class="hidden">
+        <div id="room-code-label">방 코드 — 상대에게 알려주세요</div>
+        <div id="room-code"></div>
+        <div id="room-players"></div>
+      </div>
+      <div id="lobby-label">종족</div>
+      <div id="faction-picker"></div>
+      <div id="faction-detail"></div>
+      <div id="lobby-label-map" class="lobby-label">맵</div>
+      <div id="map-picker"></div>
+      <div id="room-map" class="hidden"></div>
+      <button id="btn-solo-start" class="hidden">시작</button>
       <button id="btn-ready" class="hidden">준비</button>
       <button id="btn-start-room" class="hidden" disabled>경기 시작</button>
     </div>

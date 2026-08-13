@@ -223,6 +223,12 @@ export class NetClient {
     this.send({ t: 'create-room' });
   }
 
+  /** 방 안에서 종족·맵 변경 — 연결 전이면 조용히 무시된다 */
+  setLoadout(v: { factionId?: string; mapId?: string }): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.send({ t: 'set-loadout', ...v });
+  }
+
   joinRoom(code: string): void {
     this.send({ t: 'join-room', code });
   }

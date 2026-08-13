@@ -183,11 +183,12 @@ async function boot(): Promise<void> {
   buildFactionPicker();
   buildMapPicker();
 
-  // 봇전 — ?solo=1 없이도 언제나 솔로로 연결한다
-  $('start').addEventListener('click', () => {
+  // 봇전 — 설정 화면(종족·맵)을 거쳐 시작한다 (라운드 11.5)
+  $('start').addEventListener('click', () => showSetup('solo'));
+  $('btn-solo-start').addEventListener('click', () => {
     net.connect(playerName(), selectedFaction, selectedMap, { solo: true });
     setStatus('접속 중…');
-    lockLobby(true);
+    ($('btn-solo-start') as HTMLButtonElement).disabled = true;
   });
 
   // 방 만들기 → 코드 공유 → 상대 준비 → 방장 시작 (라운드 11 ③)
@@ -297,14 +298,36 @@ function roomErrorText(reason: string): string {
   }
 }
 
+/** 2단 화면 전환 — 'solo'는 방 패널 없이 종족·맵·시작만 보인다 */
+function showSetup(mode: 'solo' | 'room'): void {
+  $('entry').classList.add('hidden');
+  $('setup').classList.remove('hidden');
+  $('room-panel').classList.toggle('hidden', mode === 'solo');
+  $('btn-solo-start').classList.toggle('hidden', mode !== 'solo');
+  if (mode === 'solo') {
+    $('btn-ready').classList.add('hidden');
+    $('btn-start-room').classList.add('hidden');
+    $('map-picker').classList.remove('hidden');
+    $('room-map').classList.add('hidden');
+  }
+  setStatus('');
+}
+
 /** 방 상태를 로비에 그린다 — 코드·맵·참가자·준비 상태 */
 function renderRoom(st: { code: string; host: boolean; mapId: string;
   players: { name: string; factionId: string; ready: boolean; host: boolean }[] }): void {
-  setStatus('');
-  $('room-panel').classList.remove('hidden');
+  showSetup('room');
   $('room-code').textContent = st.code;
   const map = MAPS.find((m) => m.id === st.mapId);
-  $('room-map').textContent = `맵: ${map?.name ?? st.mapId}` + (st.host ? '' : ' (방장 선택)');
+  // 맵은 방장이 고른다 — 손님에게는 선택 결과만 보인다
+  $('map-picker').classList.toggle('hidden', !st.host);
+  const rm = $('room-map');
+  rm.classList.toggle('hidden', st.host);
+  rm.textContent = `맵: ${map?.name ?? st.mapId} (방장 선택)`;
+  if (!st.host && MAPS.some((m) => m.id === st.mapId)) {
+    selectedMap = st.mapId;
+    refreshMapPicker();
+  }
 
   const list = $('room-players');
   list.replaceChildren();
@@ -376,6 +399,7 @@ function buildMapPicker(): void {
     el.addEventListener('click', () => {
       selectedMap = m.id;
       refreshMapPicker();
+      net.setLoadout({ mapId: m.id }); // 방장의 선택이 방 전체에 퍼진다
     });
     root.appendChild(el);
   }
@@ -406,6 +430,7 @@ function buildFactionPicker(): void {
     el.addEventListener('click', () => {
       selectedFaction = id;
       refreshFactionPicker();
+      net.setLoadout({ factionId: id }); // 방에 있으면 상대에게도 보인다
     });
     root.appendChild(el);
   }

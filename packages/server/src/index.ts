@@ -239,6 +239,15 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
       return;
     }
 
+    case 'set-loadout': {
+      if (msg.factionId) conn.factionId = getFaction(msg.factionId).id;
+      const room = conn.roomCode ? rooms.get(conn.roomCode) : null;
+      // 맵은 방장의 선택만 의미가 있다
+      if (msg.mapId !== undefined && (!room || room.host === conn)) conn.mapId = msg.mapId;
+      if (room) broadcastRoom(room);
+      return;
+    }
+
     case 'start-room': {
       const room = conn.roomCode ? rooms.get(conn.roomCode) : null;
       if (!room || room.host !== conn) {

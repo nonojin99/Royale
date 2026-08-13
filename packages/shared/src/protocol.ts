@@ -68,7 +68,17 @@ export interface CStartRoom {
   t: 'start-room';
 }
 
-export type ClientMsg = CHello | CAct | CHash | CPing | CCreateRoom | CJoinRoom | CReady | CStartRoom;
+/**
+ * 방 안에서 종족·맵 변경 (라운드 11.5 — 선택은 방 안에서 한다).
+ * 종족은 각자, 맵은 방장 것만 반영된다. 변경은 room-state로 즉시 퍼진다.
+ */
+export interface CSetLoadout {
+  t: 'set-loadout';
+  factionId?: string;
+  mapId?: string;
+}
+
+export type ClientMsg = CHello | CAct | CHash | CPing | CCreateRoom | CJoinRoom | CReady | CStartRoom | CSetLoadout;
 
 /* ── 서버 → 클라이언트 ─────────────────────────────────────────────────── */
 
