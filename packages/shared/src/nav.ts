@@ -21,7 +21,7 @@
  * `DIRS` 순서로 먼저 나온 방향을 택한다. 부동소수점도 없고 순서 의존도 없다.
  */
 
-import { ARENA_H_TILES, ARENA_W_TILES, blockedTile } from './arena.js';
+import { ARENA_H_TILES, ARENA_W_TILES, blockedTile, mapVersion } from './arena.js';
 import { SCALE } from './fixed.js';
 
 const W = ARENA_W_TILES;
@@ -45,18 +45,26 @@ const COST: readonly number[] = [10, 10, 10, 10, 14, 14, 14, 14];
 /**
  * 통행 불가 지형. 0 = 통행 가능, 1 = 막힘.
  *
- * 지형 정의는 `arena.ts`의 `WALLS`가 전부 갖고 있다. 여기서는 그걸 격자로
- * 펼치기만 한다 — 맵을 바꾸는 일이 길찾기 코드를 건드리는 일이 되면 안 된다.
+ * 지형 정의는 `arena.ts`의 활성 맵이 전부 갖고 있다. 여기서는 그걸 격자로
+ * 펼치기만 한다. **활성 맵이 바뀌면 격자와 거리장 캐시를 다시 만든다** —
+ * 이걸 빼먹으면 길찾기가 이전 맵의 지형으로 걷는다 (맵 레지스트리 도입
+ * 때 실측: 섬이 닫혀 있는데 nav만 뚫려 있었다).
  */
-export const TERRAIN: Uint8Array = (() => {
+export let TERRAIN: Uint8Array = new Uint8Array(W * H);
+let terrainVersion = -1;
+
+function syncTerrain(): void {
+  if (terrainVersion === mapVersion()) return;
   const g = new Uint8Array(W * H);
   for (let ty = 0; ty < H; ty++) {
     for (let tx = 0; tx < W; tx++) {
       if (blockedTile(tx, ty)) g[ty * W + tx] = 1;
     }
   }
-  return g;
-})();
+  TERRAIN = g;
+  fields.clear();
+  terrainVersion = mapVersion();
+}
 
 export function tileX(x: number): number {
   const t = Math.floor(x / SCALE);
@@ -69,6 +77,7 @@ export function tileY(y: number): number {
 }
 
 export function walkable(tx: number, ty: number): boolean {
+  syncTerrain();
   if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
   return TERRAIN[ty * W + tx] === 0;
 }

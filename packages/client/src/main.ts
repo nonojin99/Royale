@@ -11,7 +11,9 @@ import {
   siteReachable,
   BASE_BUILD_COST,
   DEFAULT_FACTION_ID,
+  DEFAULT_MAP_ID,
   FACTION_IDS,
+  MAPS,
   GameState,
   MATCH_TICKS,
   MINERAL_MAX,
@@ -174,10 +176,11 @@ async function boot(): Promise<void> {
   canvas.addEventListener('pointerdown', onPointerDown);
 
   buildFactionPicker();
+  buildMapPicker();
 
   $('start').addEventListener('click', () => {
     const name = ($('name') as HTMLInputElement).value.trim() || '플레이어';
-    net.connect(name, selectedFaction);
+    net.connect(name, selectedFaction, selectedMap);
     setStatus('접속 중…');
     ($('start') as HTMLButtonElement).disabled = true;
   });
@@ -257,6 +260,38 @@ function fitCanvas(): void {
 }
 
 /* ── 종족 선택 ─────────────────────────────────────────────────────────── */
+
+let selectedMap =
+  new URLSearchParams(location.search).get('map') ?? DEFAULT_MAP_ID;
+
+/** 맵 선택 — 종족 픽커와 같은 문법의 카드 줄 */
+function buildMapPicker(): void {
+  const root = document.getElementById('map-picker');
+  if (!root) return;
+  root.replaceChildren();
+  for (const m of MAPS) {
+    const el = document.createElement('button');
+    el.className = 'faction mappick';
+    el.innerHTML = `<span class="fname"></span><span class="ftag"></span>`;
+    el.querySelector<HTMLElement>('.fname')!.textContent = m.name;
+    el.querySelector<HTMLElement>('.ftag')!.textContent = m.tagline;
+    el.addEventListener('click', () => {
+      selectedMap = m.id;
+      refreshMapPicker();
+    });
+    root.appendChild(el);
+  }
+  refreshMapPicker();
+}
+
+function refreshMapPicker(): void {
+  const root = document.getElementById('map-picker');
+  if (!root) return;
+  const buttons = root.children;
+  for (let i = 0; i < buttons.length; i++) {
+    buttons[i].classList.toggle('selected', MAPS[i].id === selectedMap);
+  }
+}
 
 function buildFactionPicker(): void {
   const root = $('faction-picker');

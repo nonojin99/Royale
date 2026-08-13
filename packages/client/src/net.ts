@@ -77,12 +77,12 @@ export class NetClient {
     private readonly events: NetEvents = {},
   ) {}
 
-  connect(name: string, factionId: string): void {
+  connect(name: string, factionId: string, mapId?: string): void {
     const ws = new WebSocket(this.url);
     this.ws = ws;
 
     ws.onopen = () => {
-      this.send({ t: 'hello', name, factionId });
+      this.send({ t: 'hello', name, factionId, mapId });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
     };
@@ -125,7 +125,7 @@ export class NetClient {
         this.scheduled.clear();
         this.lastHashSent = -1;
         this.desyncs = 0;
-        this.state = createState(msg.seed, msg.factions);
+        this.state = createState(msg.seed, msg.factions, msg.mapId);
         this.lastStepWallMs = Date.now();
         this.events.onMatch?.(msg.team, msg.opponent);
         return;

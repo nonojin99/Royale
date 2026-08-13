@@ -29,10 +29,11 @@ import {
   sortCommands,
   step,
 } from './sim.js';
+import { DEFAULT_MAP_ID } from './arena.js';
 
 /** 포맷 버전. 시뮬 규칙이 바뀌어 과거 리플레이가 재현 불가능해지면 올린다. */
 // v4: 언덕(고지) 데미지 감쇄 도입 — 이전 리플레이는 재현 불가
-export const REPLAY_VERSION = 8; // v7 = 48그리드 맵 개편
+export const REPLAY_VERSION = 9; // v9 = 강화·경제 상수·맵 레지스트리(mapId)
 
 /** 경기가 진행될 수 있는 최대 틱 (정규 + 연장) */
 export const MAX_MATCH_TICKS = MATCH_TICKS + OVERTIME_TICKS;
@@ -62,6 +63,8 @@ export interface Replay {
   v: number;
   matchId: string;
   seed: number;
+  /** 경기가 열린 맵 id (구버전 리플레이엔 없다 → 기본 맵) */
+  mapId?: string;
   /** 양 팀의 종족 id — 재생은 이걸로 상태를 초기화한다 */
   factions: [string, string];
   /** 표시용 플레이어 이름 */
@@ -94,7 +97,7 @@ function indexCommands(cmds: readonly Command[]): Map<number, Command[]> {
  * @param untilTick 이 틱에 도달하면 멈춘다 (기본: 경기 끝까지)
  */
 export function playReplay(r: Replay, untilTick: number = MAX_MATCH_TICKS): GameState {
-  const s = createState(r.seed, r.factions);
+  const s = createState(r.seed, r.factions, r.mapId ?? DEFAULT_MAP_ID);
   const byTick = indexCommands(r.commands);
   const limit = Math.min(untilTick, MAX_MATCH_TICKS);
   while (s.tick < limit && !s.over) {
@@ -120,7 +123,7 @@ export interface VerifyResult {
  * 체크포인트를 함께 대조해 **어느 지점부터** 갈라졌는지 알려준다.
  */
 export function verifyReplay(r: Replay): VerifyResult {
-  const s = createState(r.seed, r.factions);
+  const s = createState(r.seed, r.factions, r.mapId ?? DEFAULT_MAP_ID);
   const byTick = indexCommands(r.commands);
   const checkpoints = new Map(r.checkpoints.map((c) => [c.tick, c.hash]));
 
@@ -166,6 +169,7 @@ export function verifyReplay(r: Replay): VerifyResult {
 export interface BuildReplayInput {
   matchId: string;
   seed: number;
+  mapId?: string;
   factions: [string, string];
   players: [string, string];
   commands: readonly Command[];
@@ -182,7 +186,7 @@ export interface BuildReplayInput {
  */
 export function buildReplay(input: BuildReplayInput): Replay {
   const commands = sortCommands(input.commands.slice());
-  const s = createState(input.seed, input.factions);
+  const s = createState(input.seed, input.factions, input.mapId ?? DEFAULT_MAP_ID);
   const byTick = indexCommands(commands);
   const checkpoints: ReplayCheckpoint[] = [];
 
@@ -195,6 +199,7 @@ export function buildReplay(input: BuildReplayInput): Replay {
 
   return {
     v: REPLAY_VERSION,
+    mapId: s.mapId,
     matchId: input.matchId,
     seed: input.seed,
     factions: input.factions,
@@ -237,7 +242,7 @@ export class ReplayPlayer {
     this.byTick = indexCommands(replay.commands);
 
     // 전체를 한 번 돌면서 키프레임을 남긴다
-    const s = createState(replay.seed, replay.factions);
+    const s = createState(replay.seed, replay.factions, replay.mapId ?? DEFAULT_MAP_ID);
     this.keyframes.set(0, snapshot(s));
     while (s.tick < MAX_MATCH_TICKS && !s.over) {
       step(s, this.byTick.get(s.tick) ?? []);
@@ -245,7 +250,7 @@ export class ReplayPlayer {
     }
     this.totalTicks = s.tick;
 
-    this.work = createState(replay.seed, replay.factions);
+    this.work = createState(replay.seed, replay.factions, replay.mapId ?? DEFAULT_MAP_ID);
   }
 
   /**

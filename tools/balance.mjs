@@ -48,6 +48,7 @@ import {
 
 const args = process.argv.slice(2);
 const SEEDS = Number(args[args.indexOf('--seeds') + 1] || 0) || 16;
+const MAP_ID = args.includes('--map') ? args[args.indexOf('--map') + 1] : undefined;
 const FACTIONS = ['steel', 'swarmhive', 'covenant'];
 const DECIDE_EVERY = 24; // 서버 연습봇과 같은 간격
 const MAX_TICKS = 20 * 60 * 5; // 5분 안전 상한 (연장 포함 사실상 안 걸림)
@@ -359,7 +360,7 @@ const STRATS = {
 /* ── 경기 실행 ─────────────────────────────────────────────────────────── */
 
 function playGame(stratA, stratB, faction, seed) {
-  const s = createState(seed, [faction, faction]);
+  const s = createState(seed, [faction, faction], MAP_ID);
   const rngs = [createRng((seed ^ 0x1234abcd) >>> 0), createRng((seed ^ 0x9876fedc) >>> 0)];
   const strats = [STRATS[stratA], STRATS[stratB]];
   const last = [-999, -999];
@@ -411,7 +412,7 @@ function series(a, b, faction, seed) {
 if (args.includes('--trace')) {
   const i = args.indexOf('--trace');
   const [a, b] = [args[i + 1], args[i + 2]];
-  const s = createState(7000, ['steel', 'steel']);
+  const s = createState(7000, ['steel', 'steel'], MAP_ID);
   const rngs = [createRng(0x11111111), createRng(0x22222222)];
   const strats = [STRATS[a], STRATS[b]];
   const last = [-999, -999];

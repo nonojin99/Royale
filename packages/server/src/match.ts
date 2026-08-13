@@ -15,10 +15,12 @@ import {
   ServerMsg,
   TICK_MS,
   Team,
+  DEFAULT_MAP_ID,
   baseCount,
   buildReplay,
   createState,
   getFaction,
+  getMap,
   getUnit,
   hashState,
   sortCommands,
@@ -38,6 +40,7 @@ let matchSeq = 0;
 export class Match {
   readonly id: string;
   readonly seed: number;
+  readonly mapId: string;
   readonly startWallMs: number;
   readonly state: GameState;
   readonly conns: (Conn | null)[];
@@ -65,6 +68,8 @@ export class Match {
     this.id = `m${++matchSeq}-${Date.now().toString(36)}`;
     // 시드는 서버가 정해 양쪽에 동일하게 배포한다
     this.seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
+    // 맵은 먼저 온 쪽(a)의 선택 — 알 수 없는 id는 getMap이 기본 맵으로
+    this.mapId = getMap(a.mapId ?? DEFAULT_MAP_ID).id;
     this.startWallMs = Date.now();
 
     const f0 = getFaction(a.factionId);
@@ -72,7 +77,7 @@ export class Match {
     this.factions = [f0.id, f1.id];
     this.playerNames = [a.name, b ? b.name : `봇 (${f1.name})`];
 
-    this.state = createState(this.seed, this.factions);
+    this.state = createState(this.seed, this.factions, this.mapId);
     this.conns = [a, b];
     this.bot = b === null ? new Bot(this.seed) : null;
 
@@ -89,6 +94,7 @@ export class Match {
         t: 'match',
         matchId: this.id,
         seed: this.seed,
+        mapId: this.mapId,
         team: c.team as Team,
         factions: this.factions,
         opponent: b === null ? this.playerNames[1] : this.other(c)?.name ?? '???',
@@ -248,6 +254,7 @@ export class Match {
       const replay = buildReplay({
         matchId: this.id,
         seed: this.seed,
+        mapId: this.mapId,
         factions: this.factions,
         players: this.playerNames,
         commands: this.recorded,

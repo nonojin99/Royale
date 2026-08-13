@@ -1,11 +1,17 @@
 /**
- * 아레나 지형과 기지 지점.
+ * 아레나 지형과 기지 지점 — 맵 레지스트리.
  *
  * 좌표계: 왼쪽 위가 (0,0). y가 커질수록 아래(팀 0 진영).
  *   - 팀 0 = 아래쪽 (로컬 플레이어 기준 "내 진영")
  *   - 팀 1 = 위쪽
  *
- * 모든 값은 밀리타일 정수.
+ * 모든 맵은 지형을 **절반만 정의**하고 점대칭으로 복제한다. 중심은
+ * ((W-1)/2, (H-1)/2), 변환 (x,y) → (W-1-x, H-1-y). 손으로 양쪽을 적으면
+ * 반드시 어긋나고, 어긋난 맵은 밸런스를 논할 수 없다.
+ *
+ * 활성 맵은 setActiveMap()으로 바뀐다 — createState/step이 GameState의
+ * mapId로 이걸 호출하므로, 단일 스레드에서 서로 다른 맵의 경기를
+ * 번갈아 시뮬레이션해도 안전하다. 모든 값은 밀리타일 정수.
  */
 
 import { BASE_SNAP_RADIUS, DEPLOY_RADIUS } from './constants.js';
@@ -18,6 +24,43 @@ export const ARENA_W = tiles(ARENA_W_TILES);
 export const ARENA_H = tiles(ARENA_H_TILES);
 
 export type Team = 0 | 1;
+
+type Rect = readonly [number, number, number, number];
+
+/**
+ * 기지를 세울 수 있는 지점.
+ *
+ * 시작 본진 2곳 외의 6곳은 **누구나** 차지할 수 있다. 상대 앞마당에 몰래
+ * 확장하는 것도 규칙상 가능하며, 그게 이 게임의 심리전 축이다.
+ *
+ * 배열 순서가 곧 엔티티 생성 순서(=id)가 되므로 절대 바꾸지 말 것 (결정론).
+ */
+export interface BaseSite {
+  id: number;
+  x: number;
+  y: number;
+  /** 시작 본진이면 그 팀, 아니면 -1 */
+  startFor: Team | -1;
+  /** UI 표기용 이름 */
+  label: string;
+}
+
+
+/** 맵 정의 — 지형 절반 + 지점 전체 (지점은 손으로 대칭을 맞춰 적는다) */
+export interface MapDef {
+  id: string;
+  name: string;
+  /** 설계 한 줄 — 맵 선택 UI에 보여준다 */
+  tagline: string;
+  walls: readonly Rect[];
+  waters: readonly Rect[];
+  highs: readonly Rect[];
+  sites: readonly BaseSite[];
+}
+
+/* ══════════════ 맵 1 — 쌍둥이 해안 (coast) ══════════════
+   로스트템플 문법: 본진 고지 주머니 → 램프 밑 앞마당 → 서·동쪽 바다와
+   섬. 공격로는 정면 하나로 압축된다. */
 
 /**
  * 벽 — 지상 유닛이 통과할 수 없는 타일.
@@ -116,45 +159,6 @@ const WATER_RECTS: readonly (readonly [number, number, number, number])[] = [
   [10, 34, 11, 34],
 ];
 
-/** 점대칭 복제된 전체 협곡 목록 */
-export const WATERS: readonly (readonly [number, number, number, number])[] = (() => {
-  const out: [number, number, number, number][] = [];
-  for (const [x0, y0, x1, y1] of WATER_RECTS) {
-    out.push([x0, y0, x1, y1]);
-    out.push([
-      ARENA_W_TILES - 1 - x1,
-      ARENA_H_TILES - 1 - y1,
-      ARENA_W_TILES - 1 - x0,
-      ARENA_H_TILES - 1 - y0,
-    ]);
-  }
-  return out;
-})();
-
-/** 타일이 협곡인가 (렌더 구분용 — 이동 차단은 blockedTile이 겸한다) */
-export function waterTile(tx: number, ty: number): boolean {
-  for (const [x0, y0, x1, y1] of WATERS) {
-    if (tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1) return true;
-  }
-  return false;
-}
-
-/** 점대칭으로 복제한 전체 벽 목록 */
-export const WALLS: readonly (readonly [number, number, number, number])[] = (() => {
-  const out: [number, number, number, number][] = [];
-  for (const [x0, y0, x1, y1] of WALL_RECTS) {
-    out.push([x0, y0, x1, y1]);
-    // (x,y) → (23-x, 23-y) 이므로 사각형은 양 끝점이 뒤집힌다
-    out.push([
-      ARENA_W_TILES - 1 - x1,
-      ARENA_H_TILES - 1 - y1,
-      ARENA_W_TILES - 1 - x0,
-      ARENA_H_TILES - 1 - y0,
-    ]);
-  }
-  return out;
-})();
-
 /**
  * 고지 — 언덕 위 타일.
  *
@@ -178,10 +182,122 @@ const HIGH_RECTS: readonly (readonly [number, number, number, number])[] = [
   [21, 28, 26, 28],
 ];
 
-/** 점대칭 복제된 전체 고지 목록 */
-export const HIGHS: readonly (readonly [number, number, number, number])[] = (() => {
+const COAST_SITES: readonly BaseSite[] = [
+  { id: 0, x: tiles(5), y: tiles(5), startFor: 1, label: '위 본진' },
+  { id: 1, x: tiles(19), y: tiles(5), startFor: -1, label: '위 우측' },
+  { id: 2, x: tiles(5), y: tiles(15), startFor: -1, label: '위 앞마당' },
+  { id: 3, x: tiles(21), y: tiles(22), startFor: -1, label: '중앙 위' },
+  { id: 4, x: tiles(26), y: tiles(25), startFor: -1, label: '중앙 아래' },
+  { id: 5, x: tiles(42), y: tiles(32), startFor: -1, label: '아래 앞마당' },
+  { id: 6, x: tiles(28), y: tiles(42), startFor: -1, label: '아래 좌측' },
+  { id: 7, x: tiles(42), y: tiles(42), startFor: 0, label: '아래 본진' },
+  { id: 8, x: tiles(2), y: tiles(21), startFor: -1, label: '서쪽 섬' },
+  { id: 9, x: tiles(45), y: tiles(26), startFor: -1, label: '동쪽 섬' },
+  // 앞마당과 중앙 사이의 디딤돌 — 중앙 사슬이 여기서 열린다
+  { id: 10, x: tiles(13), y: tiles(19), startFor: -1, label: '위 어귀' },
+  { id: 11, x: tiles(34), y: tiles(28), startFor: -1, label: '아래 어귀' },
+];
+
+const COAST: MapDef = {
+  id: 'coast',
+  name: '쌍둥이 해안',
+  tagline: '바다가 등을 지켜주는 정면 승부',
+  walls: WALL_RECTS,
+  waters: WATER_RECTS,
+  highs: HIGH_RECTS,
+  sites: COAST_SITES,
+};
+
+/* ══════════════ 맵 2 — 대협곡 (rift) ══════════════
+   본진은 북동·남서 코너. 맵을 대각선으로 가르는 협곡이 지상을 두 다리로
+   몰아넣고, 공중에게 지름길을 준다. 다리 싸움의 맵. */
+
+function riftWaters(): Rect[] {
   const out: [number, number, number, number][] = [];
-  for (const [x0, y0, x1, y1] of HIGH_RECTS) {
+  // 대각 협곡 — 행마다 물가 폭이 출렁인다 (§MAP_RULES 1.1 블롭 규칙).
+  // 18~20행은 절개 = 북다리 (점대칭 거울로 27~29행이 남다리가 된다)
+  for (let y = 0; y <= 23; y++) {
+    if (y >= 18 && y <= 20) continue;
+    const w1 = (y * 5) % 3;
+    const w2 = ((y + 1) * 7) % 3;
+    out.push([Math.max(0, y - 1 - w1), y, Math.min(47, y + 1 + w2), y]);
+  }
+  // 북동 섬 호수 — 링만 물이고 가운데 십자 섬(중심 37,21)이 남는다
+  out.push(
+    [35, 19, 39, 19],
+    [35, 23, 39, 23],
+    [35, 20, 35, 22],
+    [39, 20, 39, 22],
+    [36, 20, 36, 20],
+    [38, 20, 38, 20],
+    [36, 22, 36, 22],
+    [38, 22, 38, 22],
+  );
+  return out;
+}
+
+const RIFT_WALLS: readonly Rect[] = [
+  // ── 북동 본진 주머니 — 서쪽 램프 하나 (37, 3~4) ──
+  [37, 0, 37, 2],
+  [37, 5, 37, 8],
+  [38, 8, 41, 8],
+  [42, 9, 44, 9],
+  [45, 9, 47, 9],
+  // ── 앞마당 엄폐물 ──
+  [29, 8, 30, 8],
+  [38, 12, 38, 14],
+  // ── 다리 어귀 능선 — 다리로 가는 길을 굽힌다 ──
+  [22, 10, 23, 11],
+  [28, 21, 29, 21],
+  // ── 흩어진 바위 ──
+  [20, 6, 21, 7],
+  [9, 12, 10, 13],
+  [44, 20, 45, 21],
+];
+
+const RIFT_HIGHS: readonly Rect[] = [
+  // 북동 본진 고지 블롭
+  [38, 0, 47, 7],
+  // 북다리 어귀 고원 — 다리를 내려다보는 다툼의 땅
+  [24, 14, 28, 17],
+];
+
+const RIFT_SITES: readonly BaseSite[] = [
+  { id: 0, x: tiles(42), y: tiles(5), startFor: 1, label: '북동 본진' },
+  { id: 1, x: tiles(32), y: tiles(5), startFor: -1, label: '북동 앞마당' },
+  { id: 2, x: tiles(42), y: tiles(15), startFor: -1, label: '북동 남마당' },
+  { id: 3, x: tiles(26), y: tiles(16), startFor: -1, label: '북다리 어귀' },
+  { id: 4, x: tiles(21), y: tiles(31), startFor: -1, label: '남다리 어귀' },
+  { id: 5, x: tiles(5), y: tiles(32), startFor: -1, label: '남서 북마당' },
+  { id: 6, x: tiles(15), y: tiles(42), startFor: -1, label: '남서 앞마당' },
+  { id: 7, x: tiles(5), y: tiles(42), startFor: 0, label: '남서 본진' },
+  { id: 8, x: tiles(10), y: tiles(26), startFor: -1, label: '남서 섬' },
+  { id: 9, x: tiles(37), y: tiles(21), startFor: -1, label: '북동 섬' },
+];
+
+const RIFT: MapDef = {
+  id: 'rift',
+  name: '대협곡',
+  tagline: '두 다리를 두고 다투는 협곡전',
+  walls: RIFT_WALLS,
+  waters: riftWaters(),
+  highs: RIFT_HIGHS,
+  sites: RIFT_SITES,
+};
+
+/* ══════════════ 레지스트리와 활성 맵 ══════════════ */
+
+export const MAPS: readonly MapDef[] = [COAST, RIFT];
+export const DEFAULT_MAP_ID = COAST.id;
+
+export function getMap(id: string): MapDef {
+  return MAPS.find((m) => m.id === id) ?? COAST;
+}
+
+/** 절반 정의 → 점대칭 복제된 전체 목록 */
+function mirrored(halves: readonly Rect[]): readonly Rect[] {
+  const out: Rect[] = [];
+  for (const [x0, y0, x1, y1] of halves) {
     out.push([x0, y0, x1, y1]);
     out.push([
       ARENA_W_TILES - 1 - x1,
@@ -191,7 +307,53 @@ export const HIGHS: readonly (readonly [number, number, number, number])[] = (()
     ]);
   }
   return out;
-})();
+}
+
+interface Compiled {
+  walls: readonly Rect[];
+  waters: readonly Rect[];
+  highs: readonly Rect[];
+}
+
+function compile(m: MapDef): Compiled {
+  return { walls: mirrored(m.walls), waters: mirrored(m.waters), highs: mirrored(m.highs) };
+}
+
+let active = compile(COAST);
+
+/** 점대칭 복제된 전체 목록 — 활성 맵의 것. setActiveMap이 갈아 끼운다 */
+export let WALLS: readonly Rect[] = active.walls;
+export let WATERS: readonly Rect[] = active.waters;
+export let HIGHS: readonly Rect[] = active.highs;
+export let BASE_SITES: readonly BaseSite[] = COAST.sites;
+export let ACTIVE_MAP_ID: string = COAST.id;
+
+/** 활성 맵이 바뀔 때마다 1 증가 — nav 캐시 무효화용 */
+let version = 0;
+export function mapVersion(): number {
+  return version;
+}
+
+export function setActiveMap(id: string): void {
+  if (id === ACTIVE_MAP_ID) return;
+  const m = getMap(id);
+  if (m.id === ACTIVE_MAP_ID) return;
+  active = compile(m);
+  WALLS = active.walls;
+  WATERS = active.waters;
+  HIGHS = active.highs;
+  BASE_SITES = m.sites;
+  ACTIVE_MAP_ID = m.id;
+  version++;
+}
+
+/** 타일이 협곡(물)인가 (렌더 구분용 — 이동 차단은 blockedTile이 겸한다) */
+export function waterTile(tx: number, ty: number): boolean {
+  for (const [x0, y0, x1, y1] of WATERS) {
+    if (tx >= x0 && tx <= x1 && ty >= y0 && ty <= y1) return true;
+  }
+  return false;
+}
 
 /** 타일 고도 — 0 저지 · 1 고지 */
 export function elevTile(tx: number, ty: number): number {
@@ -223,40 +385,6 @@ export function blockedTile(tx: number, ty: number): boolean {
 export function blockedAt(x: number, y: number): boolean {
   return blockedTile(Math.floor(x / 1000), Math.floor(y / 1000));
 }
-
-/**
- * 기지를 세울 수 있는 지점.
- *
- * 시작 본진 2곳 외의 6곳은 **누구나** 차지할 수 있다. 상대 앞마당에 몰래
- * 확장하는 것도 규칙상 가능하며, 그게 이 게임의 심리전 축이다.
- *
- * 배열 순서가 곧 엔티티 생성 순서(=id)가 되므로 절대 바꾸지 말 것 (결정론).
- */
-export interface BaseSite {
-  id: number;
-  x: number;
-  y: number;
-  /** 시작 본진이면 그 팀, 아니면 -1 */
-  startFor: Team | -1;
-  /** UI 표기용 이름 */
-  label: string;
-}
-
-export const BASE_SITES: readonly BaseSite[] = [
-  { id: 0, x: tiles(5), y: tiles(5), startFor: 1, label: '위 본진' },
-  { id: 1, x: tiles(19), y: tiles(5), startFor: -1, label: '위 우측' },
-  { id: 2, x: tiles(5), y: tiles(15), startFor: -1, label: '위 앞마당' },
-  { id: 3, x: tiles(21), y: tiles(22), startFor: -1, label: '중앙 위' },
-  { id: 4, x: tiles(26), y: tiles(25), startFor: -1, label: '중앙 아래' },
-  { id: 5, x: tiles(42), y: tiles(32), startFor: -1, label: '아래 앞마당' },
-  { id: 6, x: tiles(28), y: tiles(42), startFor: -1, label: '아래 좌측' },
-  { id: 7, x: tiles(42), y: tiles(42), startFor: 0, label: '아래 본진' },
-  { id: 8, x: tiles(2), y: tiles(21), startFor: -1, label: '서쪽 섬' },
-  { id: 9, x: tiles(45), y: tiles(26), startFor: -1, label: '동쪽 섬' },
-  // 앞마당과 중앙 사이의 디딤돌 — 중앙 사슬이 여기서 열린다
-  { id: 10, x: tiles(13), y: tiles(19), startFor: -1, label: '위 어귀' },
-  { id: 11, x: tiles(34), y: tiles(28), startFor: -1, label: '아래 어귀' },
-];
 
 /** 아레나 안쪽인가 */
 export function inBounds(x: number, y: number): boolean {

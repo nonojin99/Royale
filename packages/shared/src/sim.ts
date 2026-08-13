@@ -22,12 +22,15 @@ import {
   ARENA_W,
   BASE_SITES,
   BaseSite,
+  DEFAULT_MAP_ID,
   Team,
   blockedAt,
   canDeployAt,
   elevAt,
+  getMap,
   getSite,
   nearestFreeSite,
+  setActiveMap,
 } from './arena.js';
 import { navStep } from './nav.js';
 import {
@@ -130,6 +133,8 @@ export interface PlayerState {
 }
 
 export interface GameState {
+  /** 이 경기의 맵 id — step()이 매 틱 활성 맵을 이걸로 맞춘다 */
+  mapId: string;
   tick: number;
   rng: Rng;
   nextId: number;
@@ -201,8 +206,11 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
 export function createState(
   seed: number,
   factions: readonly [string, string] = [DEFAULT_FACTION_ID, DEFAULT_FACTION_ID],
+  mapId: string = DEFAULT_MAP_ID,
 ): GameState {
+  setActiveMap(mapId);
   const s: GameState = {
+    mapId: getMap(mapId).id,
     tick: 0,
     rng: createRng(seed),
     nextId: 1,
@@ -687,6 +695,8 @@ function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
  * 호출자가 sortCommands로 정규화해서 넘겨야 한다.
  */
 export function step(s: GameState, cmds: readonly Command[]): void {
+  // 서로 다른 맵의 경기를 번갈아 시뮬해도 안전하게 — 매 틱 활성 맵을 맞춘다
+  setActiveMap(s.mapId);
   if (s.over) {
     s.tick++;
     return;
@@ -983,6 +993,7 @@ export function snapshot(s: GameState): GameState {
 
 export function restore(target: GameState, snap: GameState): void {
   const fresh = JSON.parse(JSON.stringify(snap)) as GameState;
+  target.mapId = fresh.mapId;
   target.tick = fresh.tick;
   target.rng = fresh.rng;
   target.nextId = fresh.nextId;
@@ -1007,6 +1018,7 @@ export function hashState(s: GameState): number {
     for (let i = 0; i < str.length; i++) mix(str.charCodeAt(i));
   };
 
+  mixStr(s.mapId);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);

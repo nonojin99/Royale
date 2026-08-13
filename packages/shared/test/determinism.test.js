@@ -43,8 +43,11 @@ import {
   WORKER_COST,
   WORKER_MINE_PER_TICK,
   activeWorkers,
+  DEFAULT_MAP_ID,
+  MAPS,
   baseCount,
   canUpgrade,
+  setActiveMap,
   buildReplay,
   canDeployAt,
   canResearch,
@@ -1128,4 +1131,70 @@ test('강화는 단계별 연구 뒤에 열리고, 진행 후 단계가 오른�
 
   // 2단계는 1단계 열의 연구를 마치기 전에는 잠긴다
   assert.equal(canUpgrade(p), false, '1단계 연구 없이 2단계 강화가 열렸다');
+});
+
+/* ── 맵 레지스트리 — 모든 맵이 구조 규칙을 지킨다 ─────────────────────── */
+
+test('모든 맵: 점대칭 + 뭍 연결 + 섬 고립 + 지점이 지형 위에 없다', () => {
+  const T = ARENA_W_TILES;
+  for (const m of MAPS) {
+    setActiveMap(m.id);
+    for (let ty = 0; ty < T; ty++) {
+      for (let tx = 0; tx < T; tx++) {
+        assert.equal(
+          blockedTile(tx, ty),
+          blockedTile(T - 1 - tx, T - 1 - ty),
+          `[${m.id}] (${tx},${ty}) 대칭 지형 어긋남`,
+        );
+        assert.equal(
+          elevTile(tx, ty),
+          elevTile(T - 1 - tx, T - 1 - ty),
+          `[${m.id}] (${tx},${ty}) 대칭 고도 어긋남`,
+        );
+      }
+    }
+    const land = BASE_SITES.filter((b) => !b.label.includes('섬'));
+    const isles = BASE_SITES.filter((b) => b.label.includes('섬'));
+    assert.ok(isles.length >= 2, `[${m.id}] 섬 확장이 없다`);
+    for (const a of land) {
+      for (const b of land) {
+        if (a.id >= b.id) continue;
+        assert.ok(
+          navDistance(a.x, a.y, b.x, b.y) > 0,
+          `[${m.id}] ${a.label} → ${b.label} 도달 불가`,
+        );
+      }
+    }
+    for (const isle of isles) {
+      assert.equal(
+        navDistance(land[0].x, land[0].y, isle.x, isle.y),
+        -1,
+        `[${m.id}] ${isle.label} 이 지상으로 도달된다`,
+      );
+    }
+    for (const b of BASE_SITES) {
+      assert.equal(
+        blockedAt(b.x, b.y),
+        false,
+        `[${m.id}] ${b.label} 이 벽/물 위에 있다`,
+      );
+      // 대칭 지점 존재
+      const mx = (T - 1) * 1000 - b.x;
+      const my = (T - 1) * 1000 - b.y;
+      assert.ok(
+        BASE_SITES.some((o) => Math.abs(o.x - mx) <= 1000 && Math.abs(o.y - my) <= 1000),
+        `[${m.id}] ${b.label} 대칭 자리 없음`,
+      );
+    }
+    // 본진 경로 우회율 1.05~1.3 (MAP_RULES §5)
+    const m0 = BASE_SITES.find((b) => b.startFor === 0);
+    const m1 = BASE_SITES.find((b) => b.startFor === 1);
+    const path = navDistance(m0.x, m0.y, m1.x, m1.y);
+    const dx = Math.abs(m0.x - m1.x) / 1000;
+    const dy = Math.abs(m0.y - m1.y) / 1000;
+    const straight = Math.min(dx, dy) * 14 + Math.abs(dx - dy) * 10;
+    const ratio = path / straight;
+    assert.ok(ratio >= 1.0 && ratio <= 1.5, `[${m.id}] 우회율 ${ratio.toFixed(2)} 규격 밖`);
+  }
+  setActiveMap(DEFAULT_MAP_ID); // 다른 테스트를 오염시키지 않는다
 });

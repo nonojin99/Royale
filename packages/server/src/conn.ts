@@ -13,6 +13,8 @@ export class Conn {
   name = '익명';
   /** 선택한 종족 id. hello에서 받는다. */
   factionId = DEFAULT_FACTION_ID;
+  /** 원하는 맵 id. hello에서 받는다 */
+  mapId: string | undefined;
   team: 0 | 1 = 0;
   match: Match | null = null;
   /** 연속 데스싱크 횟수 (진단용) */

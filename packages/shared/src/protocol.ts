@@ -15,6 +15,8 @@ export interface CHello {
   name: string;
   /** 사용할 종족 id. 없거나 알 수 없는 값이면 서버가 기본 종족으로 떨어뜨린다. */
   factionId?: string;
+  /** 원하는 맵 id — 솔로는 그대로, 2인 매칭은 먼저 온 쪽 선택을 따른다 */
+  mapId?: string;
 }
 
 /**
@@ -56,6 +58,8 @@ export interface SMatch {
   t: 'match';
   matchId: string;
   seed: number;
+  /** 확정된 맵 id — 시뮬레이션은 이걸로 초기화된다 */
+  mapId: string;
   /** 이 클라이언트가 맡은 팀 */
   team: Team;
   /** 양 팀의 종족 id — 시뮬레이션은 이걸로 초기화된다 */
