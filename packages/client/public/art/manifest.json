@@ -73,6 +73,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "gnawer": {
@@ -147,6 +155,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "rifleman": {
@@ -193,6 +209,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "siegetank": {
@@ -221,6 +245,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "spinetentacle": {
@@ -269,6 +301,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "tunneler": {
