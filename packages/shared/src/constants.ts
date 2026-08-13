@@ -79,13 +79,19 @@ export const WORKER_CAP_PER_BASE = MINERAL_PATCHES * WORKERS_PER_PATCH;
 
 /**
  * 기지 하나에 매장된 총량.
- * 포화(초당 0.96) 기준 약 110초면 고갈된다 — 4분 경기의 중반이다.
+ * 포화(초당 0.96) 기준 약 220초면 고갈된다 — 4분 경기의 후반이다.
  * 한 기지로 버티면 말라죽는다는 것이 확장을 강제하는 두 번째 장치다.
+ * (100=110초는 2인 플레이에서 "자원이 순식간에 마른다"는 체감을 낳았다 —
+ *  고갈은 압박이어야지 벼락이면 안 된다. 라운드 9 피드백)
  */
-export const BASE_MINERAL_RESERVE = 100 * MINERAL_SCALE;
+export const BASE_MINERAL_RESERVE = 200 * MINERAL_SCALE;
 
-/** 확장 기지 건설 비용 */
-export const BASE_BUILD_COST = 8 * MINERAL_SCALE;
+/**
+ * 확장 기지 건설 비용.
+ * 8은 2인 플레이에서 "확장이 너무 싸다"는 체감 — 미네랄 상한(30)의 40%인
+ * 12로 올려 확장을 '모아서 지르는 결정'으로 만든다 (라운드 9 피드백).
+ */
+export const BASE_BUILD_COST = 12 * MINERAL_SCALE;
 /** 기지 건설 후 가동까지 걸리는 시간 (틱) — 2초 */
 export const BASE_BUILD_TICKS = 2 * TICK_RATE;
 

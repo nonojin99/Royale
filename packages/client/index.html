@@ -203,7 +203,6 @@
       padding: 8px 6px;
       cursor: pointer;
     }
-    #btn-worker { border-color: var(--mineral); color: var(--mineral); }
     #btn-base { border-color: var(--base); color: var(--base); }
     #btn-base.active { background: var(--base); color: #1a1a1a; }
     #btn-tech.open { background: #2b2145; border-color: var(--tech); color: var(--tech); }
@@ -258,8 +257,18 @@
     }
     #tech-panel.hidden { display: none; }
     /* ── 통합 테크트리 — 연구와 생산이 한 판이다 ── */
-    #palette { position: relative; display: flex; gap: 14px; align-items: flex-start; }
+    #palette { position: relative; display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
     #tree-links { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+    #tree-legend {
+      flex-basis: 100%; font-size: 11px; color: var(--muted);
+      line-height: 1.5; margin-top: 2px;
+    }
+    #tree-legend kbd {
+      font-size: 9px; padding: 1px 4px; border: 1px solid #334155;
+      border-radius: 3px; background: #0f172a;
+    }
+    /* 일꾼 카드 — 유닛과 같은 얼굴, 미네랄 색 테두리로 '경제의 수'임을 표시 */
+    .tnode.worker-node { --unit-color: var(--mineral); }
     .tcol { display: flex; flex-direction: column; gap: 8px; flex: 1; z-index: 1; }
     .tcol-head {
       font-size: 10px; font-weight: 700; color: var(--muted);
@@ -470,8 +479,7 @@
     </div>
 
     <div id="actions">
-      <button id="btn-worker" type="button">일꾼 (2)</button>
-      <button id="btn-base" type="button">기지 건설 (8)</button>
+      <button id="btn-base" type="button">기지 건설 (12)</button>
     </div>
 
     <div id="palette"></div>

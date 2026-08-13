@@ -392,7 +392,7 @@ test('시작 해금 유닛은 바로 쓸 수 있고, 나머지는 잠겨 있다'
 
 test('잠긴 유닛은 생산되지 않는다', () => {
   const s = createState(5, MIRROR);
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   const locked = getFaction('steel').tech.find((n) => n.cost > 0).unit;
   const before = s.entities.length;
   const [x, y] = nearOwnBase(s, 0, 0, -2000);
@@ -402,7 +402,7 @@ test('잠긴 유닛은 생산되지 않는다', () => {
 
 test('연구는 시간이 걸리고, 끝나야 해금된다', () => {
   const s = createState(5, MIRROR);
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
 
   const node = getFaction('steel').tech.find((n) => n.tier === 1);
   step(s, [cmd(s.tick, 0, 'tech', node.unit)]);
@@ -418,7 +418,7 @@ test('연구는 시간이 걸리고, 끝나야 해금된다', () => {
 
 test('연구는 한 번에 하나만 진행된다', () => {
   const s = createState(5, MIRROR);
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   const [a, b] = getFaction('steel').tech.filter((n) => n.tier === 1);
 
   // 실제 호출자와 같이 sortCommands로 정규화해서 넘긴다.
@@ -455,7 +455,7 @@ test('연구 비용이 모자라면 시작되지 않는다', () => {
 
 test('기지 반경 안에만 유닛을 배치할 수 있다', () => {
   const s = createState(5, MIRROR);
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   const unitId = getFaction('steel').tech.find((n) => n.cost === 0).unit;
 
   const before = s.entities.length;
@@ -476,7 +476,7 @@ test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다'
   // 기지가 없을 때는 배치 불가
   assert.equal(canDeployAt(forward.x, forward.y, ownBasePositions(s, 0)), false);
 
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   step(s, [cmd(s.tick, 0, 'base', '', forward.x, forward.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
 
@@ -490,7 +490,7 @@ test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다'
 test('건설 중인 기지는 아직 배치 거점이 되지 않는다', () => {
   const s = createState(5, MIRROR);
   const forward = BASE_SITES.find((b) => b.label === '중앙 아래');
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   step(s, [cmd(s.tick, 0, 'base', '', forward.x, forward.y)]);
   assert.equal(
     canDeployAt(forward.x, forward.y, ownBasePositions(s, 0)),
@@ -502,7 +502,7 @@ test('건설 중인 기지는 아직 배치 거점이 되지 않는다', () => {
 test('강 위에는 배치할 수 없다', () => {
   const s = createState(5, MIRROR);
   const forward = BASE_SITES.find((b) => b.label === '중앙 아래');
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   step(s, [cmd(s.tick, 0, 'base', '', forward.x, forward.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
 
@@ -563,7 +563,7 @@ test('본진이 파괴되면 즉시 상대가 승리한다', () => {
 test('확장 기지가 파괴되어도 경기는 계속된다', () => {
   const s = createState(12, MIRROR);
   const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   assert.equal(baseCount(s, 0), 2);
 
@@ -577,7 +577,7 @@ test('확장 기지가 파괴되어도 경기는 계속된다', () => {
 test('시간이 다 되면 기지 수로 승패를 가린다', () => {
   const s = createState(13, MIRROR);
   const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
-  for (let i = 0; i < 400; i++) step(s, []);
+  for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
 
   while (s.tick < MATCH_TICKS && !s.over) step(s, []);

@@ -178,7 +178,6 @@ async function boot(): Promise<void> {
     ($('start') as HTMLButtonElement).disabled = true;
   });
 
-  $('btn-worker').addEventListener('click', requestWorker);
   $('btn-base').addEventListener('click', toggleBaseMode);
 
   const muteBtn = $('btn-mute');
@@ -204,8 +203,17 @@ async function boot(): Promise<void> {
       baseMode = false;
       refreshActionButtons();
     }
-    const n = Number(e.key);
-    if (n >= 1 && n <= 8) selectUnitByIndex(n - 1);
+    // 숫자 = 생산 선택, Shift+숫자 = 그 칸 연구 시작 (라운드 9 피드백 #4).
+    // Shift+숫자는 e.key가 '!','@' 등으로 변하므로 e.code로 읽는다
+    const digit = e.code.startsWith('Digit') ? Number(e.code.slice(5)) : Number(e.key);
+    if (digit >= 1 && digit <= 8) {
+      if (e.shiftKey) {
+        const entry = paletteEls[digit - 1];
+        if (entry) requestTech(entry.unit);
+      } else {
+        selectUnitByIndex(digit - 1);
+      }
+    }
   });
 
   requestAnimationFrame(frame);
@@ -283,6 +291,8 @@ function refreshFactionPicker(): void {
 /* ── 유닛 팔레트 / 테크 패널 ───────────────────────────────────────────── */
 
 let paletteEls: { el: HTMLElement; unit: string }[] = [];
+/** 트리 '시작' 열의 일꾼 카드 — 유닛 노드와 같은 얼굴, 다른 명령 */
+let workerNode: HTMLElement | null = null;
 
 function factionOfMe(): ReturnType<typeof getFaction> {
   const s = net.state;
@@ -333,6 +343,39 @@ function buildPalette(): void {
     cols.set(tier, col);
     root.appendChild(col);
   }
+
+  // 일꾼 카드 — 별도 버튼은 "일꾼도 생산의 한 수"라는 사실을 가렸다
+  // (라운드 9 피드백: 일꾼 생산을 유닛으로 합병). 트리의 첫 칸에 앉힌다
+  const wEl = document.createElement('button');
+  wEl.className = 'tnode worker-node';
+  wEl.innerHTML =
+    `<span class="ukey">W</span><span class="nlock"></span>` +
+    `<span class="nicon"></span><span class="nname">일꾼</span>` +
+    `<span class="ncost"></span><span class="nprog"><i></i></span>`;
+  const wicon = wEl.querySelector<HTMLElement>('.nicon')!;
+  const ww = ICON_PX * ICON_ZOOM;
+  wicon.style.backgroundImage = `url('${import.meta.env.BASE_URL}art/worker.png')`;
+  wicon.style.backgroundSize = `${ww * 5}px ${ww}px`;
+  wicon.style.backgroundPosition = `${(ICON_PX - ww) / 2}px ${(ICON_PX - ww) * 0.3}px`;
+  wEl.querySelector<HTMLElement>('.ncost')!.textContent = String(WORKER_COST / MINERAL_SCALE);
+  wEl.addEventListener('click', requestWorker);
+  attachTipHtml(
+    wEl,
+    () =>
+      `<div class="tt-name">일꾼 <span class="tt-cost">${WORKER_COST / MINERAL_SCALE}</span></div>` +
+      `<div class="tt-row">초당 0.12 채굴 — 수입의 전부</div>` +
+      `<div class="tt-row">정원 = 기지당 8 · 정원이 차면 확장할 때</div>`,
+  );
+  workerNode = wEl;
+  cols.get(0)!.appendChild(wEl);
+
+  // 읽는 법 한 줄 — "잠긴 유닛은 어떻게 뽑나"라는 질문이 나오지 않게
+  const legend = document.createElement('div');
+  legend.id = 'tree-legend';
+  legend.innerHTML =
+    '🔒 잠김 카드는 클릭(또는 <kbd>Shift</kbd>+숫자)하면 연구 시작 — ' +
+    '연구가 끝나면 바로 생산할 수 있고, 선행 유닛을 뽑을 필요는 없습니다';
+  root.appendChild(legend);
 
   let key = 0;
   for (const node of factionOfMe().tech) {
@@ -490,6 +533,20 @@ function unitTipHtml(id: string): string {
     }
   }
 
+  // 해금 조건 — "선행 유닛을 뽑아야 하나?"라는 혼동(라운드 9 피드백)의 답:
+  // 연구만 하면 된다. 선행 조건은 '연구 완료'지 '유닛 생산'이 아니다
+  const st = net.state;
+  const viewer = st ? st.players[net.myTeam] : null;
+  const node = factionOfMe().tech.find((n) => n.unit === id);
+  if (viewer && node && !isUnlocked(viewer, id)) {
+    rows.push(
+      node.requires
+        ? `<span class="tt-warn">🔒 ${getUnit(node.requires).name} 연구 후 → 연구 ${node.cost}로 해금</span>`
+        : `<span class="tt-warn">🔬 연구 ${node.cost}로 해금 (클릭 또는 Shift+숫자)</span>`,
+    );
+    rows.push('해금되면 바로 생산 — 선행 유닛을 뽑을 필요는 없다');
+  }
+
   return (
     `<div class="tt-name">${u.name}${u.flying ? ' ✈' : ''} ` +
     `<span class="tt-cost">${u.cost}</span></div>` +
@@ -498,6 +555,10 @@ function unitTipHtml(id: string): string {
 }
 
 function attachTip(el: HTMLElement, unitId: string): void {
+  attachTipHtml(el, () => unitTipHtml(unitId));
+}
+
+function attachTipHtml(el: HTMLElement, html: () => string): void {
   const tip = $('tooltip');
   const move = (ev: MouseEvent) => {
     const pad = 14;
@@ -510,7 +571,7 @@ function attachTip(el: HTMLElement, unitId: string): void {
     tip.style.top = `${y}px`;
   };
   el.addEventListener('mouseenter', (ev) => {
-    tip.innerHTML = unitTipHtml(unitId);
+    tip.innerHTML = html();
     tip.classList.remove('hidden');
     move(ev as MouseEvent);
   });
@@ -660,7 +721,8 @@ function updateHud(s: GameState): void {
     lock.textContent = unlocked || researching ? '' : researchable ? '🔬' : '🔒';
 
     const cost = el.querySelector<HTMLElement>('.ncost')!;
-    cost.textContent = unlocked ? String(u.cost) : String(node.cost);
+    // 잠긴 카드의 숫자는 생산비가 아니라 연구비다 — 🔬로 구분한다
+    cost.textContent = unlocked ? String(u.cost) : `🔬${node.cost}`;
 
     if (researching && me.research) {
       const frac = 1 - me.research.ticks / node.researchTicks;
@@ -669,10 +731,12 @@ function updateHud(s: GameState): void {
     }
   }
 
-  // 일꾼 버튼
-  const workerBtn = $('btn-worker') as HTMLButtonElement;
-  workerBtn.disabled = me.minerals < WORKER_COST || me.workers >= cap;
-  workerBtn.innerHTML = `일꾼 (${WORKER_COST / MINERAL_SCALE}) <kbd>W</kbd>`;
+  // 일꾼 카드 (트리 '시작' 열)
+  if (workerNode) {
+    const full = cap > 0 && me.workers >= cap;
+    workerNode.classList.toggle('unaffordable', me.minerals < WORKER_COST || full);
+    workerNode.querySelector<HTMLElement>('.nname')!.textContent = full ? '정원 참' : '일꾼';
+  }
 
   // 기지 건설 버튼
   const baseBtn = $('btn-base') as HTMLButtonElement;
