@@ -468,49 +468,59 @@ rm -f packages/client/public/art/units/*.png
 
 ---
 
-## 8. 4방향 시선 파일럿 — 광전사 한 컷 재생성 (라운드 10.5 발주, 개정)
+## 8. 4방향 발주 표준 — 턴어라운드 시트 한 장 (라운드 10.5 확정)
 
-스타1 질럿은 쿼터뷰에서 **4방향 시선 전환만으로** 방향감이 살았다.
+**신규 유닛의 4방향은 반드시 이 방식으로 발주한다.** 실측으로 확정된
+결론이다:
 
-**따로 생성하면 안 된다** — 생성기는 매번 다른 캐릭터를 그리므로, 등
-방향만 새로 뽑으면 기존 정면과 다른 광전사가 된다 (실측: 오너 확인).
-**모든 방향을 한 캔버스에 격자로 한 번에 생성**하고, 기존 정면 시트도
-이 한 장에서 나온 것으로 교체한다. 한 장에서 나왔으니 방향끼리 반드시
-같은 캐릭터다.
+- 방향을 따로 생성하면 매번 다른 캐릭터가 나온다 (실패 1)
+- "4행 격자, 2행은 등"이라고 행을 설명하면 전부 정면으로 나온다 (실패 2)
+- **"캐릭터 턴어라운드 시트(character turnaround sprite sheet)"라는
+  형식 이름을 부르면 정면+뒷모습이 한 장에 나온다 (성공)** — 생성기가
+  게임 아트 자료에서 그 형식 자체를 배웠기 때문이다. 행 설명보다
+  형식명이 구도를 지배한다
 
-### 생성 규격 — 4행 × 5열 격자 한 장
+### 확정 프롬프트 틀 (광전사로 검증됨)
 
-| 행 | 내용 |
-|---|---|
-| 1 | **정면(화면 아래를 향해) 걷기** 5프레임 — 다리 교차 |
-| 2 | **등(화면 위를 향해) 걷기** 5프레임 — 어깨 갑주·투구 뒷면이 주인공 |
-| 3 | **정면 공격** 5프레임 — 팔을 화면 아래로 내지른다 |
-| 4 | **등 공격** 5프레임 — 팔을 화면 위로 내지른다 |
+> 픽셀아트 게임 캐릭터 **턴어라운드 스프라이트 시트 (character
+> turnaround sprite sheet, front and back views)**, 4행 5열 격자,
+> 투명 배경. (재생성이면: 첨부 이미지와 같은 캐릭터)
+>
+> 캐릭터: [§4의 해당 유닛 설명 + 종족 스타일 문장]
+>
+> 1행: 정면 걷기 5프레임 (front view, walking toward camera)
+> 2행: **같은 캐릭터가 180도 뒤돌아선 뒷모습 걷기 5프레임 (back view,
+> walking away from camera, facing away)** — 투구 뒤통수와 등판만
+> 보이고 눈이 보이지 않음
+> 3행: 정면 공격 5프레임 — **무기가 5프레임 내내 켜져 있고** 팔 각도만
+> 프레임마다 변함
+> 4행: 뒷모습 공격 5프레임 (back view, attacking)
+>
+> 모든 칸에서 같은 캐릭터, 같은 크기, 같은 발 위치. 칸 사이 여백 균일.
 
-- 모든 칸 같은 크기, 캐릭터 발 위치 동일, 배경은 단색
-- 좌우는 렌더러가 뒤집으므로 측면 행은 **불필요** — 4행이면 끝
+### 결과물 특성 (그대로 받아들인다)
 
-### 생성 문장 예
-
-> 픽셀아트 스프라이트 시트, 4행 5열 격자. 노란 갑주의 근접 광전사
-> (기존 §4 광전사 묘사 그대로). 1행: 정면으로 걷는 5프레임.
-> 2행: 등을 보이고 걷는 5프레임. 3행: 정면 공격 5프레임.
-> 4행: 등을 보인 공격 5프레임. 모든 칸에서 같은 캐릭터, 같은 크기,
-> 같은 발 위치. 단색 배경, 칸 사이 여백 균일.
+- **열 수는 5를 요청해도 6~7열로 나올 수 있다** — 싸우지 말 것.
+  슬라이스에서 연속 5칸만 고르면 된다 (동작 변화가 큰 구간으로)
+- **칸 사이에 검은 격자선**이 그려져 나올 수 있다 — `--inset 0.1`이
+  잘라내므로 문제없다
+- 등 행의 디테일이 정면보다 어설퍼도 합격 — 게임 크기 42px에서 방향은
+  "눈이 보이나 안 보이나 + 등판 명암"으로 읽힌다
 
 ### 처리 — 한 장에서 스트립 4벌
 
-`strip.mjs`가 이미 격자·행 선택을 지원한다 (`--grid 4x5 --take 행,1-행,5`):
+열 수를 실제 이미지에서 세고 (`--grid 4x<열수>`), 행마다 연속 5칸을
+고른다. 예: 4행 7열로 나왔고 각 행의 1~5칸을 쓸 때:
 
 ```
-node tools/strip.mjs zealot4.png --out zealot.walk.png        --grid 4x5 --take 1,1-1,5 --align center --bgcolor auto --inset 0.1
-node tools/strip.mjs zealot4.png --out zealot.walkback.png    --grid 4x5 --take 2,1-2,5 --align center --bgcolor auto --inset 0.1
-node tools/strip.mjs zealot4.png --out zealot.attack.png      --grid 4x5 --take 3,1-3,5 --align center --bgcolor auto --inset 0.1
-node tools/strip.mjs zealot4.png --out zealot.attackback.png  --grid 4x5 --take 4,1-4,5 --align center --bgcolor auto --inset 0.1
+node tools/strip.mjs zealot4.png --out zealot.walk.png        --grid 4x7 --take 1,1-1,5 --align center --bgcolor auto --inset 0.1
+node tools/strip.mjs zealot4.png --out zealot.walkback.png    --grid 4x7 --take 2,1-2,5 --align center --bgcolor auto --inset 0.1
+node tools/strip.mjs zealot4.png --out zealot.attack.png      --grid 4x7 --take 3,1-3,5 --align center --bgcolor auto --inset 0.1
+node tools/strip.mjs zealot4.png --out zealot.attackback.png  --grid 4x7 --take 4,1-4,5 --align center --bgcolor auto --inset 0.1
 ```
 
-- 기존 `zealot.walk.png`·`zealot.attack.png`를 **교체**한다 (한 장 출신으로 통일)
-- manifest에 `walkback`/`attackback` 추가 등록
-- 렌더러 배선(이동 dy가 화면 위쪽이면 등 시트)은 시트가 도착하면 붙인다
-- 이 방식이 검증되면 **신규 유닛은 처음부터 4행 한 장으로 발주**한다 —
-  §7 우선순위의 기존 유닛 교체는 서두르지 않는다 (정면만으로도 게임은 된다)
+- 기존 정면 시트(`walk`/`attack`)도 **같은 장 출신으로 교체**한다
+- manifest에 `walkback`/`attackback` 추가 (frames 5, fps는 기존과 동일)
+- 렌더러 배선: 이동 dy가 화면 위쪽이면 등 시트 (파일럿 라운드에서)
+- 기존 21종 유닛의 교체는 서두르지 않는다 — 재생성할 일이 생길 때
+  이 표준으로 한 장씩 갈아탄다
