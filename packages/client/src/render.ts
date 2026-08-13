@@ -220,6 +220,15 @@ export class Renderer {
       this.drawTerrain(input.myTeam);
       this.terrainDrawn = true;
     }
+    // 화면 흔들림 — 죽음 순간에 130ms, 남은 시간에 비례해 잦아든다.
+    // world 컨테이너 전체를 밀므로 지형·유닛·이펙트가 한 몸으로 흔들린다
+    const shakeLeft = this.shakeUntil - this.nowMs;
+    if (shakeLeft > 0) {
+      const amp = 3 * Math.min(1, shakeLeft / 130);
+      this.world.position.set((Math.random() * 2 - 1) * amp, (Math.random() * 2 - 1) * amp);
+    } else {
+      this.world.position.set(0, 0);
+    }
     // 미네랄·일꾼도 스프라이트를 쓰므로 풀 반납은 첫 사용처보다 앞에서 한 번에 한다
     this.resetSprites();
     this.drawFields(input);
@@ -646,6 +655,7 @@ export class Renderer {
       const u = getUnit(e.unit);
       const moved = !!p && (p[0] !== e.x || p[1] !== e.y);
       const tex = this.frameFor(e, moved, this.vfacingOf(e, p, myTeam) < 0);
+      const hit = this.flashOf(e);
 
       if (e.kind === 'building') {
         const size = PX_PER_TILE * 1.5;
@@ -653,12 +663,16 @@ export class Renderer {
           g.ellipse(sx, sy + size * 0.12, size * 0.52, size * 0.22);
           g.fill({ color: 0x000000, alpha: 0.22 });
           this.groundRing(g, sx, sy, size * 0.5, teamColor);
-          this.place(tex, sx, sy, PX_PER_TILE * 2.0, 0.85);
+          this.applyHit(this.place(tex, sx, sy, PX_PER_TILE * 2.0, 0.85), hit);
         } else {
           g.rect(sx - size / 2, sy - size / 2, size, size);
           g.fill(u.color);
           g.rect(sx - size / 2, sy - size / 2, size, size);
           g.stroke({ width: 3.5, color: teamColor });
+          if (hit > 0) {
+            g.rect(sx - size / 2, sy - size / 2, size, size);
+            g.fill({ color: 0xffffff, alpha: 0.45 * hit });
+          }
         }
         if (e.deploy > 0) {
           this.progressBar(d, sx, sy + size * 0.5, size, 1 - e.deploy / DEPLOY_TICKS);
@@ -686,12 +700,19 @@ export class Renderer {
         }
         // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
         if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
-        this.place(tex, sx, by, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam));
+        this.applyHit(
+          this.place(tex, sx, by, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam)),
+          hit,
+        );
       } else {
         g.circle(sx, by, r);
         g.fill(u.color);
         g.circle(sx, by, r);
         g.stroke({ width: 2.5, color: teamColor });
+        if (hit > 0) {
+          g.circle(sx, by, r);
+          g.fill({ color: 0xffffff, alpha: 0.5 * hit });
+        }
       }
 
       if (e.flying) {
@@ -763,6 +784,30 @@ export class Renderer {
     return clip.textures[st!.name.startsWith('attack') ? Math.min(i, last) : i % clip.textures.length];
   }
 
+  /**
+   * 피격 플래시 — hp가 내려간 순간부터 90ms 동안 1→0으로 식는 세기.
+   *
+   * 스타크래프트의 타격감 절반은 "맞은 유닛이 반응한다"에서 온다. 시뮬은
+   * 데미지를 즉시 적용하므로, 렌더는 hp 하락을 감지해 그 프레임에 붉은
+   * 틴트와 미세한 부풀림을 얹는다. 상태를 읽기만 하니 결정론과 무관하다.
+   */
+  private flashOf(e: Entity): number {
+    const last = this.lastHp.get(e.id);
+    if (last !== undefined && e.hp < last) this.flashUntil.set(e.id, this.nowMs + 90);
+    this.lastHp.set(e.id, e.hp);
+    const until = this.flashUntil.get(e.id);
+    if (until === undefined || until <= this.nowMs) return 0;
+    return (until - this.nowMs) / 90;
+  }
+
+  /** 플래시 세기를 스프라이트에 적용 — 붉은 틴트 + 6% 스케일 범프 */
+  private applyHit(sp: Sprite, f: number): void {
+    if (f <= 0) return;
+    sp.tint = 0xff9a8a;
+    sp.scale.x *= 1 + 0.06 * f;
+    sp.scale.y *= 1 + 0.06 * f;
+  }
+
   /** 스프라이트 발밑에 두는 팀 색 타원 링 */
   private groundRing(g: Graphics, sx: number, sy: number, r: number, color: number): void {
     g.ellipse(sx, sy, r * 1.05, r * 0.45);
@@ -784,17 +829,23 @@ export class Renderer {
     const size = e.isMain ? PX_PER_TILE * 2.4 : PX_PER_TILE * 1.8;
     const building = e.deploy > 0;
     const tex = art.base(state.players[e.team].faction, e.isMain);
+    const hit = this.flashOf(e);
 
     if (tex) {
       this.groundRing(g, sx, sy, size * 0.5, teamColor);
       const sp = this.place(tex, sx, sy, size * 1.25, 0.85);
       // 건설 중에는 반투명 — 도형일 때의 규칙을 그대로 옮긴다
       sp.alpha = building ? 0.45 : 1;
+      this.applyHit(sp, hit);
     } else {
       g.rect(sx - size / 2, sy - size / 2, size, size);
       g.fill({ color: faction.color, alpha: building ? 0.4 : 1 });
       g.rect(sx - size / 2, sy - size / 2, size, size);
       g.stroke({ width: 3.5, color: teamColor });
+      if (hit > 0) {
+        g.rect(sx - size / 2, sy - size / 2, size, size);
+        g.fill({ color: 0xffffff, alpha: 0.45 * hit });
+      }
 
       if (e.isMain) {
         // 본진은 안쪽에 표식을 하나 더 둬서 확장과 즉시 구분되게 한다
@@ -848,6 +899,8 @@ export class Renderer {
     // 아래쪽(= y가 큰) 것이 위에 그려져야 겹침이 자연스럽다
     sp.zIndex = Math.round(y);
     sp.alpha = 1;
+    // 풀에서 재사용되므로 피격 틴트가 다음 사용자에게 묻지 않게 되돌린다
+    sp.tint = 0xffffff;
     sp.visible = true;
     return sp;
   }
@@ -900,6 +953,12 @@ export class Renderer {
   private readonly animState = new Map<number, { name: string; startMs: number }>();
   /** 직전에 본 공격 쿨다운 — 올라가면 방금 쏜 것이다 */
   private readonly prevCd = new Map<number, number>();
+  /** 직전에 본 hp — 내려가면 방금 맞은 것이다 (피격 플래시) */
+  private readonly lastHp = new Map<number, number>();
+  /** 엔티티별 피격 플래시가 꺼지는 시각(ms) */
+  private readonly flashUntil = new Map<number, number>();
+  /** 화면 흔들림이 끝나는 시각(ms) — 죽음 이펙트가 갱신한다 */
+  private shakeUntil = 0;
 
   advanceAnimations(deltaMs: number): void {
     this.nowMs += deltaMs;
@@ -996,6 +1055,9 @@ export class Renderer {
       this.fxList.length = 0;
       this.tracers.length = 0;
       this.decals.length = 0;
+      this.lastHp.clear();
+      this.flashUntil.clear();
+      this.shakeUntil = 0;
     }
     this.fxLastTick = state.tick;
 
@@ -1047,6 +1109,9 @@ export class Renderer {
         PX_PER_TILE * 1.3,
       );
       this.onFx?.('death', seen.faction, seen.sx);
+      // 죽음의 무게 — 130ms의 미세한 화면 흔들림. 이미 흔들리는 중이면
+      // 연장만 한다 (대군 전멸에서 진폭이 누적되면 멀미가 된다)
+      this.shakeUntil = Math.max(this.shakeUntil, this.nowMs + 130);
       // 지상 유닛은 그을음을 남긴다 — 전투의 역사가 잠시 땅에 쓰인다
       if (!seen.flying) {
         if (this.decals.length >= 60) this.decals.shift();
@@ -1145,6 +1210,8 @@ export class Renderer {
     for (const id of this.prevCd.keys()) if (!live.has(id)) this.prevCd.delete(id);
     for (const id of this.vfacing.keys()) if (!live.has(id)) this.vfacing.delete(id);
     for (const id of this.facing.keys()) if (!live.has(id)) this.facing.delete(id);
+    for (const id of this.lastHp.keys()) if (!live.has(id)) this.lastHp.delete(id);
+    for (const id of this.flashUntil.keys()) if (!live.has(id)) this.flashUntil.delete(id);
   }
 
   /** 건설·배치 진행 게이지 — 노란 바가 차오른다 */
