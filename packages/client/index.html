@@ -380,8 +380,14 @@
       position: fixed; inset: 0;
       /* 배경 일러스트 훅 — art/lobby.png가 도착하면 자동 반영, 없으면
          그라데이션만 남는다. 위 어둠막이 UI 가독성을 지킨다 */
+      /* 중앙(UI 자리)만 어둡고 가장자리는 일러스트가 숨쉬게 */
       background:
-        linear-gradient(rgba(6, 10, 20, 0.78), rgba(6, 10, 20, 0.9)),
+        radial-gradient(
+          ellipse 62% 55% at 50% 46%,
+          rgba(6, 10, 20, 0.78) 0%,
+          rgba(6, 10, 20, 0.5) 60%,
+          rgba(6, 10, 20, 0.28) 100%
+        ),
         url('/art/lobby.png') center / cover no-repeat,
         #0b1220;
       display: grid; place-content: center; justify-items: center;
