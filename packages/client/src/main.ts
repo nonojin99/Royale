@@ -393,7 +393,11 @@ function buildMapPicker(): void {
   for (const m of MAPS) {
     const el = document.createElement('button');
     el.className = 'faction mappick';
-    el.innerHTML = `<span class="fname"></span><span class="ftag"></span>`;
+    el.innerHTML =
+      `<span class="mthumb"></span><span class="mtext">` +
+      `<span class="fname"></span><span class="ftag"></span></span>`;
+    el.querySelector<HTMLElement>('.mthumb')!.style.backgroundImage =
+      `url('${import.meta.env.BASE_URL}art/maps/${m.id}.png')`;
     el.querySelector<HTMLElement>('.fname')!.textContent = m.name;
     el.querySelector<HTMLElement>('.ftag')!.textContent = m.tagline;
     el.addEventListener('click', () => {
@@ -419,12 +423,30 @@ function buildFactionPicker(): void {
   const root = $('faction-picker');
   root.replaceChildren();
 
+  // 종족의 얼굴 — 시작 유닛의 초상을 카드 오른쪽에 얹는다 (인게임 아트 재사용)
+  const FACTION_FACE: Record<string, string> = {
+    steel: 'rifleman',
+    swarmhive: 'gnawer',
+    covenant: 'zealot',
+  };
   for (const id of FACTION_IDS) {
     const f = getFaction(id);
     const el = document.createElement('button');
     el.className = 'faction';
     el.style.setProperty('--f-color', hex(f.color));
-    el.innerHTML = `<span class="fname"></span><span class="ftag"></span>`;
+    el.innerHTML =
+      `<span class="fface"></span>` +
+      `<span class="fname"></span><span class="ftag"></span>`;
+    const face = el.querySelector<HTMLElement>('.fface')!;
+    const unit = FACTION_FACE[id];
+    if (unit) {
+      // 5프레임 스트립의 0번 프레임만 확대해 보여주는 배경 트릭 (nodeIcon과 동일)
+      const w = 64 * 2.1;
+      face.style.backgroundImage =
+        `url('${import.meta.env.BASE_URL}art/units/${unit}.walk.png')`;
+      face.style.backgroundSize = `${w * 5}px ${w}px`;
+      face.style.backgroundPosition = `${(64 - w) / 2}px ${(64 - w) * 0.25}px`;
+    }
     el.querySelector<HTMLElement>('.fname')!.textContent = f.name;
     el.querySelector<HTMLElement>('.ftag')!.textContent = f.tagline;
     el.addEventListener('click', () => {

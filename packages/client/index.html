@@ -454,7 +454,28 @@
     #btn-solo-start:active { transform: translateY(1px); }
     #btn-solo-start.hidden { display: none; }
     #room-map.hidden { display: none; }
-    .faction.mappick { border-left-color: var(--mineral); }
+    .faction.mappick {
+      border-left-color: var(--mineral);
+      display: flex; align-items: center; gap: 12px; text-align: left;
+    }
+    .mthumb {
+      flex: 0 0 64px; width: 64px; height: 64px;
+      background-size: cover; background-position: center;
+      clip-path: var(--cut-sm);
+      box-shadow: inset 0 0 0 1px rgba(34,211,238,.35);
+      image-rendering: pixelated;
+    }
+    .faction.mappick.selected .mthumb { box-shadow: inset 0 0 0 2px var(--mineral); }
+    .mtext { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .fface {
+      position: absolute; right: 10px; top: 50%; width: 64px; height: 64px;
+      transform: translateY(-50%);
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      filter: drop-shadow(0 0 8px color-mix(in srgb, var(--f-color, #38bdf8) 55%, transparent));
+      opacity: .5; pointer-events: none;
+    }
+    .faction.selected .fface { opacity: 1; }
     #pvp-row { display: flex; gap: 8px; width: min(360px, 88vw); margin-top: 8px; }
     #pvp-row button {
       flex: 1; padding: 11px 8px; font-weight: 700;
@@ -516,6 +537,12 @@
       font-family: var(--font-pixel);
       clip-path: var(--cut);
       border-radius: 0 !important;
+      position: relative;
+      background:
+        linear-gradient(100deg,
+          color-mix(in srgb, var(--f-color, #38bdf8) 16%, transparent) 0%,
+          transparent 45%),
+        var(--panel);
       --f-color: #64748b;
       background: var(--panel);
       border: 2px solid var(--line);
