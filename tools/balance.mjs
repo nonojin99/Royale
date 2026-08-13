@@ -138,13 +138,14 @@ function research(s, team, spare = BASE_BUILD_COST, preferDefense = false) {
 }
 
 /** wantCheap이면 싼 것(물량), 아니면 비싼 것(질). 건물은 buildDefense 전용 */
-function produce(s, team, rng, { reserve = 0, cheap = false, defend = false } = {}) {
+function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, only = null } = {}) {
   const me = s.players[team];
   const bases = ownBasePositions(s, team);
   if (!bases.length) return null;
   let best = null;
   let bestCost = cheap ? Infinity : -1;
   for (const id of me.unlocked) {
+    if (only && id !== only) continue;
     if (!isUnlocked(me, id)) continue;
     const u = getUnit(id);
     if (u.kind !== 'unit') continue; // 건물은 명시적 웅크림 채널로만
@@ -247,6 +248,23 @@ function observe(s, team) {
   };
 }
 
+/** 종족별 공중 테크 경로 — 선행 1단계 → 공중 2단계 */
+const AIR_PATH = {
+  steel: ['ironwalker', 'gunship'],
+  swarmhive: ['burrower', 'wingswarm'],
+  covenant: ['mystic', 'skiff'],
+};
+
+/** 특정 노드를 향해 곧장 연구한다 */
+function researchToward(s, team, target) {
+  const me = s.players[team];
+  if (me.research || isUnlocked(me, target)) return null;
+  if (!canResearch(me, target)) return null;
+  const node = getFaction(me.faction).tech.find((n) => n.unit === target);
+  if (!node || me.minerals < node.cost * MINERAL_SCALE) return null;
+  return { kind: 'tech', id: target, x: 0, y: 0 };
+}
+
 const STRATS = {
   // 진짜 올인도 최소한의 경제는 깐다 — 일꾼 4기까지만 (기본 2기로는
   // 2코스트 유닛 하나에 8초가 걸려 러시 자체가 성립하지 않는다)
@@ -287,6 +305,25 @@ const STRATS = {
             ? BASE_BUILD_COST
             : 4 * MINERAL_SCALE,
         defend: !t2 || armyCost(s, team) < 24 * MINERAL_SCALE,
+      })
+    );
+  },
+  // 공중 몰빵 — 포탑 뒤에서 공중 테크 직행, 뜨면 공중만 뽑는다.
+  // 협곡·바다가 공중에게 준 지름길과 섬 견제가 승률로 환산되는지 실측용
+  AIR: (s, team, rng) => {
+    const me = s.players[team];
+    const [t1, t2] = AIR_PATH[me.faction];
+    const airReady = isUnlocked(me, t2);
+    return (
+      buildDefense(s, team, rng, 1) ??
+      trainWorker(s, team) ??
+      buildDefense(s, team, rng) ??
+      researchToward(s, team, isUnlocked(me, t1) ? t2 : t1) ??
+      (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
+      produce(s, team, rng, {
+        reserve: airReady ? 0 : 4 * MINERAL_SCALE,
+        only: airReady ? t2 : null,
+        defend: !airReady,
       })
     );
   },
@@ -402,6 +439,25 @@ if (args.includes('--trace')) {
     }
   }
   console.log(`승자: ${s.winner === -1 ? '무승부' : (s.winner === 0 ? a : b)} (${(s.tick / 20).toFixed(0)}초)`);
+  process.exit(0);
+}
+
+/* ── 공중 가치 실측 (--air) ────────────────────────────────────────────── */
+
+if (args.includes('--air')) {
+  console.log(`\n공중 몰빵(AIR) vs 지상 전략들 — 시드 ${SEEDS} × 종족 3 × 진영 2`);
+  for (const foe of ['RUSH', 'GREED', 'TECH', 'BAL']) {
+    let aw = 0;
+    let bw = 0;
+    for (const faction of FACTIONS) {
+      for (let i = 0; i < SEEDS; i++) {
+        const r = series('AIR', foe, faction, 7000 + i * 31);
+        aw += r.aw;
+        bw += r.bw;
+      }
+    }
+    console.log(`AIR vs ${foe.padEnd(5)}  ${aw}:${bw} (${((100 * aw) / Math.max(1, aw + bw)).toFixed(0)}%)`);
+  }
   process.exit(0);
 }
 

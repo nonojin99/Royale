@@ -628,6 +628,7 @@ export class Renderer {
     d.clear();
     this.resetLabels();
     this.pruneAnimState(state);
+    this.drawDecals(g); // 유닛보다 먼저 = 유닛 아래 — 데칼은 땅의 일부다
 
     for (const e of state.entities) {
       const p = prev.get(e.id);
@@ -941,8 +942,22 @@ export class Renderer {
   /** 발사 감지용 — frameFor의 prevCd와 별도로 둬서 서로 간섭하지 않는다 */
   private readonly fxPrevCd = new Map<number, number>();
   /** 직전 프레임에 살아 있던 엔티티 — 사라지면 그 자리에 죽음 이펙트 */
-  private readonly fxSeen = new Map<number, { sx: number; sy: number; faction: string }>();
+  private readonly fxSeen = new Map<
+    number,
+    { sx: number; sy: number; faction: string; flying: boolean }
+  >();
   private fxLastTick = -1;
+  /** 원거리 사격의 히트스캔 트레이서 — 120ms 섬광 한 줄 */
+  private readonly tracers: Array<{
+    ax: number;
+    ay: number;
+    bx: number;
+    by: number;
+    color: number;
+    startMs: number;
+  }> = [];
+  /** 죽음 데칼 — 지상 유닛이 쓰러진 자리의 그을음. 8초에 걸쳐 스며 사라진다 */
+  private readonly decals: Array<{ sx: number; sy: number; startMs: number }> = [];
 
   /**
    * 시뮬 상태의 변화(발사·죽음)를 보고 이펙트를 만든다.
@@ -959,6 +974,8 @@ export class Renderer {
       this.fxPrevCd.clear();
       this.fxSeen.clear();
       this.fxList.length = 0;
+      this.tracers.length = 0;
+      this.decals.length = 0;
     }
     this.fxLastTick = state.tick;
 
@@ -976,6 +993,24 @@ export class Renderer {
       const lift = victim.flying ? PX_PER_TILE * 0.55 : 0;
       this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
       this.onFx?.('impact', faction, sx);
+
+      // 원거리 사격은 히트스캔 트레이서 한 줄 — 데미지가 즉시 들어가는
+      // 시뮬과 어긋나지 않는 유일한 '투사체'다 (비행 투사체는 거짓말이 된다)
+      const [ax, ay0] = this.toScreen(e.x, e.y, myTeam);
+      const ay = ay0 - (e.flying ? PX_PER_TILE * 0.55 : 0) - PX_PER_TILE * 0.3;
+      const ddx = sx - ax;
+      const ddy = sy - lift - ay;
+      if (ddx * ddx + ddy * ddy > PX_PER_TILE * 1.8 * (PX_PER_TILE * 1.8)) {
+        if (this.tracers.length >= 40) this.tracers.shift();
+        this.tracers.push({
+          ax,
+          ay,
+          bx: sx,
+          by: sy - lift,
+          color: FX_COLOR[faction] ?? 0xffffff,
+          startMs: this.nowMs,
+        });
+      }
     }
 
     // 지난 프레임엔 있었는데 지금 없다 = 죽었다. 마지막 자리에 연기를 남긴다
@@ -992,10 +1027,20 @@ export class Renderer {
         PX_PER_TILE * 1.3,
       );
       this.onFx?.('death', seen.faction, seen.sx);
+      // 지상 유닛은 그을음을 남긴다 — 전투의 역사가 잠시 땅에 쓰인다
+      if (!seen.flying) {
+        if (this.decals.length >= 60) this.decals.shift();
+        this.decals.push({ sx: seen.sx, sy: seen.sy, startMs: this.nowMs });
+      }
     }
     for (const e of state.entities) {
       const [sx, sy] = this.toScreen(e.x, e.y, myTeam);
-      this.fxSeen.set(e.id, { sx, sy, faction: state.players[e.team].faction });
+      this.fxSeen.set(e.id, {
+        sx,
+        sy,
+        faction: state.players[e.team].faction,
+        flying: e.flying,
+      });
     }
   }
 
@@ -1020,7 +1065,37 @@ export class Renderer {
     });
   }
 
+  private drawDecals(g: Graphics): void {
+    for (let i = this.decals.length - 1; i >= 0; i--) {
+      const dc = this.decals[i];
+      const t = (this.nowMs - dc.startMs) / 8000;
+      if (t >= 1) {
+        this.decals.splice(i, 1);
+        continue;
+      }
+      // 살짝 번지며 옅어진다 — 처음부터 흐릿해야 시체가 아니라 흔적으로 읽힌다
+      const r = PX_PER_TILE * (0.45 + 0.15 * t);
+      g.ellipse(dc.sx, dc.sy + 2, r, r * 0.45);
+      g.fill({ color: 0x120d08, alpha: 0.26 * (1 - t) });
+    }
+  }
+
   private drawFx(d: Graphics): void {
+    // 트레이서 — 꼬리부터 사라지는 섬광. 잔상의 방향이 곧 사선(射線)이다
+    for (let i = this.tracers.length - 1; i >= 0; i--) {
+      const tr = this.tracers[i];
+      const t = (this.nowMs - tr.startMs) / 120;
+      if (t >= 1) {
+        this.tracers.splice(i, 1);
+        continue;
+      }
+      const x0 = tr.ax + (tr.bx - tr.ax) * t * 0.7;
+      const y0 = tr.ay + (tr.by - tr.ay) * t * 0.7;
+      d.moveTo(x0, y0);
+      d.lineTo(tr.bx, tr.by);
+      d.stroke({ width: 1.5, color: tr.color, alpha: 0.65 * (1 - t) });
+    }
+
     for (let i = this.fxList.length - 1; i >= 0; i--) {
       const f = this.fxList[i];
       const t = (this.nowMs - f.startMs) / f.durMs;
