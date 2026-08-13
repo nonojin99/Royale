@@ -17,6 +17,9 @@ importers:
       '@royale/shared':
         specifier: workspace:*
         version: link:../shared
+      galmuri:
+        specifier: ^2.40.3
+        version: 2.40.3
       pixi.js:
         specifier: ^8.6.6
         version: 8.19.0
@@ -576,6 +579,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  galmuri@2.40.3:
+    resolution: {integrity: sha512-eXflXih1AWy2J+jWeT5sGVj4PUCb1bMK7lnwKDKMzEd3lx+F6myuxqp6c0eZlD7EMXOicUYaM+FH7DAoQ7mWbw==}
+
   gifuct-js@2.1.2:
     resolution: {integrity: sha512-rI2asw77u0mGgwhV3qA+OEgYqaDn5UNqgs+Bx0FGwSpuqfYn+Ir6RQY5ENNQ8SbIiG/m5gVa7CD5RriO4f4Lsg==}
 
@@ -1018,6 +1024,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  galmuri@2.40.3: {}
 
   gifuct-js@2.1.2:
     dependencies:
