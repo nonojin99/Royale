@@ -17,6 +17,10 @@ export class Conn {
   mapId: string | undefined;
   team: 0 | 1 = 0;
   match: Match | null = null;
+  /** 속한 방 코드. 없으면 null */
+  roomCode: string | null = null;
+  /** 방에서 준비 완료를 눌렀나 (손님만 의미) */
+  ready = false;
   /** 연속 데스싱크 횟수 (진단용) */
   desyncs = 0;
   alive = true;

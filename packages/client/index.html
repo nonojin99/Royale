@@ -390,6 +390,38 @@
     #map-picker { display: flex; flex-direction: column; gap: 8px; width: min(360px, 88vw); }
     #lobby-label { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .08em; margin-top: 10px; }
     .faction.mappick { border-left-color: var(--mineral); }
+    #pvp-row { display: flex; gap: 8px; width: min(360px, 88vw); margin-top: 8px; }
+    #pvp-row button {
+      flex: 1; padding: 10px 8px; border-radius: 10px; font-weight: 700;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer;
+    }
+    #btn-create { border-color: var(--mineral); color: var(--mineral); }
+    #join-code {
+      width: 84px; text-align: center; text-transform: uppercase;
+      font-weight: 800; letter-spacing: .2em;
+      background: #0f172a; border: 1px solid var(--line); border-radius: 10px; color: var(--text);
+    }
+    #room-panel {
+      width: min(360px, 88vw); margin-top: 12px; padding: 14px;
+      border: 1px solid var(--mineral); border-radius: 12px; background: var(--panel);
+      display: flex; flex-direction: column; gap: 10px; align-items: center;
+    }
+    #room-panel.hidden { display: none; }
+    #room-code-label { font-size: 11px; color: var(--muted); }
+    #room-code { font-size: 34px; font-weight: 900; letter-spacing: .35em; color: var(--mineral); }
+    #room-map { font-size: 12px; color: var(--muted); }
+    #room-players { display: flex; flex-direction: column; gap: 6px; width: 100%; font-size: 13px; }
+    .room-p { display: flex; justify-content: space-between; padding: 7px 10px; background: #0f172a; border-radius: 8px; }
+    .room-p .rp-state { color: var(--muted); }
+    .room-p.ready .rp-state { color: #4ade80; font-weight: 700; }
+    #btn-ready, #btn-start-room {
+      width: 100%; padding: 11px; border: none; border-radius: 999px;
+      font-weight: 800; font-size: 14px; color: #fff; cursor: pointer;
+      background: linear-gradient(135deg, #38bdf8, #6366f1);
+    }
+    #btn-ready.on { background: linear-gradient(135deg, #34d399, #059669); }
+    #btn-start-room:disabled { opacity: .4; cursor: default; }
+    #btn-ready.hidden, #btn-start-room.hidden { display: none; }
     .faction {
       --f-color: #64748b;
       background: var(--panel);
@@ -522,7 +554,20 @@
     <div id="map-picker"></div>
     <div id="faction-detail"></div>
     <input id="name" maxlength="20" placeholder="닉네임" value="플레이어" />
-    <button id="start">시작</button>
+    <button id="start">봇과 연습</button>
+    <div id="pvp-row">
+      <button id="btn-create">방 만들기</button>
+      <input id="join-code" maxlength="4" placeholder="코드" />
+      <button id="btn-join">참가</button>
+    </div>
+    <div id="room-panel" class="hidden">
+      <div id="room-code-label">방 코드 — 상대에게 알려주세요</div>
+      <div id="room-code"></div>
+      <div id="room-map"></div>
+      <div id="room-players"></div>
+      <button id="btn-ready" class="hidden">준비</button>
+      <button id="btn-start-room" class="hidden" disabled>경기 시작</button>
+    </div>
     <div id="over-actions" class="hidden"></div>
     <div id="status"></div>
   </div>

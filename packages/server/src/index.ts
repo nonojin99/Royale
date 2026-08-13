@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import { WebSocketServer } from 'ws';
 
-import { ClientMsg, FACTION_IDS, Replay, TICK_MS, Team, getFaction } from '@royale/shared';
+import { ClientMsg, DEFAULT_MAP_ID, FACTION_IDS, Replay, TICK_MS, Team, getFaction, getMap } from '@royale/shared';
 
 import { Conn } from './conn.js';
 import { Match } from './match.js';
@@ -24,7 +24,6 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 const REPLAY_DIR = process.env.REPLAY_DIR;
 
 /** 대기열 (선착순 2명씩 매칭) */
-const queue: Conn[] = [];
 /** 진행 중인 매치 */
 const matches = new Set<Match>();
 const replays = new ReplayStore(Number(process.env.REPLAY_KEEP ?? 50), REPLAY_DIR);
@@ -58,7 +57,7 @@ const http = createServer((req, res) => {
     sendJson(res, 200, {
       ok: true,
       matches: matches.size,
-      queued: queue.length,
+      queued: 0, // 익명 대기열 은퇴 (라운드 11 ③ — 방 흐름으로 일원화)
       replays: replays.size,
       uptime: Math.floor(process.uptime()),
     });
@@ -106,8 +105,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     conn.alive = false;
-    const i = queue.indexOf(conn);
-    if (i >= 0) queue.splice(i, 1);
+    leaveRoom(conn);
     if (conn.match) {
       conn.match.onLeave(conn);
       matches.delete(conn.match);
@@ -118,6 +116,66 @@ wss.on('connection', (ws, req) => {
     /* close 핸들러가 정리한다 */
   });
 });
+
+/**
+ * 방 — 방장이 만들고 코드를 공유하면 손님이 참가한다.
+ * 손님이 준비를 누르고 방장이 시작을 눌러야 경기가 열린다 (라운드 11 ③).
+ */
+interface Room {
+  code: string;
+  host: Conn;
+  guest: Conn | null;
+}
+const rooms = new Map<string, Room>();
+
+function roomCode(): string {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 헷갈리는 글자(I/L/O/0/1) 제외
+  for (;;) {
+    let c = '';
+    for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
+    if (!rooms.has(c)) return c;
+  }
+}
+
+function broadcastRoom(room: Room): void {
+  for (const c of [room.host, room.guest]) {
+    if (!c) continue;
+    c.send({
+      t: 'room-state',
+      code: room.code,
+      host: c === room.host,
+      mapId: getMap(room.host.mapId ?? DEFAULT_MAP_ID).id,
+      players: [room.host, room.guest]
+        .filter((p): p is Conn => p !== null)
+        .map((p) => ({
+          name: p.name,
+          factionId: p.factionId,
+          ready: p === room.host ? true : p.ready,
+          host: p === room.host,
+        })),
+    });
+  }
+}
+
+function leaveRoom(conn: Conn): void {
+  if (!conn.roomCode) return;
+  const room = rooms.get(conn.roomCode);
+  conn.roomCode = null;
+  conn.ready = false;
+  if (!room) return;
+  if (room.host === conn) {
+    // 방장이 나가면 방이 사라진다
+    rooms.delete(room.code);
+    if (room.guest) {
+      room.guest.roomCode = null;
+      room.guest.ready = false;
+      room.guest.send({ t: 'opponent-left' });
+    }
+  } else if (room.guest === conn) {
+    room.guest = null;
+    broadcastRoom(room);
+  }
+}
 
 function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
   switch (msg.t) {
@@ -134,9 +192,70 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
         matches.add(new Match(conn, null, botFaction, saveReplay));
         return;
       }
-      queue.push(conn);
-      conn.send({ t: 'queued' });
-      tryMatch();
+      // 2인전은 방(만들기/코드 참가)으로만 성립한다 — 익명 대기열은
+      // 방·준비·시작 흐름 도입(라운드 11 ③)과 함께 은퇴했다.
+      // hello는 신원 등록까지만 하고, 다음 수는 create-room/join-room이다
+      return;
+    }
+
+    case 'create-room': {
+      if (conn.match || conn.roomCode) {
+        conn.send({ t: 'room-error', reason: 'already-in-room' });
+        return;
+      }
+      const room: Room = { code: roomCode(), host: conn, guest: null };
+      rooms.set(room.code, room);
+      conn.roomCode = room.code;
+      broadcastRoom(room);
+      return;
+    }
+
+    case 'join-room': {
+      if (conn.match || conn.roomCode) {
+        conn.send({ t: 'room-error', reason: 'already-in-room' });
+        return;
+      }
+      const room = rooms.get(String(msg.code ?? '').toUpperCase());
+      if (!room) {
+        conn.send({ t: 'room-error', reason: 'no-room' });
+        return;
+      }
+      if (room.guest) {
+        conn.send({ t: 'room-error', reason: 'full' });
+        return;
+      }
+      room.guest = conn;
+      conn.roomCode = room.code;
+      conn.ready = false;
+      broadcastRoom(room);
+      return;
+    }
+
+    case 'ready': {
+      const room = conn.roomCode ? rooms.get(conn.roomCode) : null;
+      if (!room || room.guest !== conn) return;
+      conn.ready = Boolean(msg.ready);
+      broadcastRoom(room);
+      return;
+    }
+
+    case 'start-room': {
+      const room = conn.roomCode ? rooms.get(conn.roomCode) : null;
+      if (!room || room.host !== conn) {
+        conn.send({ t: 'room-error', reason: 'not-host' });
+        return;
+      }
+      if (!room.guest || !room.guest.ready) {
+        conn.send({ t: 'room-error', reason: 'not-ready' });
+        return;
+      }
+      // 방장 = 팀 0, 방장의 맵 선택이 적용된다 (Match가 a.mapId를 읽는다)
+      const host = room.host;
+      const guest = room.guest;
+      rooms.delete(room.code);
+      host.roomCode = null;
+      guest.roomCode = null;
+      matches.add(new Match(host, guest, undefined, saveReplay));
       return;
     }
 
@@ -173,22 +292,6 @@ function saveReplay(r: Replay): void {
   );
 }
 
-function tryMatch(): void {
-  while (queue.length >= 2) {
-    const a = queue.shift()!;
-    const b = queue.shift()!;
-    if (!a.alive) {
-      if (b.alive) queue.unshift(b);
-      continue;
-    }
-    if (!b.alive) {
-      queue.unshift(a);
-      continue;
-    }
-    matches.add(new Match(a, b, undefined, saveReplay));
-    console.log(`[match] ${a.name} vs ${b.name}`);
-  }
-}
 
 /**
  * 전역 틱 루프.

@@ -46,7 +46,29 @@ export interface CPing {
   ts: number;
 }
 
-export type ClientMsg = CHello | CAct | CHash | CPing;
+/** 방 만들기 — 보낸 사람이 방장이 된다. hello 이후에 보낸다 */
+export interface CCreateRoom {
+  t: 'create-room';
+}
+
+/** 코드로 방 참가 */
+export interface CJoinRoom {
+  t: 'join-room';
+  code: string;
+}
+
+/** 준비 토글 (손님 전용) */
+export interface CReady {
+  t: 'ready';
+  ready: boolean;
+}
+
+/** 경기 시작 (방장 전용, 손님이 준비 상태여야 한다) */
+export interface CStartRoom {
+  t: 'start-room';
+}
+
+export type ClientMsg = CHello | CAct | CHash | CPing | CCreateRoom | CJoinRoom | CReady | CStartRoom;
 
 /* ── 서버 → 클라이언트 ─────────────────────────────────────────────────── */
 
@@ -120,7 +142,29 @@ export interface SOpponentLeft {
   t: 'opponent-left';
 }
 
+/** 방 상태 — 만들기/참가/준비/퇴장 때마다 양쪽에 브로드캐스트 */
+export interface SRoomState {
+  t: 'room-state';
+  code: string;
+  /** 이 클라이언트가 방장인가 */
+  host: boolean;
+  mapId: string;
+  players: {
+    name: string;
+    factionId: string;
+    ready: boolean;
+    host: boolean;
+  }[];
+}
+
+export interface SRoomError {
+  t: 'room-error';
+  reason: 'no-room' | 'full' | 'not-host' | 'not-ready' | 'already-in-room';
+}
+
 export type ServerMsg =
+  | SRoomState
+  | SRoomError
   | SQueued
   | SMatch
   | SCmd

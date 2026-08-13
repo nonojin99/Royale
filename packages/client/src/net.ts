@@ -14,6 +14,7 @@
 import {
   Command,
   CommandKind,
+  SRoomState,
   GameState,
   HASH_INTERVAL,
   SIM_DELAY_TICKS,
@@ -49,6 +50,9 @@ export interface NetEvents {
     replayId?: string,
   ) => void;
   onOpponentLeft?: () => void;
+  /** 방 상태 갱신 (만들기/참가/준비/퇴장) */
+  onRoomState?: (st: SRoomState) => void;
+  onRoomError?: (reason: string) => void;
   onReject?: (reason: string) => void;
   /** 시뮬이 한 틱 진행되기 직전에 호출 (보간용 이전 위치 스냅샷) */
   onBeforeStep?: (s: GameState) => void;
@@ -77,14 +81,22 @@ export class NetClient {
     private readonly events: NetEvents = {},
   ) {}
 
-  connect(name: string, factionId: string, mapId?: string): void {
-    const ws = new WebSocket(this.url);
+  connect(
+    name: string,
+    factionId: string,
+    mapId?: string,
+    opts?: { solo?: boolean; onOpen?: () => void },
+  ): void {
+    let url = this.url;
+    if (opts?.solo) url += (url.includes('?') ? '&' : '?') + 'solo=1';
+    const ws = new WebSocket(url);
     this.ws = ws;
 
     ws.onopen = () => {
       this.send({ t: 'hello', name, factionId, mapId });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
+      opts?.onOpen?.();
     };
 
     ws.onmessage = (ev) => {
@@ -115,6 +127,14 @@ export class NetClient {
     switch (msg.t) {
       case 'queued':
         this.events.onQueued?.();
+        return;
+
+      case 'room-state':
+        this.events.onRoomState?.(msg);
+        return;
+
+      case 'room-error':
+        this.events.onRoomError?.(msg.reason);
         return;
 
       case 'match': {
@@ -199,6 +219,22 @@ export class NetClient {
   }
 
   /** 행동 요청 — 유닛 생산 / 기지 건설 / 테크 해금 */
+  createRoom(): void {
+    this.send({ t: 'create-room' });
+  }
+
+  joinRoom(code: string): void {
+    this.send({ t: 'join-room', code });
+  }
+
+  setReady(ready: boolean): void {
+    this.send({ t: 'ready', ready });
+  }
+
+  startRoom(): void {
+    this.send({ t: 'start-room' });
+  }
+
   act(kind: CommandKind, id: string, x = 0, y = 0): void {
     if (!this.state) return;
     this.send({

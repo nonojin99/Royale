@@ -82,7 +82,7 @@ let cursor: [number, number] | null = null;
 const prevPos = new Map<number, [number, number]>();
 let lastFrameMs = performance.now();
 
-const net = new NetClient(withSolo(serverUrl()), {
+const net = new NetClient(serverUrl(), {
   onQueued: () => setStatus('상대를 찾는 중…'),
   onMatch: (_team, opponent) => {
     setStatus('');
@@ -108,6 +108,11 @@ const net = new NetClient(withSolo(serverUrl()), {
     stopOnboarding();
     showOverlay('상대가 나갔습니다', '');
     showOverActions();
+  },
+  onRoomState: (st) => renderRoom(st),
+  onRoomError: (reason) => {
+    setStatus(roomErrorText(reason));
+    lockLobby(false);
   },
   onReject: (reason) => {
     sound.play('error');
@@ -178,12 +183,44 @@ async function boot(): Promise<void> {
   buildFactionPicker();
   buildMapPicker();
 
+  // 봇전 — ?solo=1 없이도 언제나 솔로로 연결한다
   $('start').addEventListener('click', () => {
-    const name = ($('name') as HTMLInputElement).value.trim() || '플레이어';
-    net.connect(name, selectedFaction, selectedMap);
+    net.connect(playerName(), selectedFaction, selectedMap, { solo: true });
     setStatus('접속 중…');
-    ($('start') as HTMLButtonElement).disabled = true;
+    lockLobby(true);
   });
+
+  // 방 만들기 → 코드 공유 → 상대 준비 → 방장 시작 (라운드 11 ③)
+  $('btn-create').addEventListener('click', () => {
+    net.connect(playerName(), selectedFaction, selectedMap, {
+      onOpen: () => net.createRoom(),
+    });
+    setStatus('방 만드는 중…');
+    lockLobby(true);
+  });
+
+  $('btn-join').addEventListener('click', () => {
+    const code = ($('join-code') as HTMLInputElement).value.trim().toUpperCase();
+    if (code.length !== 4) {
+      setStatus('4글자 방 코드를 입력하세요');
+      return;
+    }
+    net.connect(playerName(), selectedFaction, selectedMap, {
+      onOpen: () => net.joinRoom(code),
+    });
+    setStatus('참가 중…');
+    lockLobby(true);
+  });
+
+  $('btn-ready').addEventListener('click', () => {
+    myReady = !myReady;
+    net.setReady(myReady);
+    const b = $('btn-ready');
+    b.classList.toggle('on', myReady);
+    b.textContent = myReady ? '준비 완료 ✓ (누르면 취소)' : '준비';
+  });
+
+  $('btn-start-room').addEventListener('click', () => net.startRoom());
 
   $('btn-base').addEventListener('click', toggleBaseMode);
   $('btn-upgrade').addEventListener('click', requestUpgrade);
@@ -234,6 +271,67 @@ async function boot(): Promise<void> {
   });
 
   requestAnimationFrame(frame);
+}
+
+function playerName(): string {
+  return ($('name') as HTMLInputElement).value.trim() || '플레이어';
+}
+
+/** 로비 입력 잠금 — 접속이 시작되면 중복 클릭을 막는다 */
+function lockLobby(lock: boolean): void {
+  for (const id of ['start', 'btn-create', 'btn-join']) {
+    ($(id) as HTMLButtonElement).disabled = lock;
+  }
+}
+
+let myReady = false;
+
+function roomErrorText(reason: string): string {
+  switch (reason) {
+    case 'no-room': return '그 코드의 방이 없습니다';
+    case 'full': return '방이 가득 찼습니다';
+    case 'not-ready': return '상대가 아직 준비하지 않았습니다';
+    case 'not-host': return '방장만 시작할 수 있습니다';
+    case 'already-in-room': return '이미 방에 있습니다';
+    default: return '방 오류';
+  }
+}
+
+/** 방 상태를 로비에 그린다 — 코드·맵·참가자·준비 상태 */
+function renderRoom(st: { code: string; host: boolean; mapId: string;
+  players: { name: string; factionId: string; ready: boolean; host: boolean }[] }): void {
+  setStatus('');
+  $('room-panel').classList.remove('hidden');
+  $('room-code').textContent = st.code;
+  const map = MAPS.find((m) => m.id === st.mapId);
+  $('room-map').textContent = `맵: ${map?.name ?? st.mapId}` + (st.host ? '' : ' (방장 선택)');
+
+  const list = $('room-players');
+  list.replaceChildren();
+  for (const p of st.players) {
+    const row = document.createElement('div');
+    row.className = 'room-p' + (p.ready ? ' ready' : '');
+    const f = getFaction(p.factionId);
+    row.innerHTML = `<span></span><span class="rp-state"></span>`;
+    row.querySelector('span')!.textContent = `${p.host ? '👑 ' : ''}${p.name} (${f.name})`;
+    row.querySelector<HTMLElement>('.rp-state')!.textContent =
+      p.host ? '방장' : p.ready ? '준비 완료' : '대기 중';
+    list.appendChild(row);
+  }
+  if (st.players.length < 2) {
+    const row = document.createElement('div');
+    row.className = 'room-p';
+    row.innerHTML = `<span>상대를 기다리는 중…</span><span class="rp-state">코드를 공유하세요</span>`;
+    list.appendChild(row);
+  }
+
+  const readyBtn = $('btn-ready') as HTMLButtonElement;
+  const startBtn = $('btn-start-room') as HTMLButtonElement;
+  readyBtn.classList.toggle('hidden', st.host);
+  startBtn.classList.toggle('hidden', !st.host);
+  const guestReady = st.players.some((p) => !p.host && p.ready);
+  startBtn.disabled = !guestReady;
+  startBtn.textContent = guestReady ? '경기 시작' : '상대의 준비를 기다리는 중…';
 }
 
 /** 캔버스를 남는 높이에 맞춘다 (패널 높이를 실측한다) */
