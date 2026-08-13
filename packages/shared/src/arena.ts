@@ -269,8 +269,11 @@ const RIFT_SITES: readonly BaseSite[] = [
   { id: 0, x: tiles(42), y: tiles(5), startFor: 1, label: '북동 본진' },
   { id: 1, x: tiles(32), y: tiles(5), startFor: -1, label: '북동 앞마당' },
   { id: 2, x: tiles(42), y: tiles(15), startFor: -1, label: '북동 남마당' },
-  { id: 3, x: tiles(26), y: tiles(16), startFor: -1, label: '북다리 어귀' },
-  { id: 4, x: tiles(21), y: tiles(31), startFor: -1, label: '남다리 어귀' },
+  // 다리 어귀 한 쌍은 서로 15타일(EXPAND_RANGE) 안에 있어야 사슬이 맵을
+  // 관통한다 — (26,16)/(21,31)이던 시절 15.8타일이라 필드 절반에서 확장이
+  // 끊겼다 (오너 실전 보고, 라운드 14.5)
+  { id: 3, x: tiles(26), y: tiles(17), startFor: -1, label: '북다리 어귀' },
+  { id: 4, x: tiles(21), y: tiles(30), startFor: -1, label: '남다리 어귀' },
   { id: 5, x: tiles(5), y: tiles(32), startFor: -1, label: '남서 북마당' },
   { id: 6, x: tiles(15), y: tiles(42), startFor: -1, label: '남서 앞마당' },
   { id: 7, x: tiles(5), y: tiles(42), startFor: 0, label: '남서 본진' },
