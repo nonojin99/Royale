@@ -50,6 +50,14 @@ const MAX_BASES = 4;
  * 버그다. 경제는 이 정도면 충분하고, 나머지 우선순위가 숨을 쉰다.
  */
 const MAX_WORKERS = 10;
+/**
+ * 방어 건물 상한.
+ *
+ * 없으면 봇이 가난할 때 "제일 싼 수 = 포탑 2코스트"만 무한히 두면서 확장도
+ * 병력도 잊는다 — 대협곡 실전에서 포탑 ~20개로 성을 쌓고 자기 램프까지
+ * 막아 본진을 스스로 섬으로 만든 사건의 원인이다 (라운드 15).
+ */
+const MAX_DEFENSES = 4;
 
 export interface BotMove {
   kind: CommandKind;
@@ -84,15 +92,27 @@ export class Bot {
     return move;
   }
 
-  /** 필드 위 병력의 총 코스트 (기지 제외) — 압박 판정용 */
+  /**
+   * 필드 위 **기동 병력**의 총 코스트 — 압박 판정용.
+   *
+   * 건물은 세지 않는다. 포탑을 병력으로 치면 봇이 포탑 성을 쌓는 것만으로
+   * "병력이 비슷하다"고 착각해 압박 모드가 뒤틀린다 (라운드 15).
+   */
   private armyCost(s: GameState, team: 0 | 1): number {
     let sum = 0;
     for (const e of s.entities) {
-      if (e.team !== team || e.kind === 'base') continue;
+      if (e.team !== team || e.kind !== 'unit') continue;
       const u = getUnit(e.unit);
       sum += (u.cost * MINERAL_SCALE) / Math.max(1, u.count);
     }
     return sum;
+  }
+
+  /** 살아 있는(건설 중 포함) 자기 방어 건물 수 */
+  private defenseCount(s: GameState): number {
+    let n = 0;
+    for (const e of s.entities) if (e.team === 1 && e.kind === 'building') n++;
+    return n;
   }
 
   /** 1순위: 일꾼 — 정원이 빌 때까지 채운다. 경제가 모든 것의 기반이다 */
@@ -179,6 +199,7 @@ export class Bot {
     if (bases.length === 0) return null;
 
     const reserve = this.reserveFor(s, me);
+    const defenses = this.defenseCount(s);
     let best: string | null = null;
     let bestCost = -1;
     for (const id of me.unlocked) {
@@ -187,6 +208,9 @@ export class Bot {
       // 주문은 자리 계산 없이 던지면 낭비다 — 봇 v1은 유닛·건물만 다룬다.
       // (방어 건물이 시작 해금되면서 여기로 들어온다 — 봇도 포탑을 깐다)
       if (u.kind === 'spell') continue;
+      // 포탑은 상한까지만 — 가난할 때 "제일 싼 수"로 무한히 두는 함정을 막고,
+      // 상한에 닿으면 null을 돌려 확장·저축 우선순위로 흘러가게 한다
+      if (u.kind === 'building' && defenses >= MAX_DEFENSES) continue;
       if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
       if (u.cost > bestCost) {
         bestCost = u.cost;
@@ -195,17 +219,31 @@ export class Bot {
     }
     if (!best) return null;
 
-    // 가장 앞선(=y가 큰) 기지 앞에 낸다 — 팀 1은 아래로 밀고 내려간다
+    // 전선 기지 = 적 본진에 가장 가까운 기지, 배치는 적 방향으로 민다.
+    // "y가 큰 기지 아래에 낸다"는 남북 대칭 맵의 가정이라, 대각 맵(대협곡)
+    // 에서는 본진 주머니 안에 쌓아 자기 램프를 막았다 (라운드 15)
+    const foe = BASE_SITES.find((b) => b.startFor === 0) ?? { x: 0, y: 0 };
     let front = bases[0];
-    for (const b of bases) if (b[1] > front[1]) front = b;
+    let bd = Infinity;
+    for (const b of bases) {
+      const d = (b[0] - foe.x) ** 2 + (b[1] - foe.y) ** 2;
+      if (d < bd) {
+        bd = d;
+        front = b;
+      }
+    }
+    const len = Math.max(1, Math.hypot(foe.x - front[0], foe.y - front[1]));
+    const push = DEPLOY_RADIUS * 0.55;
+    const cx = front[0] + ((foe.x - front[0]) / len) * push;
+    const cy = front[1] + ((foe.y - front[1]) / len) * push;
 
     const spread = DEPLOY_RADIUS / 2;
     for (let attempt = 0; attempt < 6; attempt++) {
-      const x = front[0] + nextInt(this.rng, spread * 2) - spread;
-      const y = front[1] + nextInt(this.rng, spread);
+      const x = cx + nextInt(this.rng, spread * 2) - spread;
+      const y = cy + nextInt(this.rng, spread * 2) - spread;
       if (canDeployAt(x, y, bases)) return { kind: 'unit', id: best, x, y };
     }
-    // 흩뿌리기가 전부 실패하면 기지 바로 위에 낸다
-    return { kind: 'unit', id: best, x: front[0], y: front[1] + 1000 };
+    // 흩뿌리기가 전부 실패하면 밀던 지점에 그대로 낸다
+    return { kind: 'unit', id: best, x: cx, y: cy };
   }
 }

@@ -509,6 +509,15 @@ const ICON_PX = 46;
 function nodeIcon(el: HTMLElement, unitId: string): void {
   const u = getUnit(unitId);
   const icon = el.querySelector<HTMLElement>('.nicon')!;
+  // 주문은 걷는 몸이 없다 — 전용 아이콘 한 장(units/<id>.icon.png)을 쓴다
+  if (art.clip(unitId, 'icon')) {
+    icon.textContent = '';
+    icon.style.backgroundImage =
+      `url('${import.meta.env.BASE_URL}art/units/${unitId}.icon.png')`;
+    icon.style.backgroundSize = `${ICON_PX}px ${ICON_PX}px`;
+    icon.style.backgroundPosition = '0 0';
+    return;
+  }
   const anim = u.kind === 'building' ? 'idle' : 'walk';
   if (!art.clip(unitId, anim) && !art.clip(unitId, 'attack')) {
     icon.textContent = u.name[0]; // 이미지가 없으면 첫 글자

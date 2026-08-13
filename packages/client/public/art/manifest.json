@@ -1,399 +1,411 @@
 {
- "_": "이미지를 넣은 뒤 여기에 적어야 화면에 나온다. 자세한 규격은 docs/ART_PIPELINE.md",
- "units": {
-  "bulwark": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "idle": {
-    "frames": 5,
-    "fps": 10
-   }
+  "_": "이미지를 넣은 뒤 여기에 적어야 화면에 나온다. 자세한 규격은 docs/ART_PIPELINE.md",
+  "units": {
+    "bulwark": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "idle": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "burrower": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "devourer": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "flamer": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "fusionite": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "gnawer": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "gunship": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "ironwalker": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "lightpylon": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "idle": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "mystic": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "rifleman": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "scoutcar": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "shade": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "siegetank": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "skiff": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "spinetentacle": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "idle": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "spitter": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "sporetentacle": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "idle": {
+        "frames": 5,
+        "fps": 10
+      }
+    },
+    "strider": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "tunneler": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "wingswarm": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "zealot": {
+      "attack": {
+        "frames": 5,
+        "fps": 14
+      },
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 14
+      }
+    },
+    "carpetbomb": {
+      "icon": {
+        "frames": 1,
+        "fps": 1
+      }
+    },
+    "mindbreak": {
+      "icon": {
+        "frames": 1,
+        "fps": 1
+      }
+    }
   },
-  "burrower": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
+  "bases": {
+    "covenant": [
+      "expansion",
+      "main"
+    ],
+    "steel": [
+      "expansion",
+      "main"
+    ],
+    "swarmhive": [
+      "expansion",
+      "main"
+    ]
   },
-  "devourer": {
-   "attack": {
+  "worker": {
     "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
+    "fps": 8
   },
-  "flamer": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
+  "mineral": {
+    "frames": 10,
+    "fps": 8
   },
-  "fusionite": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
+  "fx": {
+    "frames": 24,
+    "fps": 8
   },
-  "gnawer": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "gunship": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "ironwalker": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "lightpylon": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "idle": {
-    "frames": 5,
-    "fps": 10
-   }
-  },
-  "mystic": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "rifleman": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "scoutcar": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "shade": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "siegetank": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "skiff": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "spinetentacle": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "idle": {
-    "frames": 5,
-    "fps": 10
-   }
-  },
-  "spitter": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "sporetentacle": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "idle": {
-    "frames": 5,
-    "fps": 10
-   }
-  },
-  "strider": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "tunneler": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "wingswarm": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
-  },
-  "zealot": {
-   "attack": {
-    "frames": 5,
-    "fps": 14
-   },
-   "walk": {
-    "frames": 5,
-    "fps": 10
-   },
-   "walkback": {
-    "frames": 5,
-    "fps": 10
-   },
-   "attackback": {
-    "frames": 5,
-    "fps": 14
-   }
+  "terrain": {
+    "frames": 24,
+    "fps": 8
   }
- },
- "bases": {
-  "covenant": [
-   "expansion",
-   "main"
-  ],
-  "steel": [
-   "expansion",
-   "main"
-  ],
-  "swarmhive": [
-   "expansion",
-   "main"
-  ]
- },
- "worker": {
-  "frames": 5,
-  "fps": 8
- },
- "mineral": {
-  "frames": 10,
-  "fps": 8
- },
- "fx": {
-  "frames": 24,
-  "fps": 8
- },
- "terrain": {
-  "frames": 24,
-  "fps": 8
- }
 }
