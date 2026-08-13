@@ -1,255 +1,263 @@
 {
-  "_": "이미지를 넣은 뒤 여기에 적어야 화면에 나온다. 자세한 규격은 docs/ART_PIPELINE.md",
-  "units": {
-    "bulwark": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "idle": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "burrower": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "devourer": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "flamer": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "fusionite": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "gnawer": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "gunship": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "ironwalker": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "lightpylon": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "idle": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "mystic": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "rifleman": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "scoutcar": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "shade": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "siegetank": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "skiff": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "spinetentacle": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "idle": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "spitter": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "sporetentacle": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "idle": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "strider": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "tunneler": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "wingswarm": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    },
-    "zealot": {
-      "attack": {
-        "frames": 5,
-        "fps": 14
-      },
-      "walk": {
-        "frames": 5,
-        "fps": 10
-      }
-    }
-  },
-  "bases": {
-    "covenant": [
-      "expansion",
-      "main"
-    ],
-    "steel": [
-      "expansion",
-      "main"
-    ],
-    "swarmhive": [
-      "expansion",
-      "main"
-    ]
-  },
-  "worker": {
+ "_": "이미지를 넣은 뒤 여기에 적어야 화면에 나온다. 자세한 규격은 docs/ART_PIPELINE.md",
+ "units": {
+  "bulwark": {
+   "attack": {
     "frames": 5,
-    "fps": 8
+    "fps": 14
+   },
+   "idle": {
+    "frames": 5,
+    "fps": 10
+   }
   },
-  "mineral": {
-    "frames": 10,
-    "fps": 8
+  "burrower": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
   },
-  "fx": {
-    "frames": 24,
-    "fps": 8
+  "devourer": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
   },
-  "terrain": {
-    "frames": 24,
-    "fps": 8
+  "flamer": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "fusionite": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "gnawer": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "gunship": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "ironwalker": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "lightpylon": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "idle": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "mystic": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "rifleman": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "scoutcar": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "shade": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "siegetank": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "skiff": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "spinetentacle": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "idle": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "spitter": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "sporetentacle": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "idle": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "strider": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "tunneler": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "wingswarm": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   }
+  },
+  "zealot": {
+   "attack": {
+    "frames": 5,
+    "fps": 14
+   },
+   "walk": {
+    "frames": 5,
+    "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
+   }
   }
+ },
+ "bases": {
+  "covenant": [
+   "expansion",
+   "main"
+  ],
+  "steel": [
+   "expansion",
+   "main"
+  ],
+  "swarmhive": [
+   "expansion",
+   "main"
+  ]
+ },
+ "worker": {
+  "frames": 5,
+  "fps": 8
+ },
+ "mineral": {
+  "frames": 10,
+  "fps": 8
+ },
+ "fx": {
+  "frames": 24,
+  "fps": 8
+ },
+ "terrain": {
+  "frames": 24,
+  "fps": 8
+ }
 }

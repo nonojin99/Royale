@@ -509,15 +509,26 @@ rm -f packages/client/public/art/units/*.png
 
 ### 처리 — 한 장에서 스트립 4벌
 
-열 수를 실제 이미지에서 세고 (`--grid 4x<열수>`), 행마다 연속 5칸을
-고른다. 예: 4행 7열로 나왔고 각 행의 1~5칸을 쓸 때:
+**0단계 — 체커보드 전처리 (필수).** 생성기가 내보낸 PNG는 투명이 아니라
+회색 체커보드가 구워진 경우가 많고, 그러면 `--bgcolor auto`가 깨진다
+(실측: 확대·잘림 셀이 나온다). 먼저 전처리를 돌린다:
 
 ```
-node tools/strip.mjs zealot4.png --out zealot.walk.png        --grid 4x7 --take 1,1-1,5 --align center --bgcolor auto --inset 0.1
-node tools/strip.mjs zealot4.png --out zealot.walkback.png    --grid 4x7 --take 2,1-2,5 --align center --bgcolor auto --inset 0.1
-node tools/strip.mjs zealot4.png --out zealot.attack.png      --grid 4x7 --take 3,1-3,5 --align center --bgcolor auto --inset 0.1
-node tools/strip.mjs zealot4.png --out zealot.attackback.png  --grid 4x7 --take 4,1-4,5 --align center --bgcolor auto --inset 0.1
+node tools/clean-turnaround.mjs ../../art-src/zealot4.png /tmp/zealot4.clean.png
 ```
+
+그다음 열 수를 실제 이미지에서 세고 (`--grid 4x<열수>`), 행마다 연속
+5칸을 고른다. 예: 4행 7열로 나왔고 각 행의 1~5칸을 쓸 때:
+
+```
+node tools/strip.mjs /tmp/zealot4.clean.png --out units/zealot.walk.png --grid 4x7 --take 1,1-1,5 --align center --inset 0.02
+node tools/strip.mjs /tmp/zealot4.clean.png --out units/zealot.walkback.png   --grid 4x7 --take 2,1-2,5 --align center --inset 0.02
+node tools/strip.mjs /tmp/zealot4.clean.png --out units/zealot.attack.png     --grid 4x7 --take 3,1-3,5 --align center --inset 0.02
+node tools/strip.mjs /tmp/zealot4.clean.png --out units/zealot.attackback.png --grid 4x7 --take 4,1-4,5 --align center --inset 0.02
+```
+
+원본 파일명 규칙: **`art-src/<유닛id>4.png`** (4 = 4방향 턴어라운드 원본).
+이 이름으로 올라오면 담당자가 자동으로 알아보고 처리한다.
 
 - 기존 정면 시트(`walk`/`attack`)도 **같은 장 출신으로 교체**한다
 - manifest에 `walkback`/`attackback` 추가 (frames 5, fps는 기존과 동일)

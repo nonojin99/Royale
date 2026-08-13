@@ -645,7 +645,7 @@ export class Renderer {
 
       const u = getUnit(e.unit);
       const moved = !!p && (p[0] !== e.x || p[1] !== e.y);
-      const tex = this.frameFor(e, moved);
+      const tex = this.frameFor(e, moved, this.vfacingOf(e, p, myTeam) < 0);
 
       if (e.kind === 'building') {
         const size = PX_PER_TILE * 1.5;
@@ -721,23 +721,30 @@ export class Renderer {
    * - 걷기: 직전 틱 대비 좌표가 변했다
    * - 그 외: 대기 (없으면 걷기 0프레임에서 멈춘다)
    */
-  private frameFor(e: Entity, moved: boolean): Texture | null {
+  private frameFor(e: Entity, moved: boolean, back: boolean): Texture | null {
     const prevCd = this.prevCd.get(e.id);
     const fired = prevCd !== undefined && e.cd > prevCd;
     this.prevCd.set(e.id, e.cd);
 
+    // 4방향: 화면 위쪽을 향해 움직이면 등 시트(…back)를 쓴다.
+    // 등 시트가 없는 유닛은 조용히 정면으로 떨어진다 — 시트가 도착하는
+    // 순서대로 유닛이 하나씩 4방향이 된다
+    const pick = (base: string): string =>
+      back && art.clip(e.unit, base + 'back') ? base + 'back' : base;
+
     let st = this.animState.get(e.id);
-    const attack = art.clip(e.unit, 'attack');
+    const attackName = pick('attack');
+    const attack = art.clip(e.unit, attackName);
 
     if (fired && attack) {
-      st = { name: 'attack', startMs: this.nowMs };
+      st = { name: attackName, startMs: this.nowMs };
       this.animState.set(e.id, st);
     } else {
       // 공격 재생이 끝나기 전에는 다른 동작으로 넘어가지 않는다
-      const busy =
-        st?.name === 'attack' && attack && this.nowMs - st.startMs < attack.durationMs;
+      const cur = st && st.name.startsWith('attack') ? art.clip(e.unit, st.name) : null;
+      const busy = !!cur && this.nowMs - st!.startMs < cur.durationMs;
       if (!busy) {
-        const want = moved && art.clip(e.unit, 'walk') ? 'walk' : 'idle';
+        const want = moved && art.clip(e.unit, pick('walk')) ? pick('walk') : 'idle';
         if (!st || st.name !== want) {
           st = { name: want, startMs: this.nowMs };
           this.animState.set(e.id, st);
@@ -745,14 +752,15 @@ export class Renderer {
       }
     }
 
-    const clip = art.clip(e.unit, st!.name) ?? art.clip(e.unit, 'walk');
+    const clip =
+      art.clip(e.unit, st!.name) ?? art.clip(e.unit, pick('walk')) ?? art.clip(e.unit, 'walk');
     if (!clip) return art.unit(e.unit);
 
     const i = Math.floor(((this.nowMs - st!.startMs) / 1000) * clip.fps);
     // 대기는 걷기 첫 프레임에 멈춰 있고, 공격은 마지막 프레임에서 끝난다
     if (st!.name === 'idle' && !art.clip(e.unit, 'idle')) return clip.textures[0];
     const last = clip.textures.length - 1;
-    return clip.textures[st!.name === 'attack' ? Math.min(i, last) : i % clip.textures.length];
+    return clip.textures[st!.name.startsWith('attack') ? Math.min(i, last) : i % clip.textures.length];
   }
 
   /** 스프라이트 발밑에 두는 팀 색 타원 링 */
@@ -917,6 +925,18 @@ export class Renderer {
       else if (dx < -8) this.facing.set(e.id, 1);
     }
     return this.facing.get(e.id) ?? 1;
+  }
+
+  /** 상하 시선 — 화면 위로 움직이면 -1(등), 아래로 움직이면 1(정면) */
+  private readonly vfacing = new Map<number, 1 | -1>();
+
+  private vfacingOf(e: Entity, prev: [number, number] | undefined, myTeam: Team): number {
+    if (prev) {
+      const dy = myTeam === 0 ? e.y - prev[1] : prev[1] - e.y; // 화면 기준 dy
+      if (dy > 8) this.vfacing.set(e.id, 1);
+      else if (dy < -8) this.vfacing.set(e.id, -1);
+    }
+    return this.vfacing.get(e.id) ?? 1;
   }
 
   /* ── 이펙트 (전부 렌더 전용, 시뮬과 무관) ──────────────────────────── */
@@ -1123,6 +1143,7 @@ export class Renderer {
     const live = new Set(state.entities.map((e) => e.id));
     for (const id of this.animState.keys()) if (!live.has(id)) this.animState.delete(id);
     for (const id of this.prevCd.keys()) if (!live.has(id)) this.prevCd.delete(id);
+    for (const id of this.vfacing.keys()) if (!live.has(id)) this.vfacing.delete(id);
     for (const id of this.facing.keys()) if (!live.has(id)) this.facing.delete(id);
   }
 
