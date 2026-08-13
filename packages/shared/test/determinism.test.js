@@ -38,11 +38,13 @@ import {
   TICK_RATE,
   START_WORKERS,
   UNIT_IDS,
+  UPGRADE_TICKS,
   WORKER_CAP_PER_BASE,
   WORKER_COST,
   WORKER_MINE_PER_TICK,
   activeWorkers,
   baseCount,
+  canUpgrade,
   buildReplay,
   canDeployAt,
   canResearch,
@@ -1107,4 +1109,23 @@ test('확장은 보유 기지에서 EXPAND_RANGE 안의 지점만 지을 수 있
     basesBefore + 1,
     '이어지는 확장이 지어지지 않았다',
   );
+});
+
+/* ── 강화 ──────────────────────────────────────────────────────────────── */
+
+test('강화는 단계별 연구 뒤에 열리고, 진행 후 단계가 오른다', () => {
+  const s = createState(21, MIRROR);
+  const p = s.players[0];
+
+  // 1단계는 시작부터 열려 있고, 시작 미네랄(5)로 비용(4)을 감당한다
+  assert.equal(canUpgrade(p), true, '1단계 강화가 시작부터 열려 있지 않다');
+  step(s, [cmd(s.tick, 0, 'upgrade', '', 0, 0)]);
+  assert.ok(p.upgrading, '강화가 시작되지 않았다');
+  assert.equal(canUpgrade(p), false, '강화 중에 또 강화가 열렸다');
+
+  for (let i = 0; i < UPGRADE_TICKS[0] + 1; i++) step(s, []);
+  assert.equal(p.upgrade, 1, '강화 1단계가 완료되지 않았다');
+
+  // 2단계는 1단계 열의 연구를 마치기 전에는 잠긴다
+  assert.equal(canUpgrade(p), false, '1단계 연구 없이 2단계 강화가 열렸다');
 });

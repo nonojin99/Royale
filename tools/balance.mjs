@@ -24,6 +24,7 @@
 
 import {
   BASE_BUILD_COST,
+  UPGRADE_COSTS,
   BASE_SITES,
   DEPLOY_RADIUS,
   MINERAL_SCALE,
@@ -31,6 +32,7 @@ import {
   baseCount,
   canDeployAt,
   canResearch,
+  canUpgrade,
   createRng,
   createState,
   getFaction,
@@ -194,6 +196,14 @@ function buildDefense(s, team, rng, want = 2) {
   return null;
 }
 
+/** 강화 — 여유 자금(spare)을 남기고 다음 단계를 올린다 */
+function buyUpgrade(s, team, spare = 0) {
+  const p = s.players[team];
+  if (!canUpgrade(p)) return null;
+  if (p.minerals < UPGRADE_COSTS[p.upgrade] + spare) return null;
+  return { kind: 'upgrade', id: '', x: 0, y: 0 };
+}
+
 /**
  * 주문 시전 — 해금돼 있고 살 수 있으면, 적 병력 뭉치 한가운데에 떨어뜨린다.
  * 적 병력이 적으면 아낀다 (주문은 광역이라 뭉친 상대에게만 값을 한다).
@@ -264,6 +274,7 @@ const STRATS = {
       // (실측: RUSH 98%) — 창이 닫힌 뒤에만 저축·확장한다
       (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
       research(s, team, 0, true) ??
+      buyUpgrade(s, team, 4 * MINERAL_SCALE) ??
       castSpell(s, team) ??
       // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다). T2 후에도
       // 병력이 한 무리 모일 때까지 집에서 싸운다 — 한 기씩 전진하면
@@ -283,6 +294,7 @@ const STRATS = {
     trainWorker(s, team) ??
     expand(s, team) ??
     research(s, team) ??
+    buyUpgrade(s, team, 6 * MINERAL_SCALE) ??
     castSpell(s, team) ??
     produce(s, team, rng, { reserve: 0 }),
   REACT: (s, team, rng) => {

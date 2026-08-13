@@ -18,8 +18,10 @@
 import {
   BASE_BUILD_COST,
   BASE_SITES,
+  UPGRADE_COSTS,
   WORKER_COST,
   CommandKind,
+  canUpgrade,
   DEPLOY_RADIUS,
   GameState,
   MINERAL_SCALE,
@@ -73,7 +75,11 @@ export class Bot {
     const pressured = this.armyCost(s, 0) > this.armyCost(s, 1);
     const move = pressured
       ? this.produce(s, me) ?? this.train(s) ?? this.expand(s)
-      : this.train(s) ?? this.expand(s) ?? this.research(s) ?? this.produce(s, me);
+      : this.train(s) ??
+        this.expand(s) ??
+        this.research(s) ??
+        this.upgradeMove(me) ??
+        this.produce(s, me);
     if (move) this.lastTick = tick;
     return move;
   }
@@ -134,6 +140,13 @@ export class Bot {
     // 확장 여력을 남겨두기 위해 자원이 넉넉할 때만 올린다
     if (me.minerals < bestCost + BASE_BUILD_COST) return null;
     return { kind: 'tech', id: best, x: 0, y: 0 };
+  }
+
+  /** 3.5순위: 강화 — 확장 여력을 남기고 여유 자금으로만 올린다 */
+  private upgradeMove(me: GameState['players'][number]): BotMove | null {
+    if (!canUpgrade(me)) return null;
+    if (me.minerals < UPGRADE_COSTS[me.upgrade] + BASE_BUILD_COST) return null;
+    return { kind: 'upgrade', id: '', x: 0, y: 0 };
   }
 
   /**

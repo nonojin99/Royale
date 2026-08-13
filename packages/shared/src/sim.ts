@@ -45,6 +45,10 @@ import {
   OVERTIME_TICKS,
   START_WORKERS,
   UNIT_RADIUS,
+  UPGRADE_COSTS,
+  UPGRADE_DAMAGE_PCT,
+  UPGRADE_MAX,
+  UPGRADE_TICKS,
   WORKER_CAP_PER_BASE,
   WORKER_COST,
   WORKER_MINE_PER_TICK,
@@ -119,6 +123,10 @@ export interface PlayerState {
   unlocked: string[];
   /** 연구 중인 유닛과 남은 틱. 동시에 하나만 */
   research: { unit: string; ticks: number } | null;
+  /** 완료한 공격 강화 단계 (0~UPGRADE_MAX) */
+  upgrade: number;
+  /** 진행 중인 강화의 남은 틱. 연구와 별개 채널 — 동시에 하나만 */
+  upgrading: { ticks: number } | null;
 }
 
 export interface GameState {
@@ -135,7 +143,7 @@ export interface GameState {
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech' | 'worker';
+export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -145,7 +153,7 @@ export interface Command {
   execTick: number;
   team: Team;
   kind: CommandKind;
-  /** kind가 'unit'이면 생산할 유닛, 'tech'면 해금할 유닛, 'base'/'worker'면 '' */
+  /** kind가 'unit'이면 생산할 유닛, 'tech'면 해금할 유닛, 그 외('base'/'worker'/'upgrade')는 '' */
   id: string;
   x: number;
   y: number;
@@ -162,6 +170,8 @@ function makePlayer(factionId: string): PlayerState {
     faction: f.id,
     unlocked: startingUnlocks(f),
     research: null,
+    upgrade: 0,
+    upgrading: null,
   };
 }
 
@@ -240,13 +250,23 @@ function statsOf(e: Entity): {
 }
 
 /**
- * 실제 피해량 — 두 배율이 곱해진다 (정수 유지):
- *   1. siege — 피격자가 구조물이면
- *   2. 언덕 — 지상 공격자가 저지에서 고지의 지상 대상을 때리면 70%
+ * 실제 피해량 — 세 배율이 곱해진다 (정수 유지):
+ *   1. 강화 — 공격자 팀의 강화 단계 ×10% (기지는 제외 — 기지가 강해지면
+ *      수비가 공짜가 된다. 주문은 이 경로를 타지 않는다)
+ *   2. siege — 피격자가 구조물이면
+ *   3. 언덕 — 지상 공격자가 저지에서 고지의 지상 대상을 때리면 70%
  *      (공중은 어느 쪽이든 지형 무관)
  */
-function damageTo(attacker: Entity, st: { damage: number; siege: number }, victim: Entity): number {
+function damageTo(
+  attacker: Entity,
+  st: { damage: number; siege: number },
+  victim: Entity,
+  upgrade: number,
+): number {
   let d = st.damage;
+  if (attacker.kind !== 'base' && upgrade > 0) {
+    d = Math.trunc((d * (100 + UPGRADE_DAMAGE_PCT * upgrade)) / 100);
+  }
   if (victim.kind !== 'unit') d = Math.trunc((d * st.siege) / 100);
   if (
     !attacker.flying &&
@@ -358,6 +378,21 @@ export function isUnlocked(p: PlayerState, unit: string): boolean {
   return p.unlocked.includes(unit);
 }
 
+/**
+ * 다음 강화 단계를 지금 시작할 수 있는가 (비용은 별도로 확인).
+ *
+ * 단계 k는 k-1단계 열의 연구를 하나라도 마쳐야 열린다:
+ * 1단계는 시작부터, 2단계는 1단계 연구 후, 3단계는 2단계 연구 후.
+ */
+export function canUpgrade(p: PlayerState): boolean {
+  if (p.upgrading !== null) return false;
+  if (p.upgrade >= UPGRADE_MAX) return false;
+  const needTier = p.upgrade; // 다음 단계 = upgrade+1, 요구 열 = upgrade
+  if (needTier === 0) return true;
+  const f = getFaction(p.faction);
+  return f.tech.some((n) => n.tier === needTier && n.cost > 0 && p.unlocked.includes(n.unit));
+}
+
 /** 지금 해금을 시작할 수 있는가 (비용은 별도로 확인) */
 export function canResearch(p: PlayerState, unit: string): boolean {
   if (p.research !== null) return false;
@@ -429,9 +464,21 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
       return startResearch(s, cmd);
     case 'worker':
       return trainWorker(s, cmd);
+    case 'upgrade':
+      return startUpgrade(s, cmd);
     default:
       return false;
   }
+}
+
+function startUpgrade(s: GameState, cmd: Command): boolean {
+  const p = s.players[cmd.team];
+  if (!canUpgrade(p)) return false;
+  const cost = UPGRADE_COSTS[p.upgrade];
+  if (p.minerals < cost) return false;
+  p.minerals -= cost;
+  p.upgrading = { ticks: UPGRADE_TICKS[p.upgrade] };
+  return true;
 }
 
 function produceUnit(s: GameState, cmd: Command): boolean {
@@ -651,13 +698,21 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 2) 채굴
   mine(s);
 
-  // 3) 연구 진행
+  // 3) 연구·강화 진행
   for (const p of s.players) {
-    if (!p.research) continue;
-    p.research.ticks--;
-    if (p.research.ticks <= 0) {
-      unlock(p, p.research.unit);
-      p.research = null;
+    if (p.research) {
+      p.research.ticks--;
+      if (p.research.ticks <= 0) {
+        unlock(p, p.research.unit);
+        p.research = null;
+      }
+    }
+    if (p.upgrading) {
+      p.upgrading.ticks--;
+      if (p.upgrading.ticks <= 0) {
+        p.upgrade++;
+        p.upgrading = null;
+      }
     }
   }
 
@@ -704,10 +759,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         const o = s.entities[j];
         if (o.team === e.team) continue;
         if (!canAttack(e, o)) continue;
-        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(e, st, o);
+        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(e, st, o, s.players[e.team].upgrade);
       }
     } else {
-      dmg[ti] += damageTo(e, st, t);
+      dmg[ti] += damageTo(e, st, t, s.players[e.team].upgrade);
     }
   }
 
@@ -982,6 +1037,8 @@ export function hashState(s: GameState): number {
     } else {
       mix(-1);
     }
+    mix(p.upgrade);
+    mix(p.upgrading ? p.upgrading.ticks : -1);
   }
   mix(s.overtime ? 1 : 0);
   mix(s.over ? 1 : 0);

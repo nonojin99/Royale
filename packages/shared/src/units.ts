@@ -133,7 +133,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'bulwark', name: '방벽', cost: 2, kind: 'building',
-    hp: 1000, damage: 150, hitSpeed: seconds(0.8, TICK_RATE),
+    hp: 1000, damage: 165, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0x78716c,
   }),
   unit({
@@ -174,7 +174,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'spinetentacle', name: '가시촉수', cost: 2, kind: 'building',
-    hp: 950, damage: 185, hitSpeed: seconds(1.0, TICK_RATE),
+    hp: 950, damage: 205, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: 0, targets: 'ground',
     lifetime: BUILDING_LIFE, color: 0x9f1239,
   }),
@@ -221,7 +221,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'lightpylon', name: '빛기둥', cost: 2, kind: 'building',
-    hp: 900, damage: 160, hitSpeed: seconds(0.9, TICK_RATE),
+    hp: 900, damage: 175, hitSpeed: seconds(0.9, TICK_RATE),
     // 하늘색(0x38bdf8)은 렌더러의 아군 팀 색과 겹쳐서, 적 빛기둥이 아군 건물처럼
     // 보인다. 카드 색은 팀 색과 반드시 구분되어야 한다.
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0xfcd34d,
@@ -269,11 +269,13 @@ export interface BaseStats {
  *
  * 공격력이 0이면 초반 러시에 무방비가 되고(방어 건물은 테크를 올려야 나온다),
  * 너무 세면 확장을 견제할 방법이 없어진다. "일꾼 몇 기는 지키지만 병력은
- * 못 막는" 수준으로 맞춘다.
+ * 못 막는" 수준으로 맞춘다. 45는 그 선을 넘어 있었다 — 기지 딜이 공짜
+ * 수비가 되어 "무조건 확장"이 정답이 됐다 (라운드 10 오너 피드백).
+ * 확장의 안전은 공짜가 아니라 포탑·병력이라는 선택에서 나와야 한다.
  */
 export const MAIN_BASE_STATS: BaseStats = {
   hp: 4000,
-  damage: 45,
+  damage: 28,
   hitSpeed: seconds(1.0, TICK_RATE),
   range: tiles(6.5),
 };
@@ -287,7 +289,7 @@ export const MAIN_BASE_STATS: BaseStats = {
  */
 export const EXPANSION_BASE_STATS: BaseStats = {
   hp: 1500,
-  damage: 30,
+  damage: 18,
   hitSpeed: seconds(1.2, TICK_RATE),
   range: tiles(5.0),
 };

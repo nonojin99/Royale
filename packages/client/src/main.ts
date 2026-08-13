@@ -20,10 +20,14 @@ import {
   TICK_RATE,
   WORKER_COST,
   WORKER_MINE_PER_TICK,
+  UPGRADE_COSTS,
+  UPGRADE_DAMAGE_PCT,
+  UPGRADE_MAX,
   activeWorkers,
   baseCount,
   canDeployAt,
   canResearch,
+  canUpgrade,
   getFaction,
   getUnit,
   isUnlocked,
@@ -179,6 +183,15 @@ async function boot(): Promise<void> {
   });
 
   $('btn-base').addEventListener('click', toggleBaseMode);
+  $('btn-upgrade').addEventListener('click', requestUpgrade);
+  attachTipHtml(
+    $('btn-upgrade'),
+    () =>
+      `<div class="tt-name">전군 공격 강화</div>` +
+      `<div class="tt-row">유닛·방어 건물 공격 +${UPGRADE_DAMAGE_PCT}%/단계 (기지 제외)</div>` +
+      `<div class="tt-row">2단계는 1단계 연구 후 · 3단계는 2단계 연구 후</div>` +
+      `<div class="tt-row">고정 데미지라 강화가 "몇 방에 죽나"의 문턱을 넘긴다</div>`,
+  );
 
   const muteBtn = $('btn-mute');
   const drawMute = (): void => {
@@ -198,6 +211,7 @@ async function boot(): Promise<void> {
     }
     if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
     if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
+    if (e.key === 'u' || e.key === 'ㅕ') requestUpgrade();
     if (e.key === 'Escape') {
       selectedUnit = '';
       baseMode = false;
@@ -460,6 +474,31 @@ function requestWorker(): void {
   }
   net.act('worker', '');
   sound.play('ui');
+}
+
+/** 전군 공격 강화 — 막힌 이유를 그대로 말해준다 */
+function requestUpgrade(): void {
+  const s = net.state;
+  if (!s) return;
+  const me = s.players[net.myTeam];
+  if (me.upgrading) {
+    flash('이미 강화 중입니다');
+    return;
+  }
+  if (me.upgrade >= UPGRADE_MAX) {
+    flash('강화가 최대 단계입니다');
+    return;
+  }
+  if (!canUpgrade(me)) {
+    flash(`${me.upgrade}단계 연구를 하나 마쳐야 ${me.upgrade + 1}단계 강화가 열립니다`);
+    return;
+  }
+  if (me.minerals < UPGRADE_COSTS[me.upgrade]) {
+    flash('미네랄 부족');
+    return;
+  }
+  net.act('upgrade', '');
+  sound.play('tech');
 }
 
 function toggleBaseMode(): void {
@@ -744,6 +783,26 @@ function updateHud(s: GameState): void {
   baseBtn.innerHTML = baseMode
     ? '자리를 클릭하세요'
     : `기지 건설 (${BASE_BUILD_COST / MINERAL_SCALE}) <kbd>B</kbd>`;
+
+  // 강화 버튼 — 단계·비용·진행·잠금 사유를 버튼 하나가 다 말한다
+  const upBtn = $('btn-upgrade') as HTMLButtonElement;
+  upBtn.classList.toggle('working', !!me.upgrading);
+  if (me.upgrading) {
+    upBtn.disabled = true;
+    upBtn.innerHTML = `⚔ 강화 중… ${Math.ceil(me.upgrading.ticks / TICK_RATE)}초`;
+  } else if (me.upgrade >= UPGRADE_MAX) {
+    upBtn.disabled = true;
+    upBtn.innerHTML = `⚔ 강화 완료 Lv${UPGRADE_MAX}`;
+  } else if (!canUpgrade(me)) {
+    upBtn.disabled = true;
+    upBtn.innerHTML = `⚔ 강화 Lv${me.upgrade + 1} 🔒 ${me.upgrade}단계 연구 필요`;
+  } else {
+    const c = UPGRADE_COSTS[me.upgrade] / MINERAL_SCALE;
+    upBtn.disabled = me.minerals < UPGRADE_COSTS[me.upgrade];
+    upBtn.innerHTML =
+      `⚔ 강화 Lv${me.upgrade + 1} (${c}) <kbd>U</kbd>` +
+      (me.upgrade > 0 ? ` <span class="uplv">현재 +${me.upgrade * UPGRADE_DAMAGE_PCT}%</span>` : '');
+  }
 
   $('research').textContent = me.research
     ? `연구 중: ${getUnit(me.research.unit).name} ${Math.ceil(me.research.ticks / TICK_RATE)}초`
