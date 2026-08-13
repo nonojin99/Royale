@@ -258,11 +258,25 @@ const STRATS = {
       buildDefense(s, team, rng, 1) ??
       trainWorker(s, team) ??
       buildDefense(s, team, rng) ??
+      // 포탑 뒤 앞마당 — 1기지 수입으로는 포탑 유지비+연구+병력을 다 못
+      // 감당해 빈곤 대치로 늙어 죽는다 (실측: 5분 무승부). 단 러시 창
+      // (~80초) 안에 확장비를 모으면 그 돈이 병력이 안 돼 그대로 죽는다
+      // (실측: RUSH 98%) — 창이 닫힌 뒤에만 저축·확장한다
+      (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
       research(s, team, 0, true) ??
-      (t2 ? expand(s, team, 2) : null) ??
       castSpell(s, team) ??
-      // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다), 이후엔 전진
-      produce(s, team, rng, { reserve: 4 * MINERAL_SCALE, defend: !t2 })
+      // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다). T2 후에도
+      // 병력이 한 무리 모일 때까지 집에서 싸운다 — 한 기씩 전진하면
+      // 러시 뭉치에 헌납하는 꼴이다 (실측: 드립 전진이 TECH 패인의 절반)
+      produce(s, team, rng, {
+        // 러시 창이 닫히면 확장비(8)를 모은다 — 예비금 4로는 8이 영영 안
+        // 모이고(실측: expand 무발동), 창 안에 모으면 병력이 비어 죽는다
+        reserve:
+          s.tick > 20 * 90 && baseCount(s, team) < 2
+            ? BASE_BUILD_COST
+            : 4 * MINERAL_SCALE,
+        defend: !t2 || armyCost(s, team) < 24 * MINERAL_SCALE,
+      })
     );
   },
   BAL: (s, team, rng) =>
@@ -277,16 +291,16 @@ const STRATS = {
     // 일꾼 수 판독(올인 예고)도 실험했지만 대응 정책이 방어에 갇혀
     // 역효과였다 — 감지보다 "언제 반격으로 전환하나"가 어렵다 (라운드 4)
     if (early && o.foeArmy > o.myArmy + 4 * MINERAL_SCALE) {
-      // 상대가 초반부터 병력을 쏟는다 → 포탑 + 수비 병력, 확장 중단.
-      // 정보를 가진 대응이란 "맞는 방어를 제때 사는 것"이다
-      return (
-        buildDefense(s, team, rng) ??
-        produce(s, team, rng, { defend: true }) ??
-        trainWorker(s, team)
-      );
+      // 상대가 초반부터 병력을 쏟는다 → 포탑만 얹은 표준 매크로.
+      // 수비 배치·확장 중단을 강제한 변형들은 전부 표준보다 나빴다
+      // (실측 52~62% vs BAL 65%) — 정보의 값은 "포탑을 살지 말지"라는
+      // 한 수로 좁혀야 산다 (라운드 4의 교훈과 일치)
+      return buildDefense(s, team, rng) ?? STRATS.BAL(s, team, rng);
     }
-    if (o.foeBases > o.myBases || (o.foeTeching && o.foeArmy < o.myArmy)) {
-      // 상대가 배를 불린다 → 지금 찌른다
+    if (o.foeBases > o.myBases || (o.foeTeching && o.myArmy >= 6 * MINERAL_SCALE)) {
+      // 상대가 배를 불리거나 테크에 돈을 묻었다 → 지금 찌른다.
+      // (구 조건 "상대 병력 < 내 병력"은 병력을 유지하는 새 TECH 상대로
+      // 영영 안 열려 찌르기가 한 번도 안 나갔다 — REACT가 BAL과 완전 동일)
       return produce(s, team, rng, { cheap: true }) ?? trainWorker(s, team);
     }
     return STRATS.BAL(s, team, rng);

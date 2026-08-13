@@ -92,8 +92,13 @@ function unit(spec: UnitSpec): UnitDef {
   };
 }
 
-/** 건물 기본 수명 — 40초. 방어 건물이 영구히 남으면 공격이 성립하지 않는다. */
-const BUILDING_LIFE = seconds(40, TICK_RATE);
+/**
+ * 건물 기본 수명 — 80초. 방어 건물이 영구히 남으면 공격이 성립하지 않지만,
+ * 40초는 수비 측만 내는 세금이 너무 무거웠다 — 러시는 유지비가 0인데
+ * 수비는 40초마다 포탑을 다시 사느라 반격 병력을 영영 못 모았다
+ * (실측: 48맵에서 TECH가 RUSH에 23% — COUNCIL 라운드 6.5).
+ */
+const BUILDING_LIFE = seconds(80, TICK_RATE);
 
 const defs: UnitDef[] = [
   /* ── 기갑단 ───────────────────────────────────────────────────────────
@@ -127,8 +132,8 @@ const defs: UnitDef[] = [
     range: tiles(5.5), speed: spd(0.8), siege: 120, color: 0x475569,
   }),
   unit({
-    id: 'bulwark', name: '방벽', cost: 3, kind: 'building',
-    hp: 1000, damage: 120, hitSpeed: seconds(0.8, TICK_RATE),
+    id: 'bulwark', name: '방벽', cost: 2, kind: 'building',
+    hp: 1000, damage: 150, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0x78716c,
   }),
   unit({
@@ -168,8 +173,8 @@ const defs: UnitDef[] = [
     targets: 'ground', siege: 200, color: 0x7c2d12,
   }),
   unit({
-    id: 'spinetentacle', name: '가시촉수', cost: 3, kind: 'building',
-    hp: 950, damage: 150, hitSpeed: seconds(1.0, TICK_RATE),
+    id: 'spinetentacle', name: '가시촉수', cost: 2, kind: 'building',
+    hp: 950, damage: 185, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: 0, targets: 'ground',
     lifetime: BUILDING_LIFE, color: 0x9f1239,
   }),
@@ -215,8 +220,8 @@ const defs: UnitDef[] = [
     range: tiles(1.0), speed: spd(0.8), splash: tiles(1.6), siege: 200, color: 0x06b6d4,
   }),
   unit({
-    id: 'lightpylon', name: '빛기둥', cost: 3, kind: 'building',
-    hp: 900, damage: 130, hitSpeed: seconds(0.9, TICK_RATE),
+    id: 'lightpylon', name: '빛기둥', cost: 2, kind: 'building',
+    hp: 900, damage: 160, hitSpeed: seconds(0.9, TICK_RATE),
     // 하늘색(0x38bdf8)은 렌더러의 아군 팀 색과 겹쳐서, 적 빛기둥이 아군 건물처럼
     // 보인다. 카드 색은 팀 색과 반드시 구분되어야 한다.
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0xfcd34d,
