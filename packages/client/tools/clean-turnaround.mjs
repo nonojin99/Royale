@@ -44,6 +44,22 @@ for (let x = 0; x < W; x++)
 for (let y = 0; y < H; y++)
   if (darkY[y] > W * 0.85) for (let k = -1; k <= 1; k++) lineY.add(y + k);
 
+// 배경 지배색 2개 추출 — 체커보드는 두 톤이고, 회색이 아니라 살짝
+// 물든 톤일 수도 있다 (실측: gnawer 시트는 갈색기가 돌아 회색 규칙을
+// 빠져나갔다). 16단계 양자화 히스토그램의 상위 2색을 배경 후보로 삼되,
+// 각각이 전체의 8% 이상을 덮을 때만 믿는다
+const hist = new Map();
+for (let i = 0; i < data.length; i += 4) {
+  const k = ((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4);
+  hist.set(k, (hist.get(k) || 0) + 1);
+}
+const top = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
+const bgColors = [];
+for (const [k, n] of top) {
+  if (n < (W * H) * 0.08) continue;
+  bgColors.push([((k >> 8) & 15) * 16 + 8, ((k >> 4) & 15) * 16 + 8, (k & 15) * 16 + 8]);
+}
+
 let cleared = 0;
 for (let y = 0; y < H; y++) {
   for (let x = 0; x < W; x++) {
@@ -51,7 +67,11 @@ for (let y = 0; y < H; y++) {
     const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
     const gray = Math.abs(r - g) < 20 && Math.abs(g - b) < 20 && Math.abs(r - b) < 20;
     const bright = (r + g + b) / 3;
-    if ((gray && bright > 100 && bright < 235) || lineX.has(x) || lineY.has(y)) {
+    const nearBg = bgColors.some(
+      ([br, bgc, bb]) =>
+        Math.abs(r - br) < 26 && Math.abs(g - bgc) < 26 && Math.abs(b - bb) < 26,
+    );
+    if ((gray && bright > 100 && bright < 235) || nearBg || lineX.has(x) || lineY.has(y)) {
       data[i + 3] = 0;
       cleared++;
     }

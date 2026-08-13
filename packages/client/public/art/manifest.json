@@ -19,6 +19,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "devourer": {
@@ -29,6 +37,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "flamer": {
@@ -39,6 +55,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "fusionite": {
@@ -59,6 +83,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "gunship": {
@@ -69,6 +101,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "ironwalker": {
@@ -79,6 +119,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "lightpylon": {
@@ -127,6 +175,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "shade": {
@@ -147,6 +203,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "skiff": {
@@ -177,6 +241,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "sporetentacle": {
@@ -207,6 +279,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "wingswarm": {
@@ -217,6 +297,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "zealot": {
