@@ -10,6 +10,9 @@
 
 import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 
 import { ClientMsg, DEFAULT_MAP_ID, FACTION_IDS, Replay, TICK_MS, Team, getFaction, getMap } from '@royale/shared';
@@ -22,6 +25,48 @@ const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
 /** 설정하면 리플레이를 디스크에도 쓴다 (미설정 시 메모리 전용) */
 const REPLAY_DIR = process.env.REPLAY_DIR;
+
+/**
+ * 클라이언트 정적 서빙 — 배포를 "웹 서비스 1개"로 만든다 (라운드 12).
+ *
+ * 빌드된 클라이언트(client/dist)가 있으면 이 서버가 페이지·에셋까지 직접
+ * 내준다. 그러면 Render/Railway 같은 Node 호스팅에 이 서버 하나만 올려도
+ * 두 플레이어가 같은 주소로 접속해 방을 만들 수 있다. 개발 중(vite dev)에는
+ * dist가 없어도 되고, 그때는 기존처럼 API/WS 전용으로 동작한다.
+ */
+const CLIENT_DIST =
+  process.env.CLIENT_DIST ??
+  join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'client', 'dist');
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.png': 'image/png',
+  '.json': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.md': 'text/markdown; charset=utf-8',
+};
+
+/** dist 안의 파일이면 스트리밍으로 응답. 처리했으면 true */
+function serveStatic(url: string, res: ServerResponse): boolean {
+  if (!existsSync(CLIENT_DIST)) return false;
+  const clean = decodeURIComponent(url.split('?')[0]);
+  const rel = clean === '/' ? '/index.html' : clean;
+  // 경로 탈출 방지 — dist 바깥은 절대 내주지 않는다
+  const file = normalize(join(CLIENT_DIST, rel));
+  if (!file.startsWith(normalize(CLIENT_DIST))) return false;
+  if (!existsSync(file) || !statSync(file).isFile()) return false;
+  const type = MIME[extname(file)] ?? 'application/octet-stream';
+  res.writeHead(200, {
+    'content-type': type,
+    'cache-control': file.endsWith('index.html') ? 'no-cache' : 'public, max-age=3600',
+  });
+  createReadStream(file).pipe(res);
+  return true;
+}
 
 /** 대기열 (선착순 2명씩 매칭) */
 /** 진행 중인 매치 */
@@ -82,6 +127,8 @@ const http = createServer((req, res) => {
     sendJson(res, 200, r);
     return;
   }
+
+  if (serveStatic(url, res)) return;
 
   res.writeHead(404).end('royale game server');
 });

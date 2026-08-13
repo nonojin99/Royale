@@ -1,0 +1,17 @@
+# Render.com 원클릭 배포 설정 (라운드 12)
+#
+# 사용법: render.com → New → Blueprint → 이 저장소 선택 → 배포.
+# 무료 플랜은 15분 유휴 시 잠들고 첫 접속에 ~30초 걸린다.
+services:
+  - type: web
+    name: royale
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: node packages/server/dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: REPLAY_KEEP
+        value: '50'

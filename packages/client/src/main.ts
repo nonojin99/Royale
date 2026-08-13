@@ -61,7 +61,10 @@ function serverUrl(): string {
   const env = import.meta.env.VITE_SERVER_URL as string | undefined;
   if (env) return env;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.hostname}:8787`;
+  // vite dev(5173)에서는 별도 서버(8787), 배포에서는 페이지를 내준 서버가
+  // 곧 게임 서버다 (라운드 12 — 단일 서비스 배포)
+  if (import.meta.env.DEV) return `${proto}//${location.hostname}:8787`;
+  return `${proto}//${location.host}`;
 }
 
 function withSolo(url: string): string {
