@@ -109,6 +109,14 @@
    "walk": {
     "frames": 5,
     "fps": 10
+   },
+   "walkback": {
+    "frames": 5,
+    "fps": 10
+   },
+   "attackback": {
+    "frames": 5,
+    "fps": 14
    }
   },
   "scoutcar": {

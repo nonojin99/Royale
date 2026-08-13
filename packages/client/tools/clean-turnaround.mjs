@@ -49,14 +49,48 @@ for (let y = 0; y < H; y++) {
   for (let x = 0; x < W; x++) {
     const i = (y * W + x) * 4;
     const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
-    const gray = Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && Math.abs(r - b) < 14;
+    const gray = Math.abs(r - g) < 20 && Math.abs(g - b) < 20 && Math.abs(r - b) < 20;
     const bright = (r + g + b) / 3;
-    if ((gray && bright > 112 && bright < 220) || lineX.has(x) || lineY.has(y)) {
+    if ((gray && bright > 100 && bright < 235) || lineX.has(x) || lineY.has(y)) {
       data[i + 3] = 0;
       cleared++;
     }
   }
 }
+
+// 남은 불투명 픽셀 중 작은 섬(체커 노이즈 잔재)을 걷어낸다 — 캐릭터는
+// 수천 픽셀짜리 큰 섬이라 건드리지 않는다. 잔재를 안 걷으면 바운딩
+// 박스가 부풀어 캐릭터가 쪼그라든다 (실측: 소총병 배율 0.22)
+const MIN_ISLAND = 120;
+const label = new Int32Array(W * H).fill(-1);
+const stack = [];
+let islands = 0;
+for (let start = 0; start < W * H; start++) {
+  if (label[start] >= 0 || data[start * 4 + 3] === 0) continue;
+  const members = [];
+  stack.push(start);
+  label[start] = start;
+  while (stack.length) {
+    const p0 = stack.pop();
+    members.push(p0);
+    const x0 = p0 % W;
+    const y0 = (p0 - x0) / W;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x0 + dx;
+      const ny = y0 + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const np = ny * W + nx;
+      if (label[np] >= 0 || data[np * 4 + 3] === 0) continue;
+      label[np] = start;
+      stack.push(np);
+    }
+  }
+  if (members.length < MIN_ISLAND) {
+    for (const m of members) data[m * 4 + 3] = 0;
+    islands++;
+  }
+}
+if (islands) console.log(`   잔재 섬 ${islands}개 제거`);
 writeFileSync(dst, PNG.sync.write(png));
 console.log(
   `✅ ${dst} — 격자선 세로 ${lineX.size / 3}줄·가로 ${lineY.size / 3}줄, ` +
