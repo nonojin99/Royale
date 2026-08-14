@@ -269,9 +269,12 @@ export function createState(
     }
   }
 
-  // 본진은 BASE_SITES 순서대로 생성 → id가 결정론적으로 고정된다
+  // 본진은 BASE_SITES 순서대로 생성 → id가 결정론적으로 고정된다.
+  // 침공 모드의 팀 1은 기지가 없다 — 파도는 모서리에서 온다. 기지를 남기면
+  // 아군 전체가 그걸 전역 표적으로 삼아 맵 끝까지 행군한다 (라운드 24 실전)
   for (const site of BASE_SITES) {
     if (site.startFor === -1) continue;
+    if (invasion && site.startFor === 1) continue;
     s.entities.push(makeBase(s, site.startFor, site, true));
   }
   return s;
@@ -640,9 +643,43 @@ function spawnWave(s: GameState): void {
   );
   s.nextWaveTick = s.tick + Math.trunc(interval);
 
-  const home = s.entities.find((e) => e.kind === 'base' && e.team === 1 && e.isMain);
-  const cx = home ? home.x : ARENA_W - 5000;
-  const cy = home ? home.y : 5000;
+  // 스폰 모서리 로테이션 — 파도마다 다른 방향에서 온다 ("사방에서 쏟아진다").
+  // 내 본진에서 가장 먼 세 모서리를 돌아가며 쓴다
+  const myMain = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+  const M = 5000;
+  const corners: Array<[number, number]> = [
+    [M, M],
+    [ARENA_W - M, M],
+    [M, ARENA_H - M],
+    [ARENA_W - M, ARENA_H - M],
+  ];
+  if (myMain) {
+    corners.sort(
+      (a, b) =>
+        dist2(b[0], b[1], myMain.x, myMain.y) - dist2(a[0], a[1], myMain.x, myMain.y),
+    );
+    corners.length = 3; // 내 본진 코앞 모서리는 제외
+  }
+  const anchor = corners[(s.wave - 1) % corners.length];
+  // 모서리가 물·벽이면 곁의 통행 타일로 (고정 나선 — 결정론)
+  let [cx, cy] = anchor;
+  {
+    const tx0 = Math.trunc(cx / 1000);
+    const ty0 = Math.trunc(cy / 1000);
+    outer: for (let r = 0; r < 12; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const cheb = Math.abs(dx) > Math.abs(dy) ? Math.abs(dx) : Math.abs(dy);
+          if (cheb !== r) continue;
+          if (!blockedAt((tx0 + dx) * 1000 + 500, (ty0 + dy) * 1000 + 500)) {
+            cx = (tx0 + dx) * 1000 + 500;
+            cy = (ty0 + dy) * 1000 + 500;
+            break outer;
+          }
+        }
+      }
+    }
+  }
 
   // 침공 종족의 유닛을 코스트 오름차순으로 — 파도 번호가 클수록 뒤(비싼) 유닛부터 산다
   const f = getFaction(s.players[1].faction);
@@ -944,6 +981,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
     } else {
+      // 침공 모드의 아군은 무표적이면 **제자리** — 수비가 기본 자세다.
+      // 전진 본능을 남기면 파도 소탕 후 전군이 스폰 지점으로 순례를 떠난다
+      if (s.invasion && e.team === 0) continue;
       // 타겟이 없으면 적 진영 방향으로 전진
       [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
     }

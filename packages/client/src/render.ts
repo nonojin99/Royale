@@ -1076,6 +1076,22 @@ export class Renderer {
   private readonly facing = new Map<number, 1 | -1>();
 
   /**
+   * 아트가 오른쪽으로 기운 유닛 (전수 검토 — 라운드 24).
+   *
+   * 좌우 반전 규칙은 "아트가 왼쪽을 본다"를 가정하는데, 생성 아트는 총구
+   * 방향이 제각각이다. 오른쪽으로 기운 시트는 반전 방향을 뒤집는다.
+   * 정면 대칭 유닛(광전사·술사 등)은 어느 쪽이든 무해해서 표에 없다.
+   */
+  private static readonly ART_LEANS_RIGHT = new Set([
+    'rifleman',
+    'flamer',
+    'siegetank',
+    'gunship',
+    'gnawer',
+    'burrower',
+  ]);
+
+  /**
    * 이동 방향에 따른 좌우 반전.
    *
    * 아트는 화면 아래(약간 왼쪽)를 향한 한 장뿐이다. 위/아래 방향까지 아트로
@@ -1089,7 +1105,9 @@ export class Renderer {
       if (dx > 8) this.facing.set(e.id, -1);
       else if (dx < -8) this.facing.set(e.id, 1);
     }
-    return this.facing.get(e.id) ?? 1;
+    const v = this.facing.get(e.id) ?? 1;
+    // 오른쪽으로 기운 아트는 거울 방향이 반대다
+    return Renderer.ART_LEANS_RIGHT.has(e.unit) ? -v : v;
   }
 
   /** 상하 시선 — 화면 위로 움직이면 -1(등), 아래로 움직이면 1(정면) */
