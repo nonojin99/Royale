@@ -925,6 +925,12 @@ function separate(s: GameState): void {
     if (e.flying || !blockedAt(cx, cy)) {
       e.x = cx;
       e.y = cy;
+    } else if (!blockedAt(cx, e.y)) {
+      // 벽 방향 밀기를 통째로 버리면 혼잡 속 유닛이 벽에 고정된다 —
+      // 이동 코드와 같은 축 분해 슬라이드로 벽을 따라 흐르게 한다 (라운드 19)
+      e.x = cx;
+    } else if (!blockedAt(e.x, cy)) {
+      e.y = cy;
     }
   }
 }

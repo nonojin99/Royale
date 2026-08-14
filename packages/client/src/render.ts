@@ -1042,7 +1042,12 @@ export class Renderer {
   private vfacingOf(e: Entity, prev: [number, number] | undefined, myTeam: Team): number {
     if (prev) {
       const dy = myTeam === 0 ? e.y - prev[1] : prev[1] - e.y; // 화면 기준 dy
-      if (dy > 8) this.vfacing.set(e.id, 1);
+      const adx = Math.abs(e.x - prev[0]);
+      // 옆걸음이 우세하면 정면(거울상) — 등은 화면 위로 '올라갈' 때만 어울린다.
+      // 이 우선순위가 없으면 한 번 위로 걸은 유닛이 옆으로 가면서도 계속
+      // 등을 보였다 (라운드 19 실전 보고)
+      if (adx > Math.abs(dy) && adx > 8) this.vfacing.set(e.id, 1);
+      else if (dy > 8) this.vfacing.set(e.id, 1);
       else if (dy < -8) this.vfacing.set(e.id, -1);
     }
     return this.vfacing.get(e.id) ?? 1;

@@ -148,6 +148,29 @@ function fieldFor(gx: number, gy: number): Int32Array {
 }
 
 /**
+ * 막힌 목표 타일을 가장 가까운 통행 타일로 옮긴다.
+ *
+ * 물·벽 위를 목표로 받으면(타겟 없는 전진이 물가를 가리킬 때, 물 위의 공중
+ * 유닛을 추격할 때) 거리장이 전부 INF가 되고, navStep이 직선 돌진으로
+ * 후퇴해 유닛이 벽에 끼었다 (라운드 19 실전 보고 — 강철거인 낌).
+ * 고정된 나선 순서로 첫 후보를 취하므로 결정론이 유지된다.
+ */
+function nearestWalkableTile(gx: number, gy: number): [number, number] {
+  if (walkable(gx, gy)) return [gx, gy];
+  const R = W > H ? W : H;
+  for (let r = 1; r < R; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const cheb = Math.abs(dx) > Math.abs(dy) ? Math.abs(dx) : Math.abs(dy);
+        if (cheb !== r) continue;
+        if (walkable(gx + dx, gy + dy)) return [gx + dx, gy + dy];
+      }
+    }
+  }
+  return [gx, gy];
+}
+
+/**
  * (x, y)에서 목적지로 가기 위해 지금 향할 지점 (밀리타일).
  *
  * 목적지와 같은 칸이거나 길이 막혀 있으면 목적지를 그대로 돌려준다 — 그 경우
@@ -159,11 +182,18 @@ export function navStep(
   goalX: number,
   goalY: number,
 ): [number, number] {
-  const gx = tileX(goalX);
-  const gy = tileY(goalY);
+  let gx = tileX(goalX);
+  let gy = tileY(goalY);
   const cx = tileX(x);
   const cy = tileY(y);
   if (cx === gx && cy === gy) return [goalX, goalY];
+  // 막힌 목표는 곁의 통행 타일로 — 이미 그 타일에 서 있으면 제자리
+  const [wx, wy] = nearestWalkableTile(gx, gy);
+  if (wx !== gx || wy !== gy) {
+    gx = wx;
+    gy = wy;
+    if (cx === gx && cy === gy) return [x, y];
+  }
 
   const field = fieldFor(gx, gy);
   const here = field[cy * W + cx];
