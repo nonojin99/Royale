@@ -434,6 +434,22 @@
     #overlay p { color: var(--muted); font-size: 13px; max-width: 340px; line-height: 1.7; }
     #faction-picker { display: flex; flex-direction: column; gap: 8px; width: min(360px, 88vw); }
     #map-picker { display: flex; flex-direction: column; gap: 8px; width: min(360px, 88vw); }
+    #level-picker { display: flex; gap: 8px; width: min(360px, 88vw); }
+    #level-picker.hidden { display: none; }
+    #lobby-label-level.hidden { display: none; }
+    .lvl {
+      flex: 1; padding: 9px 0;
+      font: 700 13px/1 var(--font-pixel);
+      color: #7e93a8; letter-spacing: 1px;
+      background: #101d30; border: 0; cursor: pointer;
+      clip-path: var(--cut-sm);
+      box-shadow: inset 0 2px 0 #1d334c, inset 0 -2px 0 #050b14;
+    }
+    .lvl:hover { color: #cfe3f5; }
+    .lvl.selected {
+      color: #eaf6ff; background: #17324e;
+      box-shadow: inset 0 0 0 1.5px #38bdf8, 0 0 10px rgba(56, 189, 248, .25);
+    }
     #lobby-label, .lobby-label {
       font-family: var(--font-pixel);
       font-size: 11px; font-weight: 700; color: var(--muted);
@@ -699,6 +715,12 @@
       <div id="lobby-label-map" class="lobby-label">맵</div>
       <div id="map-picker"></div>
       <div id="room-map" class="hidden"></div>
+      <div id="lobby-label-level" class="lobby-label hidden">봇 난이도</div>
+      <div id="level-picker" class="hidden">
+        <button class="lvl" data-level="easy">초급</button>
+        <button class="lvl selected" data-level="normal">중급</button>
+        <button class="lvl" data-level="hard">고급</button>
+      </div>
       <button id="btn-solo-start" class="hidden">시작</button>
       <button id="btn-ready" class="hidden">준비</button>
       <button id="btn-start-room" class="hidden" disabled>경기 시작</button>

@@ -17,6 +17,8 @@ export interface CHello {
   factionId?: string;
   /** 원하는 맵 id — 솔로는 그대로, 2인 매칭은 먼저 온 쪽 선택을 따른다 */
   mapId?: string;
+  /** 봇 난이도 (솔로 전용): 'easy' | 'normal' | 'hard'. 그 외 값은 중급 */
+  botLevel?: string;
 }
 
 /**

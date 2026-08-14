@@ -85,7 +85,7 @@ export class NetClient {
     name: string,
     factionId: string,
     mapId?: string,
-    opts?: { solo?: boolean; onOpen?: () => void },
+    opts?: { solo?: boolean; botLevel?: string; onOpen?: () => void },
   ): void {
     let url = this.url;
     if (opts?.solo) url += (url.includes('?') ? '&' : '?') + 'solo=1';
@@ -93,7 +93,7 @@ export class NetClient {
     this.ws = ws;
 
     ws.onopen = () => {
-      this.send({ t: 'hello', name, factionId, mapId });
+      this.send({ t: 'hello', name, factionId, mapId, botLevel: opts?.botLevel });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
       opts?.onOpen?.();

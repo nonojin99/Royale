@@ -231,6 +231,7 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
       // 알 수 없는 종족 id는 getFaction이 기본 종족으로 떨어뜨린다
       conn.factionId = getFaction(msg.factionId).id;
       conn.mapId = msg.mapId;
+      conn.botLevel = msg.botLevel;
       if (conn.match) return;
       if (solo) {
         // 연습 모드 봇은 무작위 종족을 쓴다 — 같은 종족만 상대하면

@@ -185,11 +185,12 @@ async function boot(): Promise<void> {
 
   buildFactionPicker();
   buildMapPicker();
+  wireLevelPicker();
 
   // 봇전 — 설정 화면(종족·맵)을 거쳐 시작한다 (라운드 11.5)
   $('start').addEventListener('click', () => showSetup('solo'));
   $('btn-solo-start').addEventListener('click', () => {
-    net.connect(playerName(), selectedFaction, selectedMap, { solo: true });
+    net.connect(playerName(), selectedFaction, selectedMap, { solo: true, botLevel: selectedLevel });
     setStatus('접속 중…');
     ($('btn-solo-start') as HTMLButtonElement).disabled = true;
   });
@@ -313,6 +314,9 @@ function showSetup(mode: 'solo' | 'room'): void {
     $('map-picker').classList.remove('hidden');
     $('room-map').classList.add('hidden');
   }
+  // 봇 난이도는 솔로에서만 의미가 있다 — 방에는 봇이 없다
+  $('lobby-label-level').classList.toggle('hidden', mode !== 'solo');
+  $('level-picker').classList.toggle('hidden', mode !== 'solo');
   setStatus('');
 }
 
@@ -389,6 +393,20 @@ let selectedMap =
   new URLSearchParams(location.search).get('map') ?? DEFAULT_MAP_ID;
 
 /** 맵 선택 — 종족 픽커와 같은 문법의 카드 줄 */
+/** 솔로 봇 난이도 — 픽커에서 고르고 hello로 보낸다 */
+let selectedLevel = 'normal';
+
+function wireLevelPicker(): void {
+  const root = document.getElementById('level-picker');
+  if (!root) return;
+  root.querySelectorAll<HTMLButtonElement>('.lvl').forEach((b) => {
+    b.addEventListener('click', () => {
+      selectedLevel = b.dataset.level ?? 'normal';
+      root.querySelectorAll('.lvl').forEach((x) => x.classList.toggle('selected', x === b));
+    });
+  });
+}
+
 function buildMapPicker(): void {
   const root = document.getElementById('map-picker');
   if (!root) return;

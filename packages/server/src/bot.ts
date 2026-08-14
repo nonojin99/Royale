@@ -40,24 +40,47 @@ import {
   workerCapacity,
 } from '@royale/shared';
 
-/** 봇이 수를 두는 최소 간격 (틱) */
-const MIN_INTERVAL = 24;
-/** 이 이상 기지를 늘리지는 않는다 */
-const MAX_BASES = 4;
+/** 난이도 — 로비에서 고른다. 알 수 없는 값은 botLevelOf가 중급으로 떨어뜨린다 */
+export type BotLevel = 'easy' | 'normal' | 'hard';
+
+export function botLevelOf(v: unknown): BotLevel {
+  return v === 'easy' || v === 'hard' ? v : 'normal';
+}
+
 /**
- * 일꾼 상한. 정원(기지당 8, 최대 32)까지 다 채우면 "일꾼→확장→일꾼→…"
- * 순환에 갇혀 병력을 한 기도 안 뽑는다 — 플레이테스트에서 실제로 관측된
- * 버그다. 경제는 이 정도면 충분하고, 나머지 우선순위가 숨을 쉰다.
- */
-const MAX_WORKERS = 10;
-/**
- * 방어 건물 상한.
+ * 난이도별 조율 값.
  *
- * 없으면 봇이 가난할 때 "제일 싼 수 = 포탑 2코스트"만 무한히 두면서 확장도
- * 병력도 잊는다 — 대협곡 실전에서 포탑 ~20개로 성을 쌓고 자기 램프까지
- * 막아 본진을 스스로 섬으로 만든 사건의 원인이다 (라운드 15).
+ * 봇의 세기는 전략이 아니라 **손과 경제의 속도**로 조절한다 — 전략을
+ * 난이도마다 갈라놓으면 유지비가 배로 들고, 사람이 느끼는 "세다"의 대부분은
+ * 어차피 수 간격과 일꾼 수에서 온다 (스타의 컴퓨터도 같은 원리다).
+ *
+ * - interval: 수 간격(틱). 20틱 = 1초. 초급은 3초에 한 수, 고급은 0.5초
+ * - maxWorkers: 일꾼 상한. 정원까지 다 채우면 "일꾼→확장→…" 순환에 갇혀
+ *   병력을 안 뽑는 버그가 있어(실측) 정원보다 낮게 잡는다
+ * - maxDefenses: 방어 건물 상한. 없으면 가난할 때 "제일 싼 수 = 포탑
+ *   2코스트"만 무한히 두면서 성을 쌓는다 — 대협곡에서 포탑 ~20개로 자기
+ *   램프를 막아 본진을 섬으로 만든 사건의 원인 (라운드 15)
+ * - maxBases: 확장 상한. 초급은 2로 묶어 후반 물량이 아예 안 나온다
+ * - useUpgrades: 강화 사용 여부
+ * - armyDelay: 이 틱 전에는 병력을 안 뽑는다(방어 건물은 예외). 무저항
+ *   실측에서 초급이 "경제 투자를 안 하니 싼 유닛을 바로 쏟는" 역설로
+ *   오히려 제일 빨리 이겼다 — 초보자에게 필요한 건 약한 봇이 아니라
+ *   **배울 시간**이다. 초반 75초를 비워 준다
  */
-const MAX_DEFENSES = 4;
+interface Tuning {
+  interval: number;
+  maxWorkers: number;
+  maxDefenses: number;
+  maxBases: number;
+  useUpgrades: boolean;
+  armyDelay: number;
+}
+
+const TUNINGS: Record<BotLevel, Tuning> = {
+  easy: { interval: 60, maxWorkers: 6, maxDefenses: 2, maxBases: 2, useUpgrades: false, armyDelay: 20 * 75 },
+  normal: { interval: 24, maxWorkers: 10, maxDefenses: 4, maxBases: 4, useUpgrades: true, armyDelay: 0 },
+  hard: { interval: 10, maxWorkers: 16, maxDefenses: 4, maxBases: 4, useUpgrades: true, armyDelay: 0 },
+};
 
 export interface BotMove {
   kind: CommandKind;
@@ -68,15 +91,17 @@ export interface BotMove {
 
 export class Bot {
   private readonly rng: Rng;
+  private readonly tune: Tuning;
   private lastTick = -999;
 
-  constructor(seed: number) {
+  constructor(seed: number, level: BotLevel = 'normal') {
     // 시뮬 RNG와 다른 스트림을 쓴다 (섞이면 디버깅이 지옥이 된다)
     this.rng = createRng((seed ^ 0xa5a5a5a5) >>> 0);
+    this.tune = TUNINGS[level];
   }
 
   decide(s: GameState, tick: number): BotMove | null {
-    if (tick - this.lastTick < MIN_INTERVAL) return null;
+    if (tick - this.lastTick < this.tune.interval) return null;
 
     const me = s.players[1];
     // 상대 병력이 더 크면 경제보다 병력이 먼저다 — 확장만 하다 죽지 않는다
@@ -119,14 +144,14 @@ export class Bot {
   private train(s: GameState): BotMove | null {
     const me = s.players[1];
     if (me.minerals < WORKER_COST) return null;
-    if (me.workers >= Math.min(MAX_WORKERS, workerCapacity(s, 1))) return null;
+    if (me.workers >= Math.min(this.tune.maxWorkers, workerCapacity(s, 1))) return null;
     return { kind: 'worker', id: '', x: 0, y: 0 };
   }
 
   /** 2순위: 확장 — 자기 진영에 가까운 빈 지점부터 채운다 */
   private expand(s: GameState): BotMove | null {
     if (s.players[1].minerals < BASE_BUILD_COST) return null;
-    if (baseCount(s, 1) >= MAX_BASES) return null;
+    if (baseCount(s, 1) >= this.tune.maxBases) return null;
 
     const taken = occupiedSites(s);
     // 팀 1은 위쪽이므로 y가 작은 지점을 선호한다. 인접 제약을 지키지 않으면
@@ -164,6 +189,7 @@ export class Bot {
 
   /** 3.5순위: 강화 — 확장 여력을 남기고 여유 자금으로만 올린다 */
   private upgradeMove(me: GameState['players'][number]): BotMove | null {
+    if (!this.tune.useUpgrades) return null;
     if (!canUpgrade(me)) return null;
     if (me.minerals < UPGRADE_COSTS[me.upgrade] + BASE_BUILD_COST) return null;
     return { kind: 'upgrade', id: '', x: 0, y: 0 };
@@ -179,7 +205,7 @@ export class Bot {
   private reserveFor(s: GameState, me: GameState['players'][number]): number {
     const taken = occupiedSites(s);
     const canExpand =
-      baseCount(s, 1) < MAX_BASES && BASE_SITES.some((b) => !taken.has(b.id));
+      baseCount(s, 1) < this.tune.maxBases && BASE_SITES.some((b) => !taken.has(b.id));
     if (canExpand && me.workers >= workerCapacity(s, 1)) return BASE_BUILD_COST;
 
     if (!me.research) {
@@ -210,7 +236,9 @@ export class Bot {
       if (u.kind === 'spell') continue;
       // 포탑은 상한까지만 — 가난할 때 "제일 싼 수"로 무한히 두는 함정을 막고,
       // 상한에 닿으면 null을 돌려 확장·저축 우선순위로 흘러가게 한다
-      if (u.kind === 'building' && defenses >= MAX_DEFENSES) continue;
+      if (u.kind === 'building' && defenses >= this.tune.maxDefenses) continue;
+      // 초급의 유예 시간 — 병력은 나중에, 방어 건물만 허용
+      if (u.kind !== 'building' && s.tick < this.tune.armyDelay) continue;
       if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
       if (u.cost > bestCost) {
         bestCost = u.cost;

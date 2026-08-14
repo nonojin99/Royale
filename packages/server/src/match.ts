@@ -28,7 +28,7 @@ import {
 } from '@royale/shared';
 
 import { Conn } from './conn.js';
-import { Bot } from './bot.js';
+import { Bot, botLevelOf } from './bot.js';
 
 /** 한 번의 advance()에서 진행할 수 있는 최대 틱 수 (서버 히컵 시 폭주 방지) */
 const MAX_CATCHUP_TICKS = 40;
@@ -79,7 +79,7 @@ export class Match {
 
     this.state = createState(this.seed, this.factions, this.mapId);
     this.conns = [a, b];
-    this.bot = b === null ? new Bot(this.seed) : null;
+    this.bot = b === null ? new Bot(this.seed, botLevelOf(a.botLevel)) : null;
 
     a.match = this;
     a.team = 0;
