@@ -22,6 +22,7 @@ import {
   MATCH_TICKS,
   OVERTIME_TICKS,
   MINERAL_MAX,
+  SKILL_CHARGE_TICKS,
   MINERAL_SCALE,
   MINERAL_START,
   ReplayPlayer,
@@ -729,6 +730,7 @@ function place(s, team, unitId, x, y) {
     life: -1,
     target: -1,
     flying: u.flying,
+    charge: 0,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -1228,4 +1230,22 @@ test('실험장 — 반경 해제·무한 자원·승패 없음, 해시에 모�
   // 같은 시드의 일반 경기와 해시가 다르다 (모드가 해시에 들어간다)
   const normal = createState(11, ['steel', 'swarmhive'], 'coast');
   assert.notEqual(hashState(normal), hashState(createState(11, ['steel', 'swarmhive'], 'coast', true)));
+});
+
+test('충전 스킬 — 게이지가 차면 사거리 안에서 자동 발사한다', () => {
+  const s = createState(9, ['steel', 'swarmhive'], 'coast', true);
+  // 전투비행선 홀로 — 표적이 없으면 게이지가 만땅에서 대기한다
+  const gs = place(s, 0, 'gunship', 20000, 10000);
+  for (let i = 0; i < SKILL_CHARGE_TICKS + 10; i++) step(s, []);
+  assert.equal(byId(s, gs.id).charge, SKILL_CHARGE_TICKS, '표적 없이는 발사하지 않는다');
+
+  // 사거리(7타일) 안에 물어뜯는것 4기 — 융단폭격 240이 한 번에 지운다.
+  // 워밍업 동안 비행선이 이동했을 수 있으니 **현재 위치** 곁에 놓는다
+  const at = byId(s, gs.id);
+  for (let i = 0; i < 4; i++) place(s, 1, 'gnawer', at.x + 4000 + i * 400, at.y);
+  const before = s.entities.filter((e) => e.kind === 'unit' && e.team === 1).length;
+  for (let i = 0; i < 3; i++) step(s, []);
+  const after = s.entities.filter((e) => e.kind === 'unit' && e.team === 1).length;
+  assert.ok(before - after >= 3, `광역 즉사 기대 (${before}→${after}) — 일반 공격으로는 불가능한 속도`);
+  assert.ok(byId(s, gs.id).charge < SKILL_CHARGE_TICKS, '발사 후 게이지가 리셋된다');
 });

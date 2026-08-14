@@ -50,6 +50,8 @@ export interface UnitDef {
   /** 광역 피해 반경 (밀리타일). 0이면 단일 대상 */
   splash: number;
   targets: TargetPref;
+  /** 충전 스킬 — 게이지가 차면 이 주문을 사거리 안에서 자동 발사한다 */
+  charges?: string;
   /**
    * 구조물(기지·건물) 상대 데미지 배율 — **백분율 정수** (100 = 그대로).
    *
@@ -140,6 +142,7 @@ const defs: UnitDef[] = [
     id: 'gunship', name: '전투비행선', cost: 4, kind: 'unit', flying: true,
     hp: 700, damage: 100, hitSpeed: seconds(1.3, TICK_RATE),
     range: tiles(3.0), speed: spd(1.1), siege: 120, color: 0x0891b2,
+    charges: 'carpetbomb',
   }),
   unit({
     id: 'carpetbomb', name: '융단폭격', cost: 3, kind: 'spell', count: 0,
@@ -156,8 +159,9 @@ const defs: UnitDef[] = [
     range: tiles(0.7), speed: spd(1.5), targets: 'ground', siege: 40, color: 0xa16207,
   }),
   unit({
+    // 라운드 21 상향: 결투 매트릭스 0/14 전패 — 군체 유일 대공의 몸값을 못 했다
     id: 'spitter', name: '가시뱉는것', cost: 3, kind: 'unit', count: 2,
-    hp: 300, damage: 65, hitSpeed: seconds(1.0, TICK_RATE),
+    hp: 340, damage: 80, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: spd(1.05), siege: 50, color: 0x84cc16,
   }),
   unit({
@@ -212,9 +216,10 @@ const defs: UnitDef[] = [
     // 라운드 20 너프: 등코스트 전 매치업 무손실 전승 관측(130/1.6s/2.0).
     // 물어뜯는것만 1방, 소총병은 2방 유지 — 범위 학살의 '속도'만 깎는다
     id: 'mystic', name: '술사', cost: 4, kind: 'unit',
-    hp: 300, damage: 110, hitSpeed: seconds(1.9, TICK_RATE),
+    hp: 300, damage: 110, hitSpeed: seconds(1.7, TICK_RATE),
     range: tiles(5.0), speed: spd(0.9), splash: tiles(1.7),
     targets: 'ground', siege: 80, color: 0x8b5cf6,
+    charges: 'mindbreak',
   }),
   unit({
     id: 'fusionite', name: '융합체', cost: 5, kind: 'unit',
@@ -229,9 +234,10 @@ const defs: UnitDef[] = [
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0xfcd34d,
   }),
   unit({
+    // 라운드 21 상향: 0/14 전패 — 암살자가 접근 전에 죽었다. 발과 맷집을 준다
     id: 'shade', name: '그림자', cost: 4, kind: 'unit',
-    hp: 550, damage: 320, hitSpeed: seconds(1.8, TICK_RATE),
-    range: tiles(0.8), speed: spd(1.2), targets: 'ground', siege: 70, color: 0x4c1d95,
+    hp: 650, damage: 320, hitSpeed: seconds(1.8, TICK_RATE),
+    range: tiles(0.8), speed: spd(1.35), targets: 'ground', siege: 70, color: 0x4c1d95,
   }),
   unit({
     id: 'skiff', name: '부유선', cost: 4, kind: 'unit', flying: true,

@@ -17,6 +17,8 @@ import {
   GameState,
   MATCH_TICKS,
   MINERAL_MAX,
+  SKILL_CAST_RANGE,
+  SKILL_CHARGE_TICKS,
   MINERAL_SCALE,
   OVERTIME_TICKS,
   TICK_RATE,
@@ -842,6 +844,13 @@ function unitTipHtml(id: string): string {
     }
     if (u.kind === 'building' && u.lifetime > 0) {
       rows.push(`수명 ${Math.round(u.lifetime / TICK_RATE)}초`);
+    }
+    if (u.charges) {
+      const sp = getUnit(u.charges);
+      rows.push(
+        `<span class="tt-warn">⚡ ${sp.name} — 게이지 ${SKILL_CHARGE_TICKS / TICK_RATE}초 충전 후 ` +
+          `사거리 ${SKILL_CAST_RANGE / 1000} 안에서 자동 발사 (광역 ${sp.damage})</span>`,
+      );
     }
   }
 

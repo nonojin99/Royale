@@ -57,6 +57,8 @@ import {
   WORKER_MINE_PER_TICK,
   WORKER_LOSS_DAMAGE,
   EXPAND_RANGE,
+  SKILL_CHARGE_TICKS,
+  SKILL_CAST_RANGE,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -98,6 +100,8 @@ export interface Entity {
   target: number;
   /** 공중 유닛인가 */
   flying: boolean;
+  /** 충전 스킬 게이지 (틱). 스킬 없는 엔티티는 0에 머문다 */
+  charge: number;
 
   /* ── 기지 전용 ── */
   /** 기지가 선 지점 id. 기지가 아니면 -1 */
@@ -204,6 +208,7 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     life: -1,
     target: -1,
     flying: false,
+    charge: 0,
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -468,6 +473,7 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     life: u.lifetime,
     target: -1,
     flying: u.flying,
+    charge: 0,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -761,6 +767,42 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (e.cd > 0) e.cd--;
   }
   reap(s);
+
+  // 4.5) 충전 스킬 — 게이지가 차면 사거리 안 가장 가까운 적에게 자동 발사.
+  // 읽기 패스로 발사 목록을 모은 뒤 한꺼번에 적용한다 (reap이 배열을 바꾸므로)
+  const casts: Array<{ team: Team; spell: UnitDef; x: number; y: number; caster: Entity }> = [];
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.deploy > 0) continue;
+    const spellId = getUnit(e.unit).charges;
+    if (!spellId) continue;
+    if (e.charge < SKILL_CHARGE_TICKS) {
+      e.charge++;
+      continue;
+    }
+    const spell = getUnit(spellId);
+    let bx = 0;
+    let by = 0;
+    let bestD2 = SKILL_CAST_RANGE * SKILL_CAST_RANGE + 1;
+    for (const o of s.entities) {
+      if (o.team === e.team || o.kind === 'base' || o.deploy > 0) continue;
+      if (spell.targets === 'ground' && o.flying) continue;
+      if (spell.targets === 'air' && !o.flying) continue;
+      const d2 = dist2(e.x, e.y, o.x, o.y);
+      // 엄격 부등호 + id 오름차순 순회 = 동률이면 id 작은 쪽 (결정론)
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        bx = o.x;
+        by = o.y;
+      }
+    }
+    if (bestD2 <= SKILL_CAST_RANGE * SKILL_CAST_RANGE) {
+      casts.push({ team: e.team, spell, x: bx, y: by, caster: e });
+    }
+  }
+  for (const c of casts) {
+    applySpell(s, c.team, c.spell, c.x, c.y);
+    c.caster.charge = 0;
+  }
 
   // 5) 타겟 선정 (읽기 전용 패스)
   const n = s.entities.length;
@@ -1059,6 +1101,7 @@ export function hashState(s: GameState): number {
   for (const e of s.entities) {
     mix(e.id);
     mix(e.team);
+    mix(e.charge);
     mix(e.x);
     mix(e.y);
     mix(e.hp);

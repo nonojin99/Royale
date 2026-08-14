@@ -25,6 +25,8 @@ import {
   GameState,
   MINERAL_PATCHES,
   SCALE,
+  SKILL_CHARGE_TICKS,
+  SKILL_CAST_RANGE,
   WALLS,
   blockedTile,
   elevTile,
@@ -232,7 +234,7 @@ export class Renderer {
     // world 컨테이너 전체를 밀므로 지형·유닛·이펙트가 한 몸으로 흔들린다
     const shakeLeft = this.shakeUntil - this.nowMs;
     if (shakeLeft > 0) {
-      const amp = 3 * Math.min(1, shakeLeft / 130);
+      const amp = 3 * Math.min(1, shakeLeft / 150);
       this.world.position.set((Math.random() * 2 - 1) * amp, (Math.random() * 2 - 1) * amp);
     } else {
       this.world.position.set(0, 0);
@@ -776,6 +778,16 @@ export class Renderer {
         this.progressBar(d, sx, by + r + 6, r * 2, 1 - e.deploy / DEPLOY_TICKS);
       }
       this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
+      // 충전 스킬 게이지 — 청록 바. 만땅이면 밝게 빛나 "곧 쏜다"를 알린다
+      if (getUnit(e.unit).charges && e.charge > 0) {
+        const w = PX_PER_TILE * 1.1;
+        const frac = Math.min(1, e.charge / SKILL_CHARGE_TICKS);
+        const gy = by - r - (e.hp < e.maxHp ? 11 : 6);
+        d.rect(sx - w / 2, gy, w, 2.5);
+        d.fill({ color: 0x0f172a, alpha: 0.7 });
+        d.rect(sx - w / 2, gy, w * frac, 2.5);
+        d.fill({ color: frac >= 1 ? 0x67e8f9 : 0x22d3ee, alpha: frac >= 1 ? 1 : 0.8 });
+      }
     }
 
     this.spawnFx(state, myTeam);
@@ -1010,8 +1022,10 @@ export class Renderer {
   private readonly lastHp = new Map<number, number>();
   /** 엔티티별 피격 플래시가 꺼지는 시각(ms) */
   private readonly flashUntil = new Map<number, number>();
-  /** 화면 흔들림이 끝나는 시각(ms) — 죽음 이펙트가 갱신한다 */
+  /** 화면 흔들림이 끝나는 시각(ms) — 구조물 파괴가 갱신한다 */
   private shakeUntil = 0;
+  /** 마지막 흔들림 시작 시각 — 연쇄 파괴 쿨다운용 */
+  private lastShakeMs = -9999;
 
   advanceAnimations(deltaMs: number): void {
     this.nowMs += deltaMs;
@@ -1078,10 +1092,12 @@ export class Renderer {
 
   /** 발사 감지용 — frameFor의 prevCd와 별도로 둬서 서로 간섭하지 않는다 */
   private readonly fxPrevCd = new Map<number, number>();
+  /** 충전 스킬 발사 감지 — 만땅에서 0으로 떨어지면 방금 쐈다 */
+  private readonly fxPrevCharge = new Map<number, number>();
   /** 직전 프레임에 살아 있던 엔티티 — 사라지면 그 자리에 죽음 이펙트 */
   private readonly fxSeen = new Map<
     number,
-    { sx: number; sy: number; faction: string; flying: boolean }
+    { sx: number; sy: number; faction: string; flying: boolean; kind: string }
   >();
   private fxLastTick = -1;
   /** 원거리 사격의 히트스캔 트레이서 — 120ms 섬광 한 줄 */
@@ -1109,6 +1125,7 @@ export class Renderer {
     // 틱이 뒤로 갔으면 새 경기다 — 이전 경기의 기억으로 이펙트를 만들면 안 된다
     if (state.tick < this.fxLastTick) {
       this.fxPrevCd.clear();
+      this.fxPrevCharge.clear();
       this.fxSeen.clear();
       this.fxList.length = 0;
       this.tracers.length = 0;
@@ -1123,6 +1140,28 @@ export class Renderer {
     for (const e of state.entities) byId.set(e.id, e);
 
     for (const e of state.entities) {
+      // 충전 스킬 발사 — 시뮬과 같은 규칙(사거리 안 최근접 적)으로 표적을
+      // 되짚어 그 자리에 큰 링을 그린다. 렌더 전용 추정이라 어긋나도 무해
+      const pc = this.fxPrevCharge.get(e.id);
+      this.fxPrevCharge.set(e.id, e.charge);
+      if (pc !== undefined && pc >= SKILL_CHARGE_TICKS && e.charge < pc) {
+        let bx = e.x;
+        let by2 = e.y;
+        let bd = SKILL_CAST_RANGE * SKILL_CAST_RANGE + 1;
+        for (const o of state.entities) {
+          if (o.team === e.team || o.kind === 'base') continue;
+          const dd = (o.x - e.x) ** 2 + (o.y - e.y) ** 2;
+          if (dd < bd) {
+            bd = dd;
+            bx = o.x;
+            by2 = o.y;
+          }
+        }
+        const [tx, ty] = this.toScreen(bx, by2, myTeam);
+        const faction = state.players[e.team].faction;
+        this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], tx, ty, 650, PX_PER_TILE * 3.2);
+        this.onFx?.('impact', faction, tx);
+      }
       const prev = this.fxPrevCd.get(e.id);
       this.fxPrevCd.set(e.id, e.cd);
       if (prev === undefined || e.cd <= prev) continue;
@@ -1158,6 +1197,7 @@ export class Renderer {
       if (byId.has(id)) continue;
       this.fxSeen.delete(id);
       this.fxPrevCd.delete(id);
+      this.fxPrevCharge.delete(id);
       this.pushFx(
         FX_DEATH[seen.faction],
         FX_COLOR[seen.faction],
@@ -1167,9 +1207,14 @@ export class Renderer {
         PX_PER_TILE * 1.3,
       );
       this.onFx?.('death', seen.faction, seen.sx);
-      // 죽음의 무게 — 130ms의 미세한 화면 흔들림. 이미 흔들리는 중이면
-      // 연장만 한다 (대군 전멸에서 진폭이 누적되면 멀미가 된다)
-      this.shakeUntil = Math.max(this.shakeUntil, this.nowMs + 130);
+      // 흔들림은 **구조물 파괴에만** — 유닛 하나하나에 흔들면 대군 전투에서
+      // 화면이 상시 진동해 멀미가 된다 (라운드 21 실전 보고). 유닛 죽음의
+      // 무게는 플래시·연기·데칼·사운드가 이미 지고 있다. 쿨다운 600ms로
+      // 연쇄 파괴도 한 번만 흔든다
+      if (seen.kind !== 'unit' && this.nowMs - this.lastShakeMs > 600) {
+        this.shakeUntil = this.nowMs + 150;
+        this.lastShakeMs = this.nowMs;
+      }
       // 지상 유닛은 그을음을 남긴다 — 전투의 역사가 잠시 땅에 쓰인다
       if (!seen.flying) {
         if (this.decals.length >= 60) this.decals.shift();
@@ -1183,6 +1228,7 @@ export class Renderer {
         sy,
         faction: state.players[e.team].faction,
         flying: e.flying,
+        kind: e.kind,
       });
     }
   }

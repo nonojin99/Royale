@@ -66,7 +66,6 @@ const defs: FactionDef[] = [
       tier1('ironwalker'),
       tier2('siegetank', 'scoutcar'),
       tier2('gunship', 'ironwalker'),
-      tier2('carpetbomb', 'bulwark'),
     ],
   },
   {
@@ -100,7 +99,6 @@ const defs: FactionDef[] = [
       tier1('mystic'),
       tier2('fusionite', 'strider'),
       tier2('skiff', 'mystic'),
-      tier2('mindbreak', 'shade'),
     ],
   },
 ];
