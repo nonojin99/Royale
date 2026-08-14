@@ -68,6 +68,7 @@ import {
   INVASION_MINE_PCT,
   INVASION_RICH_MINE_PCT,
   INVASION_BOUNTY_PCT,
+  RALLY_ARRIVE,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -139,6 +140,11 @@ export interface PlayerState {
   faction: string;
   /** 침공 드래프트에서 얻은 유물 id — 효과는 sim 곳곳의 훅에 산다 */
   relics: string[];
+  /**
+   * 집결 지점 (침공 전용). 표적 없는 유닛이 여기로 모여 주둔한다.
+   * null이면 제자리 대기. 우클릭으로 옮긴다 — 수비 모드의 유일한 컨트롤.
+   */
+  rally: { x: number; y: number } | null;
   /** 해금된 유닛 id. **항상 오름차순 정렬** (해시 결정론) */
   unlocked: string[];
   /** 연구 중인 유닛과 남은 틱. 동시에 하나만 */
@@ -189,7 +195,7 @@ export interface GameState {
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic';
+export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic' | 'rally';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -215,6 +221,7 @@ function makePlayer(factionId: string): PlayerState {
     workers: START_WORKERS,
     faction: f.id,
     relics: [],
+    rally: null,
     unlocked: startingUnlocks(f),
     research: null,
     upgrade: 0,
@@ -560,6 +567,8 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
       return startUpgrade(s, cmd);
     case 'relic':
       return pickRelic(s, cmd);
+    case 'rally':
+      return setRally(s, cmd);
     default:
       return false;
   }
@@ -814,6 +823,25 @@ function offerDraft(s: GameState): void {
     if (!picks.includes(c)) picks.push(c);
   }
   s.draft = picks;
+}
+
+/**
+ * 집결 지점 지정 (침공 전용).
+ *
+ * 같은 자리를 다시 찍으면 해제 — 우클릭 한 번으로 "모여라/흩어져라"가 된다.
+ * 지형 위(물·벽)는 거절: 갈 수 없는 곳에 깃발을 꽂으면 전군이 벽에 붙는다.
+ */
+function setRally(s: GameState, cmd: Command): boolean {
+  if (!s.invasion || cmd.team !== 0) return false;
+  if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
+  if (blockedAt(cmd.x, cmd.y)) return false;
+  const p = s.players[0];
+  if (p.rally && dist2(p.rally.x, p.rally.y, cmd.x, cmd.y) <= RALLY_ARRIVE * RALLY_ARRIVE) {
+    p.rally = null; // 같은 자리 재지정 = 해제
+    return true;
+  }
+  p.rally = { x: cmd.x, y: cmd.y };
+  return true;
 }
 
 /** 드래프트 선택 — 제안에 있는 카드만 유효하다 */
@@ -1117,11 +1145,19 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
     } else {
-      // 침공 모드의 아군은 무표적이면 **제자리** — 수비가 기본 자세다.
-      // 전진 본능을 남기면 파도 소탕 후 전군이 스폰 지점으로 순례를 떠난다
-      if (s.invasion && e.team === 0) continue;
-      // 타겟이 없으면 적 진영 방향으로 전진
-      [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
+      if (s.invasion && e.team === 0) {
+        // 침공 수비군: 집결 깃발이 있으면 거기로 행군해 주둔한다.
+        // 깃발이 없으면 제자리 — 전진 본능을 되살리면 파도 소탕 후
+        // 전군이 스폰 지점으로 순례를 떠난다 (라운드 24 사고)
+        const r = s.players[0].rally;
+        if (!r) continue;
+        // 깃발 둘레 2타일 안이면 도착 — 서로 밀치며 진동하지 않게 한다
+        if (dist2(e.x, e.y, r.x, r.y) <= RALLY_ARRIVE * RALLY_ARRIVE) continue;
+        [gx, gy] = moveGoal(e, r.x, r.y);
+      } else {
+        // 타겟이 없으면 적 진영 방향으로 전진
+        [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
+      }
     }
 
     const dx = gx - e.x;
@@ -1416,6 +1452,8 @@ export function hashState(s: GameState): number {
     for (const u of p.unlocked) mixStr(u);
     mix(p.relics.length);
     for (const r of p.relics) mixStr(r);
+    mix(p.rally ? p.rally.x : -1);
+    mix(p.rally ? p.rally.y : -1);
     if (p.research) {
       mixStr(p.research.unit);
       mix(p.research.ticks);

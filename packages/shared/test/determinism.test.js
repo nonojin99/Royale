@@ -1310,3 +1310,33 @@ test('침공 2.0 — 소탕 보상·드래프트·유물이 결정론적으로 �
   }
   assert.ok(inv.players[0].mined < pvp.players[0].mined, '침공 채굴이 더 느리다');
 });
+
+test('침공 집결 깃발 — 수비군이 모이고, 재지정은 해제, 지형 위는 거절', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  const main = s.entities.find((e) => e.kind === 'base' && e.team === 0);
+  for (let i = 0; i < 3; i++) {
+    applyCommand(s, {
+      execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
+      x: main.x + (i - 1) * 900, y: main.y + 900,
+    });
+  }
+  for (let i = 0; i < 25; i++) step(s, []); // 배치 경직 해소
+
+  // 물 위 깃발은 거절 — 갈 수 없는 곳에 꽂으면 전군이 벽에 붙는다
+  step(s, [{ execTick: s.tick, team: 0, kind: 'rally', id: '', x: 23500, y: 1500 }]);
+  assert.equal(s.players[0].rally, null, '수역 지정은 거절');
+
+  // 평지 깃발 → 수비군이 모인다
+  const rx = 23500;
+  const ry = 13500;
+  step(s, [{ execTick: s.tick, team: 0, kind: 'rally', id: '', x: rx, y: ry }]);
+  assert.deepEqual(s.players[0].rally, { x: rx, y: ry });
+  for (let i = 0; i < 400; i++) step(s, []);
+  const units = s.entities.filter((e) => e.kind === 'unit' && e.team === 0);
+  const near = units.filter((e) => Math.hypot(e.x - rx, e.y - ry) < 3000).length;
+  assert.equal(near, units.length, '전 수비군이 깃발로 모였다');
+
+  // 같은 자리 재지정 = 해제
+  step(s, [{ execTick: s.tick, team: 0, kind: 'rally', id: '', x: rx, y: ry }]);
+  assert.equal(s.players[0].rally, null, '재지정은 해제');
+});

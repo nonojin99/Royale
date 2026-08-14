@@ -27,6 +27,7 @@ import {
   SCALE,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
+  RALLY_ARRIVE,
   WALLS,
   blockedTile,
   elevTile,
@@ -1471,6 +1472,24 @@ export class Renderer {
   private drawOverlay(input: RenderInput): void {
     const g = this.gOverlay;
     g.clear();
+
+    // 집결 깃발 (침공) — 수비군이 모일 자리. 맥동하는 고리 + 십자 표식
+    const rally = input.state.invasion ? input.state.players[input.myTeam]?.rally : null;
+    if (rally) {
+      const [rx, ry] = this.toScreen(rally.x, rally.y, input.myTeam);
+      const pulse = 1 + 0.12 * Math.sin(this.nowMs / 260);
+      const r = this.pxLen(RALLY_ARRIVE) * pulse;
+      g.circle(rx, ry, r);
+      g.stroke({ width: 2, color: 0x67e8f9, alpha: 0.75 });
+      g.circle(rx, ry, r * 0.45);
+      g.fill({ color: 0x67e8f9, alpha: 0.12 });
+      const t = PX_PER_TILE * 0.5;
+      g.moveTo(rx - t, ry);
+      g.lineTo(rx + t, ry);
+      g.moveTo(rx, ry - t);
+      g.lineTo(rx, ry + t);
+      g.stroke({ width: 2, color: 0xa5f3fc, alpha: 0.9 });
+    }
 
     if (input.pendingSite) {
       const [sx, sy] = this.toScreen(input.pendingSite.x, input.pendingSite.y, input.myTeam);

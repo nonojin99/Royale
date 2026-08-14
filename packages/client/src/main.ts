@@ -102,7 +102,7 @@ const net = new NetClient(serverUrl(), {
       flash('실험장 — 클릭: 아군 배치 · Alt+클릭: 적군 배치 · 어디든 놓입니다');
     } else if (net.state?.invasion) {
       stopOnboarding();
-      flash('침공 — 파도가 밀려온다. 첫 파도까지 30초, 진지를 다져라');
+      flash('침공 — 파도가 밀려온다 · 우클릭으로 집결 깃발(수비 위치) 지정');
     } else {
       startOnboarding();
     }
@@ -200,6 +200,15 @@ async function boot(): Promise<void> {
     cursor = null;
   });
   canvas.addEventListener('pointerdown', onPointerDown);
+  // 침공의 컨트롤은 우클릭 하나 — 집결 깃발. 브라우저 메뉴는 막는다
+  canvas.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    const st = net.state;
+    if (!st?.invasion) return;
+    const [x, y] = pointerToArena(ev as unknown as PointerEvent);
+    net.act('rally', '', x, y);
+    sound.play('ui');
+  });
 
   buildFactionPicker();
   buildMapPicker();

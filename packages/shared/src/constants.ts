@@ -125,6 +125,8 @@ export const INVASION_BUDGET_GROWTH = 126; // 라운드 24: 118 → 126 (전 확
 export const INVASION_MINE_PCT = 50;
 export const INVASION_RICH_MINE_PCT = 80;
 export const INVASION_BOUNTY_PCT = 70;
+/** 집결 깃발 도착 판정 반경 (밀리타일) — 이 안이면 주둔으로 친다 */
+export const RALLY_ARRIVE = 2000;
 
 /** 기지 건설 후 가동까지 걸리는 시간 (틱) — 4초.
  * 라운드 20에서 2초→4초: "확장이 무조건 정답"이라는 실전 관측에 대한
