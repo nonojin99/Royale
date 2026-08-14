@@ -209,9 +209,11 @@ const defs: UnitDef[] = [
     range: tiles(6.0), speed: spd(0.8), siege: 100, color: 0x0d9488,
   }),
   unit({
+    // 라운드 20 너프: 등코스트 전 매치업 무손실 전승 관측(130/1.6s/2.0).
+    // 물어뜯는것만 1방, 소총병은 2방 유지 — 범위 학살의 '속도'만 깎는다
     id: 'mystic', name: '술사', cost: 4, kind: 'unit',
-    hp: 300, damage: 130, hitSpeed: seconds(1.6, TICK_RATE),
-    range: tiles(5.0), speed: spd(0.9), splash: tiles(2.0),
+    hp: 300, damage: 110, hitSpeed: seconds(1.9, TICK_RATE),
+    range: tiles(5.0), speed: spd(0.9), splash: tiles(1.7),
     targets: 'ground', siege: 80, color: 0x8b5cf6,
   }),
   unit({

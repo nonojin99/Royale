@@ -92,8 +92,11 @@ export const BASE_MINERAL_RESERVE = 200 * MINERAL_SCALE;
  * 12로 올려 확장을 '모아서 지르는 결정'으로 만든다 (라운드 9 피드백).
  */
 export const BASE_BUILD_COST = 12 * MINERAL_SCALE;
-/** 기지 건설 후 가동까지 걸리는 시간 (틱) — 2초 */
-export const BASE_BUILD_TICKS = 2 * TICK_RATE;
+/** 기지 건설 후 가동까지 걸리는 시간 (틱) — 4초.
+ * 라운드 20에서 2초→4초: "확장이 무조건 정답"이라는 실전 관측에 대한
+ * 두 번째 브레이크(첫 번째는 라운드 10C의 확장비 12). 건설 중 기지는
+ * 채굴하지 못하고 공격에 노출되므로, 시간 자체가 위험 비용이다. */
+export const BASE_BUILD_TICKS = 4 * TICK_RATE;
 
 /* ── 강화 (업그레이드) ─────────────────────────────────────────────────── */
 

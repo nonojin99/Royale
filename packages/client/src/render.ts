@@ -747,8 +747,11 @@ export class Renderer {
         }
         // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
         if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
+        // 걸음 바운스 — 걷기 프레임이 밋밋한 시트(광전사 등)도 발걸음
+        // 리듬이 생긴다. 그림자·링은 지면에 남아 발이 땅을 딛는 것으로 읽힌다
+        const bob = moved && !e.flying ? (Math.floor(this.nowMs / 125) + e.id) % 2 : 0;
         this.applyHit(
-          this.place(tex, sx, by, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam)),
+          this.place(tex, sx, by - bob, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam)),
           hit,
         );
       } else {
