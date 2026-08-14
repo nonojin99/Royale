@@ -148,6 +148,8 @@ export class Renderer {
   /** 지형 타일 스프라이트 — 시트가 있을 때만 채워진다. 맨 아래 층 */
   private readonly gTiles = new Container();
   private readonly gTerrain = new Graphics();
+  /** 수면 컬러 사이클링 전용 — 지형은 정적, 반짝임만 매 프레임 다시 그린다 */
+  private readonly gWaterFx = new Graphics();
   private readonly gField = new Graphics();
   private readonly gZone = new Graphics();
   /** 이미지가 없는 엔티티의 도형 + 스프라이트 아래에 깔리는 것(그림자·발판 링) */
@@ -160,7 +162,10 @@ export class Renderer {
   private readonly labels = new Container();
   private readonly labelPool: Text[] = [];
   private readonly spritePool: Sprite[] = [];
-  private terrainDrawn = false;
+  /** 마지막으로 그린 지형의 '맵:시점' 키 — 달라지면 다시 굽는다 */
+  private terrainKey = '';
+  /** 수면 반짝임 셀 — drawTerrain이 채우고 매 프레임 컬러 사이클링한다 */
+  private readonly waterCells: Array<{ x: number; y: number; n: number }> = [];
   private labelCount = 0;
   private spriteCount = 0;
 
@@ -178,6 +183,7 @@ export class Renderer {
     this.world.addChild(
       this.gTiles,
       this.gTerrain,
+      this.gWaterFx,
       this.gField,
       this.gZone,
       this.gEntities,
@@ -216,10 +222,12 @@ export class Renderer {
   /* ── 그리기 ──────────────────────────────────────────────────────────── */
 
   draw(input: RenderInput): void {
-    if (!this.terrainDrawn) {
+    const tkey = `${input.state.mapId}:${input.myTeam}`;
+    if (this.terrainKey !== tkey) {
       this.drawTerrain(input.myTeam);
-      this.terrainDrawn = true;
+      this.terrainKey = tkey;
     }
+    this.drawWaterFx();
     // 화면 흔들림 — 죽음 순간에 130ms, 남은 시간에 비례해 잦아든다.
     // world 컨테이너 전체를 밀므로 지형·유닛·이펙트가 한 몸으로 흔들린다
     const shakeLeft = this.shakeUntil - this.nowMs;
@@ -272,6 +280,37 @@ export class Renderer {
     g.closePath();
   }
 
+  /**
+   * 체커보드 디더 — 고전 픽셀 아트의 중간톤.
+   *
+   * 균일 알파의 단색 띠는 "칠해진 사각형"으로 읽힌다(MAP_RULES §1.1의 죄).
+   * 같은 색을 체커보드로 성기게 놓으면 눈이 알아서 섞어 중간톤을 만들고,
+   * 경계가 손으로 찍은 질감이 된다. cell은 낱칸 크기(px).
+   */
+  private dither(
+    g: Graphics,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    cell: number,
+    color: number,
+    alpha: number,
+  ): void {
+    for (let ry = 0; ry * cell < h; ry++) {
+      for (let rx = 0; rx * cell < w; rx++) {
+        if ((rx + ry) % 2 === 0) continue;
+        g.rect(
+          x + rx * cell,
+          y + ry * cell,
+          Math.min(cell, w - rx * cell),
+          Math.min(cell, h - ry * cell),
+        );
+      }
+    }
+    g.fill({ color, alpha });
+  }
+
   /** 물과 접한 뭍 변에 모래띠와 자갈을 얹는다 */
   private decorateCoast(
     g: Graphics,
@@ -289,18 +328,21 @@ export class Renderer {
     const x0 = sx * t;
     const y0 = sy * t;
     const sand = 0xc9bc8a;
-    const sides: Array<[boolean, number, number, number, number]> = [
-      [water(0, -1), x0, y0, t, 2.5],
-      [water(0, 1), x0, y0 + t - 2.5, t, 2.5],
-      [water(-1, 0), x0, y0, 2.5, t],
-      [water(1, 0), x0 + t - 2.5, y0, 2.5, t],
+    // [단색 띠, 그 안쪽에 붙는 디더 연장 띠] — 모래가 뭍으로 녹아드는 전환부
+    const D = 2.5;
+    const sides: Array<[boolean, number, number, number, number, number, number, number, number]> = [
+      [water(0, -1), x0, y0, t, D, x0, y0 + D, t, D],
+      [water(0, 1), x0, y0 + t - D, t, D, x0, y0 + t - D * 2, t, D],
+      [water(-1, 0), x0, y0, D, t, x0 + D, y0, D, t],
+      [water(1, 0), x0 + t - D, y0, D, t, x0 + t - D * 2, y0, D, t],
     ];
     let any = false;
-    for (const [hit, rx, ry, rw, rh] of sides) {
+    for (const [hit, rx, ry, rw, rh, dx, dy, dw, dh] of sides) {
       if (!hit) continue;
       any = true;
       g.rect(rx, ry, rw, rh);
       g.fill({ color: sand, alpha: 0.55 });
+      this.dither(g, dx, dy, dw, dh, t / 8, sand, 0.45);
     }
 
     // 오목 모서리 — 물이 두 변에서 만나는 뭍 모서리는 물이 곡선으로
@@ -345,6 +387,7 @@ export class Renderer {
     const g = this.gTerrain;
     g.clear();
     this.gTiles.removeChildren();
+    this.waterCells.length = 0;
 
     const t = PX_PER_TILE;
     const W = ARENA_W / SCALE;
@@ -401,6 +444,7 @@ export class Renderer {
             const r = t * (0.75 + n * 0.35);
             const x0 = sx * t;
             const y0 = sy * t;
+            this.waterCells.push({ x: x0, y: y0, n });
             this.roundedTile(
               g,
               x0,
@@ -478,10 +522,11 @@ export class Renderer {
             g.rect(sx * t, sy * t, t, 3);
             g.fill({ color: 0xd9cf9a, alpha: 0.55 });
           }
-          // 절벽 발치 그림자 — 저지 쪽으로 한 뼘 떨어뜨려 높이차를 만든다
+          // 절벽 발치 그림자 — 진한 심 + 디더 꼬리로 부드럽게 사라진다
           if (high && edge(0, 1)) {
-            g.rect(sx * t, (sy + 1) * t, t, 4);
-            g.fill({ color: 0x000000, alpha: 0.25 });
+            g.rect(sx * t, (sy + 1) * t, t, 2);
+            g.fill({ color: 0x000000, alpha: 0.3 });
+            this.dither(g, sx * t, (sy + 1) * t + 2, t, 3, t / 8, 0x000000, 0.28);
           }
           continue;
         }
@@ -525,11 +570,13 @@ export class Renderer {
       const rh = Math.abs(by - ay);
 
       if (hasTiles) {
-        // 메사(절벽 타일)가 몸통이다 — 블록 밖으로 떨어지는 그림자만 얹는다
-        g.rect(rx + 2, ry + rh, rw, 3);
-        g.fill({ color: 0x000000, alpha: 0.3 });
-        g.rect(rx + rw, ry + 3, 2, rh);
-        g.fill({ color: 0x000000, alpha: 0.3 });
+        // 메사(절벽 타일)가 몸통이다 — 그림자는 진한 심 + 디더 꼬리
+        g.rect(rx + 2, ry + rh, rw, 1.5);
+        g.fill({ color: 0x000000, alpha: 0.32 });
+        this.dither(g, rx + 2, ry + rh + 1.5, rw, 2.5, PX_PER_TILE / 8, 0x000000, 0.3);
+        g.rect(rx + rw, ry + 3, 1.5, rh);
+        g.fill({ color: 0x000000, alpha: 0.32 });
+        this.dither(g, rx + rw + 1.5, ry + 3, 2, rh, PX_PER_TILE / 8, 0x000000, 0.3);
         continue;
       }
 
@@ -781,7 +828,10 @@ export class Renderer {
     // 대기는 걷기 첫 프레임에 멈춰 있고, 공격은 마지막 프레임에서 끝난다
     if (st!.name === 'idle' && !art.clip(e.unit, 'idle')) return clip.textures[0];
     const last = clip.textures.length - 1;
-    return clip.textures[st!.name.startsWith('attack') ? Math.min(i, last) : i % clip.textures.length];
+    // 공격은 '온 투즈' — 프레임을 2단위로 양자화해 일부러 탁탁 끊어 친다.
+    // 걷기는 부드럽게 두고 타격만 끊는 것이 격투 게임·스파이더버스의 문법이다
+    if (st!.name.startsWith('attack')) return clip.textures[Math.min(i - (i % 2), last)];
+    return clip.textures[i % clip.textures.length];
   }
 
   /**
@@ -1198,6 +1248,33 @@ export class Renderer {
         const r = f.h * (0.25 + 0.55 * t);
         d.circle(f.sx, f.sy, r);
         d.stroke({ width: 3 * (1 - t), color: f.color, alpha: 0.8 * (1 - t) });
+      }
+    }
+  }
+
+  /**
+   * 수면 컬러 사이클링 — 에이지 오브 엠파이어의 물이 쓰던 고전 기법.
+   *
+   * 그림을 바꾸지 않고 **팔레트 4단을 계단식으로 순환**시켜 물이 흐르는
+   * 착시를 만든다. 부드러운 보간이 아니라 220ms마다 한 단씩 뚝뚝 넘어가야
+   * 픽셀 아트의 물성이 산다. 렌더 전용 — 시뮬은 모른다.
+   */
+  private drawWaterFx(): void {
+    const g = this.gWaterFx;
+    g.clear();
+    const t = PX_PER_TILE;
+    const PAL = [0x24435e, 0x33587a, 0x497694, 0x6fa3c0];
+    for (const c of this.waterCells) {
+      if (c.n < 0.35) continue;
+      // 칸마다 위상을 어긋내 파도가 비스듬히 흘러가는 것처럼 보이게 한다
+      const idx = Math.floor(this.nowMs / 220 + c.n * 16) % PAL.length;
+      const y = c.y + 3 + Math.floor(c.n * (t - 8));
+      g.rect(c.x + 2 + Math.floor(c.n * 4), y, t * 0.45, 1.5);
+      g.fill({ color: PAL[idx], alpha: 0.6 });
+      // 가장 밝은 단계에서만 반짝 — 항상 빛나면 아무것도 빛나지 않는다
+      if (idx === PAL.length - 1 && c.n > 0.75) {
+        g.rect(c.x + t - 5, y - 2, 2, 2);
+        g.fill({ color: 0xa8dcec, alpha: 0.8 });
       }
     }
   }
