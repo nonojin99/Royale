@@ -56,6 +56,8 @@ export interface MapDef {
   waters: readonly Rect[];
   highs: readonly Rect[];
   sites: readonly BaseSite[];
+  /** 침공 전용 맵 — 대전 로비의 맵 픽커에서 숨긴다 */
+  invasionOnly?: boolean;
 }
 
 /* ══════════════ 맵 1 — 쌍둥이 해안 (coast) ══════════════
@@ -291,9 +293,76 @@ const RIFT: MapDef = {
   sites: RIFT_SITES,
 };
 
+/* ══════════════ 맵 3 — 포위 (siege, 침공 전용) ══════════════
+   중앙 본진, 사방 개활 — 확장할수록 지킬 전선이 넓어진다.
+   중앙 고지 주머니를 깨진 벽 고리(4방향 4타일 틈)가 감싼다. */
+
+const SIEGE_WALLS: readonly Rect[] = [
+  // 북쪽 벽 고리 (틈 x22~25 = 4타일)
+  [19, 17, 21, 17],
+  [26, 17, 28, 17],
+  // 서쪽 벽 고리 (틈 y22~25)
+  [17, 19, 17, 21],
+  [17, 26, 17, 28],
+  // 흩어진 바위 — 파도의 길을 살짝 굽힌다
+  [8, 20, 9, 21],
+  [20, 7, 21, 8],
+  [34, 13, 35, 14],
+];
+
+const SIEGE_WATERS: readonly Rect[] = [
+  // 북쪽 호수 고리 — 가운데가 섬 확장이다 (맵 법 §1: 맵마다 섬 한 쌍).
+  // 거울이 남쪽 고리를 만든다. 모서리 스폰 지대는 비워 둔다
+  [20, 1, 27, 1],
+  [20, 2, 21, 2],
+  [26, 2, 27, 2],
+  [20, 3, 21, 3],
+  [26, 3, 27, 3],
+  [20, 4, 21, 4],
+  [26, 4, 27, 4],
+  [21, 5, 26, 5],
+  // 서쪽 웅덩이 (마름모)
+  [2, 21, 2, 26],
+  [3, 20, 3, 27],
+  [4, 21, 4, 26],
+];
+
+const SIEGE_HIGHS: readonly Rect[] = [
+  // 중앙 고지 — 본진이 앉는 언덕. 점대칭 거울이 자기 자신이다
+  [19, 19, 28, 28],
+];
+
+const SIEGE_SITES: readonly BaseSite[] = [
+  { id: 0, x: tiles(23.5), y: tiles(23.5), startFor: 0, label: '중앙 본진' },
+  // 대전 호환용 명목 상대 본진 — 침공에서는 생성되지 않는다
+  { id: 1, x: tiles(44.5), y: tiles(3.5), startFor: 1, label: '북동 구석' },
+  { id: 2, x: tiles(3.5), y: tiles(44.5), startFor: -1, label: '남서 구석' },
+  { id: 3, x: tiles(23.5), y: tiles(13.5), startFor: -1, label: '북문 앞' },
+  { id: 4, x: tiles(33.5), y: tiles(23.5), startFor: -1, label: '동문 앞' },
+  { id: 5, x: tiles(23.5), y: tiles(33.5), startFor: -1, label: '남문 앞' },
+  { id: 6, x: tiles(13.5), y: tiles(23.5), startFor: -1, label: '서문 앞' },
+  { id: 7, x: tiles(10.5), y: tiles(10.5), startFor: -1, label: '북서 벌판' },
+  { id: 8, x: tiles(37.5), y: tiles(37.5), startFor: -1, label: '남동 벌판' },
+  { id: 9, x: tiles(37.5), y: tiles(10.5), startFor: -1, label: '북동 벌판' },
+  { id: 10, x: tiles(10.5), y: tiles(37.5), startFor: -1, label: '남서 벌판' },
+  { id: 11, x: tiles(23.5), y: tiles(3), startFor: -1, label: '북쪽 섬' },
+  { id: 12, x: tiles(23.5), y: tiles(44), startFor: -1, label: '남쪽 섬' },
+];
+
+const SIEGE: MapDef = {
+  id: 'siege',
+  name: '포위',
+  tagline: '침공 전용 — 사방이 적이다',
+  walls: SIEGE_WALLS,
+  waters: SIEGE_WATERS,
+  highs: SIEGE_HIGHS,
+  sites: SIEGE_SITES,
+  invasionOnly: true,
+};
+
 /* ══════════════ 레지스트리와 활성 맵 ══════════════ */
 
-export const MAPS: readonly MapDef[] = [COAST, RIFT];
+export const MAPS: readonly MapDef[] = [COAST, RIFT, SIEGE];
 export const DEFAULT_MAP_ID = COAST.id;
 
 export function getMap(id: string): MapDef {

@@ -17,8 +17,10 @@ import {
   GameState,
   MATCH_TICKS,
   MINERAL_MAX,
+  RELIC_BY_ID,
   SKILL_CAST_RANGE,
   SKILL_CHARGE_TICKS,
+  waveTypeOf,
   MINERAL_SCALE,
   OVERTIME_TICKS,
   TICK_RATE,
@@ -426,6 +428,10 @@ function wireLevelPicker(): void {
     b.addEventListener('click', () => {
       selectedLevel = b.dataset.level ?? 'normal';
       root.querySelectorAll('.lvl').forEach((x) => x.classList.toggle('selected', x === b));
+      // 침공 전용 맵은 침공에서만 — 목록을 다시 그리고 선택을 정리한다
+      const cur = MAPS.find((m) => m.id === selectedMap);
+      if (cur?.invasionOnly && selectedLevel !== 'invasion') selectedMap = DEFAULT_MAP_ID;
+      buildMapPicker();
     });
   });
 }
@@ -435,6 +441,8 @@ function buildMapPicker(): void {
   if (!root) return;
   root.replaceChildren();
   for (const m of MAPS) {
+    // 침공 전용 맵(포위)은 침공을 골랐을 때만 목록에 나온다
+    if (m.invasionOnly && selectedLevel !== 'invasion') continue;
     const el = document.createElement('button');
     el.className = 'faction mappick';
     el.innerHTML =
@@ -797,6 +805,11 @@ function refreshActionButtons(): void {
 }
 
 function requestTech(unit: string): void {
+  if (net.state?.invasion) {
+    sound.play('error');
+    flash('침공의 해금은 드래프트로만 — 파도를 소탕하고 전리품에서 고르세요');
+    return;
+  }
   const s = net.state;
   if (!s) return;
   const me = s.players[net.myTeam];
@@ -1015,6 +1028,48 @@ function frame(): void {
   requestAnimationFrame(frame);
 }
 
+/* ── 침공 드래프트 패널 ─────────────────────────────────────────────────── */
+
+let draftShownKey = '';
+
+function updateDraft(s: GameState): void {
+  const panel = $('draft');
+  if (!s.invasion || s.draft.length === 0) {
+    panel.classList.add('hidden');
+    draftShownKey = '';
+    return;
+  }
+  const key = s.draft.join('|');
+  if (key !== draftShownKey) {
+    draftShownKey = key;
+    const cards = $('draft-cards');
+    cards.replaceChildren();
+    for (const id of s.draft) {
+      const b = document.createElement('button');
+      b.className = 'draft-card';
+      if (id.startsWith('unlock:')) {
+        const u = getUnit(id.slice(7));
+        b.classList.add('unlock');
+        b.innerHTML =
+          `<span class="dname">${u.name} 영입</span>` +
+          `<span class="ddesc">유닛 해금 — 코스트 ${u.cost}${u.flying ? ' · 공중' : ''}</span>`;
+      } else {
+        const r = RELIC_BY_ID.get(id);
+        b.innerHTML =
+          `<span class="dname">${r?.name ?? id}</span>` +
+          `<span class="ddesc">${r?.desc ?? ''}</span>`;
+      }
+      b.addEventListener('click', () => {
+        sound.play('ui');
+        net.act('relic', id);
+      });
+      cards.appendChild(b);
+    }
+    sound.play('build');
+  }
+  panel.classList.remove('hidden');
+}
+
 /* ── HUD ───────────────────────────────────────────────────────────────── */
 
 function updateHud(s: GameState): void {
@@ -1038,7 +1093,13 @@ function updateHud(s: GameState): void {
 
   if (s.invasion) {
     const untilNext = Math.max(0, Math.ceil((s.nextWaveTick - s.tick) / TICK_RATE));
-    $('timer').textContent = `🌊 파도 ${s.wave} · 다음 ${untilNext}초`;
+    const WAVE_LABEL: Record<string, string> = {
+      normal: '', air: '공중✈', siege: '공성💥', rush: '물량🐜', boss: '보스💀',
+    };
+    const nextLabel = WAVE_LABEL[waveTypeOf(s.wave + 1)];
+    $('timer').textContent =
+      `🌊 파도 ${s.wave} · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초`;
+    updateDraft(s);
   } else if (s.sandbox) {
     const el = Math.floor(s.tick / TICK_RATE);
     $('timer').textContent = `🧪 ${Math.floor(el / 60)}:${String(el % 60).padStart(2, '0')}`;

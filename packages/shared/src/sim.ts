@@ -65,6 +65,9 @@ import {
   INVASION_WAVE_MIN_TICKS,
   INVASION_BUDGET_START,
   INVASION_BUDGET_GROWTH,
+  INVASION_MINE_PCT,
+  INVASION_RICH_MINE_PCT,
+  INVASION_BOUNTY_PCT,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -82,6 +85,7 @@ import {
   getUnit,
 } from './units.js';
 import { Rng, createRng, nextInt } from './rng.js';
+import { RELICS } from './relics.js';
 import { clamp, dist2, isqrt, tiles } from './fixed.js';
 
 export type EntityKind = 'unit' | 'building' | 'base';
@@ -133,6 +137,8 @@ export interface PlayerState {
   workers: number;
   /** 종족 id */
   faction: string;
+  /** 침공 드래프트에서 얻은 유물 id — 효과는 sim 곳곳의 훅에 산다 */
+  relics: string[];
   /** 해금된 유닛 id. **항상 오름차순 정렬** (해시 결정론) */
   unlocked: string[];
   /** 연구 중인 유닛과 남은 틱. 동시에 하나만 */
@@ -174,10 +180,16 @@ export interface GameState {
   nextWaveTick: number;
   /** 다음 파도 예산 (밀리미네랄) */
   waveBudget: number;
+  /** 현재 파도가 아직 살아 있는가 (소탕 보상 판정) */
+  waveAlive: boolean;
+  /** 이번 파도 소탕 보상 (밀리미네랄) */
+  waveReward: number;
+  /** 드래프트 제안 (유물 id 또는 'unlock:<unit>'). 비어 있으면 없음 */
+  draft: string[];
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade';
+export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -202,6 +214,7 @@ function makePlayer(factionId: string): PlayerState {
     mined: 0,
     workers: START_WORKERS,
     faction: f.id,
+    relics: [],
     unlocked: startingUnlocks(f),
     research: null,
     upgrade: 0,
@@ -211,7 +224,9 @@ function makePlayer(factionId: string): PlayerState {
 
 function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Entity {
   const isMain = site.startFor === team;
-  const stats = isMain ? MAIN_BASE_STATS : EXPANSION_BASE_STATS;
+  const stats0 = isMain ? MAIN_BASE_STATS : EXPANSION_BASE_STATS;
+  const hpMul = hasRelic(s.players[team], 'iron_heart') ? 130 : 100;
+  const stats = { ...stats0, hp: Math.trunc((stats0.hp * hpMul) / 100) };
   return {
     id: s.nextId++,
     team,
@@ -256,6 +271,9 @@ export function createState(
     wave: 0,
     nextWaveTick: INVASION_FIRST_WAVE_TICKS,
     waveBudget: INVASION_BUDGET_START,
+    waveAlive: false,
+    waveReward: 0,
+    draft: [],
   };
   if (sandbox) {
     // **전 종족** 전 유닛 해금 + 미네랄 만땅 — 실험장의 존재 이유는 종족을
@@ -399,7 +417,14 @@ function mine(s: GameState): void {
       const assigned = left < WORKER_CAP_PER_BASE ? left : WORKER_CAP_PER_BASE;
       left -= assigned;
 
-      const want = assigned * WORKER_MINE_PER_TICK;
+      // 침공 2.0: 채굴은 절반 — 주 수입은 파도 소탕 보상이다 ("파도가 곧 자원")
+      const minePct =
+        s.invasion && team === 0
+          ? hasRelic(p, 'rich_veins')
+            ? INVASION_RICH_MINE_PCT
+            : INVASION_MINE_PCT
+          : 100;
+      const want = Math.trunc((assigned * WORKER_MINE_PER_TICK * minePct) / 100);
       const take = e.reserve < want ? e.reserve : want;
       e.reserve -= take;
       p.mined += take;
@@ -485,6 +510,13 @@ function formationOffset(count: number, i: number): readonly [number, number] {
 }
 
 function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): void {
+  const owner = s.players[team];
+  const isBld = u.kind === 'building';
+  const hpMul = isBld && hasRelic(owner, 'iron_heart') ? 130 : 100;
+  const lifeMul = isBld && hasRelic(owner, 'deep_roots') ? 2 : 1;
+  const depTicks = hasRelic(owner, 'fast_deploy')
+    ? Math.trunc(DEPLOY_TICKS / 2)
+    : DEPLOY_TICKS;
   s.entities.push({
     id: s.nextId++,
     team,
@@ -492,11 +524,11 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     kind: u.kind === 'building' ? 'building' : 'unit',
     x: clamp(x, 0, ARENA_W - 1),
     y: clamp(y, 0, ARENA_H - 1),
-    hp: u.hp,
-    maxHp: u.hp,
+    hp: Math.trunc((u.hp * hpMul) / 100),
+    maxHp: Math.trunc((u.hp * hpMul) / 100),
     cd: 0,
-    deploy: DEPLOY_TICKS,
-    life: u.lifetime,
+    deploy: depTicks,
+    life: u.lifetime > 0 ? u.lifetime * lifeMul : u.lifetime,
     target: -1,
     flying: u.flying,
     charge: 0,
@@ -526,6 +558,8 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
       return trainWorker(s, cmd);
     case 'upgrade':
       return startUpgrade(s, cmd);
+    case 'relic':
+      return pickRelic(s, cmd);
     default:
       return false;
   }
@@ -552,7 +586,10 @@ function produceUnit(s: GameState, cmd: Command): boolean {
     return false;
   }
 
-  const cost = u.cost * MINERAL_SCALE;
+  let cost = u.cost * MINERAL_SCALE;
+  if (u.kind === 'building' && hasRelic(p, 'cheap_walls')) {
+    cost = Math.max(MINERAL_SCALE, cost - MINERAL_SCALE);
+  }
   if (p.minerals < cost) return false;
   // 주문은 전장 어디든 떨어진다 — 기지 반경에 묶으면 공격 주문을 자기
   // 앞마당에만 쓸 수 있어 사실상 죽은 콘텐츠가 된다 (협의회 라운드 1 안건 D)
@@ -604,6 +641,8 @@ function trainWorker(s: GameState, cmd: Command): boolean {
 }
 
 function startResearch(s: GameState, cmd: Command): boolean {
+  // 침공의 해금은 드래프트로만 — 연구가 열려 있으면 드래프트가 장식이 된다
+  if (s.invasion) return false;
   const p = s.players[cmd.team];
   if (!canResearch(p, cmd.id)) return false;
 
@@ -681,17 +720,51 @@ function spawnWave(s: GameState): void {
     }
   }
 
-  // 침공 종족의 유닛을 코스트 오름차순으로 — 파도 번호가 클수록 뒤(비싼) 유닛부터 산다
+  // 파도 타입 — 5파도마다 특수(공중/공성/러시), 10파도마다 보스.
+  // 예고(waveTypeOf)와 같은 함수를 쓰므로 HUD가 거짓말하지 않는다
+  const type = waveTypeOf(s.wave);
   const f = getFaction(s.players[1].faction);
-  const pool = f.tech
+  const all = f.tech
     .map((n) => n.unit)
     .filter((id) => getUnit(id).kind === 'unit')
     .sort((a, b) => getUnit(a).cost - getUnit(b).cost || (a < b ? -1 : 1));
-  if (pool.length === 0) return;
+  if (all.length === 0) return;
+
+  let pool = all;
+  if (type === 'air') {
+    const air = all.filter((id) => getUnit(id).flying);
+    if (air.length > 0) pool = air;
+  } else if (type === 'siege') {
+    const rng4 = all.filter((id) => {
+      const u = getUnit(id);
+      return !u.flying && (u.siege >= 100 || u.range >= 4000);
+    });
+    if (rng4.length > 0) pool = rng4;
+  } else if (type === 'rush') {
+    pool = [all[0]]; // 최저가 물량전
+  }
 
   let budget = s.waveBudget;
+  const initial = budget;
   // 다음 파도 예산 — 정수 백분율 곱 (부동소수점 금지)
   s.waveBudget = Math.trunc((s.waveBudget * INVASION_BUDGET_GROWTH) / 100);
+
+  // 보스: 최고가 유닛 1기를 체력 3배로 앞세우고, 남은 예산은 호위
+  if (type === 'boss') {
+    const bossU = getUnit(all[all.length - 1]);
+    const before = s.entities.length;
+    for (let i = 0; i < bossU.count; i++) {
+      const [fx, fy] = formationOffset(bossU.count, i);
+      spawnUnit(s, 1, bossU, cx + fx, cy + fy);
+    }
+    for (let i = before; i < s.entities.length; i++) {
+      const b = s.entities[i];
+      b.hp *= 3;
+      b.maxHp *= 3;
+    }
+    budget -= bossU.cost * MINERAL_SCALE;
+    pool = [all[0]];
+  }
 
   // 3파도마다 시작 지점을 한 단계 올린다 — 후반 파도는 고급 유닛 위주
   let idx = Math.min(pool.length - 1, Math.trunc((s.wave - 1) / 3));
@@ -714,6 +787,47 @@ function spawnWave(s: GameState): void {
       if (idx === 0 && getUnit(pool[0]).cost * MINERAL_SCALE > budget) break;
     }
   }
+
+  // 소탕 보상 — 실제로 쏟아진 예산 기준. "빨리 지울수록 부유해진다"
+  s.waveAlive = true;
+  s.waveReward = Math.trunc(((initial - budget) * INVASION_BOUNTY_PCT) / 100);
+}
+
+/**
+ * 드래프트 제안 3장 — 미보유 유물 + 미해금 유닛(unlock:) 풀에서 시뮬 RNG로.
+ * 침공의 성장 축: 연구는 봉인되어 있고, 해금은 오직 여기서 온다.
+ */
+function offerDraft(s: GameState): void {
+  const p = s.players[0];
+  const pool: string[] = [];
+  for (const r of RELICS) if (!hasRelic(p, r.id)) pool.push(r.id);
+  for (const node of getFaction(p.faction).tech) {
+    const u = getUnit(node.unit);
+    if (u.kind === 'spell') continue;
+    if (!p.unlocked.includes(node.unit)) pool.push('unlock:' + node.unit);
+  }
+  if (pool.length === 0) return;
+  const picks: string[] = [];
+  let guard = 24;
+  while (picks.length < 3 && picks.length < pool.length && guard-- > 0) {
+    const c = pool[nextInt(s.rng, pool.length)];
+    if (!picks.includes(c)) picks.push(c);
+  }
+  s.draft = picks;
+}
+
+/** 드래프트 선택 — 제안에 있는 카드만 유효하다 */
+function pickRelic(s: GameState, cmd: Command): boolean {
+  if (!s.invasion || cmd.team !== 0) return false;
+  if (!s.draft.includes(cmd.id)) return false;
+  const p = s.players[0];
+  if (cmd.id.startsWith('unlock:')) {
+    unlock(p, cmd.id.slice(7));
+  } else {
+    p.relics.push(cmd.id);
+  }
+  s.draft = [];
+  return true;
 }
 
 /** 주문은 즉발 광역. 기지에는 피해를 주지 않는다 (설계 결정) */
@@ -741,6 +855,27 @@ export function siteReachable(
     if (dist2(e.x, e.y, site.x, site.y) <= r2) return true;
   }
   return false;
+}
+
+/* ── 침공 파도 타입·유물 ───────────────────────────────────────────────── */
+
+export type WaveType = 'normal' | 'air' | 'siege' | 'rush' | 'boss';
+
+/** 파도 번호 → 타입. 클라이언트가 **다음 파도 예고**에 같은 함수를 쓴다 */
+export function waveTypeOf(n: number): WaveType {
+  if (n <= 0) return 'normal';
+  if (n % 10 === 0) return 'boss';
+  if (n % 5 === 0) return (['air', 'siege', 'rush'] as const)[Math.trunc(n / 5) % 3];
+  return 'normal';
+}
+
+export function hasRelic(p: PlayerState, id: string): boolean {
+  return p.relics.includes(id);
+}
+
+/** 사기 충천은 유효 강화 +1 — 같은 +10% 문법이라 damageTo를 재사용한다 */
+function effUpgrade(p: PlayerState): number {
+  return p.upgrade + (hasRelic(p, 'war_drums') ? 1 : 0);
 }
 
 /* ── 타겟 선정 ─────────────────────────────────────────────────────────── */
@@ -893,7 +1028,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     const spellId = getUnit(e.unit).charges;
     if (!spellId) continue;
     if (e.charge < SKILL_CHARGE_TICKS) {
-      e.charge++;
+      e.charge += hasRelic(s.players[e.team], 'focus') ? 2 : 1;
+      if (e.charge > SKILL_CHARGE_TICKS) e.charge = SKILL_CHARGE_TICKS;
       continue;
     }
     const spell = getUnit(spellId);
@@ -953,10 +1089,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         const o = s.entities[j];
         if (o.team === e.team) continue;
         if (!canAttack(e, o)) continue;
-        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(e, st, o, s.players[e.team].upgrade);
+        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(e, st, o, effUpgrade(s.players[e.team]));
       }
     } else {
-      dmg[ti] += damageTo(e, st, t, s.players[e.team].upgrade);
+      dmg[ti] += damageTo(e, st, t, effUpgrade(s.players[e.team]));
     }
   }
 
@@ -1030,6 +1166,27 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     e.hp -= dmg[i];
   }
   resolveDeaths(s);
+
+  // 9.5) 침공: 파도 소탕 → 보상 지급 + 드래프트 제안
+  if (s.invasion && s.waveAlive) {
+    let alive = false;
+    for (const e of s.entities) {
+      if (e.team === 1 && e.kind === 'unit') {
+        alive = true;
+        break;
+      }
+    }
+    if (!alive) {
+      s.waveAlive = false;
+      const p = s.players[0];
+      let reward = s.waveReward;
+      if (hasRelic(p, 'reserves')) reward = Math.trunc((reward * 130) / 100);
+      p.minerals += reward;
+      if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
+      // 드래프트 — 이전 제안을 아직 안 골랐으면 새로 만들지 않는다
+      if (s.draft.length === 0) offerDraft(s);
+    }
+  }
 
   // 10) 종료 조건
   s.tick++;
@@ -1203,6 +1360,9 @@ export function restore(target: GameState, snap: GameState): void {
   target.wave = fresh.wave;
   target.nextWaveTick = fresh.nextWaveTick;
   target.waveBudget = fresh.waveBudget;
+  target.waveAlive = fresh.waveAlive;
+  target.waveReward = fresh.waveReward;
+  target.draft = fresh.draft;
 }
 
 /**
@@ -1225,6 +1385,10 @@ export function hashState(s: GameState): number {
   mix(s.wave);
   mix(s.nextWaveTick);
   mix(s.waveBudget);
+  mix(s.waveAlive ? 1 : 0);
+  mix(s.waveReward);
+  mix(s.draft.length);
+  for (const d of s.draft) mixStr(d);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);
@@ -1250,6 +1414,8 @@ export function hashState(s: GameState): number {
     mixStr(p.faction);
     mix(p.unlocked.length);
     for (const u of p.unlocked) mixStr(u);
+    mix(p.relics.length);
+    for (const r of p.relics) mixStr(r);
     if (p.research) {
       mixStr(p.research.unit);
       mix(p.research.ticks);

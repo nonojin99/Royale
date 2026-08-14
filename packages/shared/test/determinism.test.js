@@ -53,6 +53,7 @@ import {
   canDeployAt,
   canResearch,
   createRng,
+  applyCommand,
   createState,
   getFaction,
   getUnit,
@@ -1270,4 +1271,42 @@ test('침공 — 파도가 예정 틱에 쏟아지고, 시간 종료 없이 본�
   step(s, []);
   assert.equal(s.over, true, '본진 함락 = 종료');
   assert.equal(s.winner, 1);
+});
+
+test('침공 2.0 — 소탕 보상·드래프트·유물이 결정론적으로 작동한다', () => {
+  const s = createState(4, ['steel', 'swarmhive'], 'siege', false, true);
+  // 첫 파도까지 진행
+  while (s.wave === 0) step(s, []);
+  assert.equal(s.waveAlive, true);
+  const before = s.players[0].minerals;
+
+  // 파도를 즉살 — 소탕 보상과 드래프트가 와야 한다
+  for (const e of s.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
+  step(s, []);
+  assert.equal(s.waveAlive, false, '파도 소탕 판정');
+  assert.ok(s.players[0].minerals > before, '소탕 보상 지급');
+  assert.equal(s.draft.length, 3, '드래프트 3장 제안');
+
+  // 드래프트 선택 — 제안에 있는 카드만
+  const pick = s.draft[0];
+  step(s, [{ execTick: s.tick, team: 0, kind: 'relic', id: pick, x: 0, y: 0 }]);
+  assert.equal(s.draft.length, 0, '선택 후 제안이 닫힌다');
+  const p = s.players[0];
+  assert.ok(
+    pick.startsWith('unlock:') ? p.unlocked.includes(pick.slice(7)) : p.relics.includes(pick),
+    '선택이 적용됐다',
+  );
+
+  // 침공에서 연구는 봉인
+  const ok = applyCommand(s, { execTick: s.tick, team: 0, kind: 'tech', id: 'scoutcar', x: 0, y: 0 });
+  assert.equal(ok, false, '침공에서 연구 봉인');
+
+  // 채굴 절반 확인 — 같은 조건 일반 경기 대비
+  const inv = createState(4, ['steel', 'swarmhive'], 'siege', false, true);
+  const pvp = createState(4, ['steel', 'swarmhive'], 'siege');
+  for (let i = 0; i < 100; i++) {
+    step(inv, []);
+    step(pvp, []);
+  }
+  assert.ok(inv.players[0].mined < pvp.players[0].mined, '침공 채굴이 더 느리다');
 });

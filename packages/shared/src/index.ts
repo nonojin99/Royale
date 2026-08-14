@@ -4,6 +4,7 @@ export * from './constants.js';
 export * from './arena.js';
 export * from './nav.js';
 export * from './units.js';
+export * from './relics.js';
 export * from './factions.js';
 export * from './sim.js';
 export * from './replay.js';

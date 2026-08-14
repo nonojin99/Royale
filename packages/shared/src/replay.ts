@@ -33,7 +33,7 @@ import { DEFAULT_MAP_ID } from './arena.js';
 
 /** 포맷 버전. 시뮬 규칙이 바뀌어 과거 리플레이가 재현 불가능해지면 올린다. */
 // v4: 언덕(고지) 데미지 감쇄 도입 — 이전 리플레이는 재현 불가
-export const REPLAY_VERSION = 13; // v13 = 침공 모드·게임 필 (라운드 23)
+export const REPLAY_VERSION = 14; // v14 = 침공 2.0 — 파도 경제·타입·드래프트 (라운드 25)
 
 /** 경기가 진행될 수 있는 최대 틱 (정규 + 연장) */
 export const MAX_MATCH_TICKS = MATCH_TICKS + OVERTIME_TICKS;

@@ -118,6 +118,13 @@ export const INVASION_WAVE_MIN_TICKS = 10 * TICK_RATE;
 export const INVASION_BUDGET_START = 6 * MINERAL_SCALE;
 /** 파도마다 예산 ×118/100 (정수 연산) */
 export const INVASION_BUDGET_GROWTH = 126; // 라운드 24: 118 → 126 (전 확장 플레이어가 13파도를 한가하게 넘겼다)
+/**
+ * 침공 2.0 (라운드 25) — "파도가 곧 자원".
+ * 채굴은 절반, 소탕 보상이 주 수입 — 버티기만 하면 가난해진다.
+ */
+export const INVASION_MINE_PCT = 50;
+export const INVASION_RICH_MINE_PCT = 80;
+export const INVASION_BOUNTY_PCT = 70;
 
 /** 기지 건설 후 가동까지 걸리는 시간 (틱) — 4초.
  * 라운드 20에서 2초→4초: "확장이 무조건 정답"이라는 실전 관측에 대한
