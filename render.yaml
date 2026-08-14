@@ -7,6 +7,10 @@ services:
     name: royale
     runtime: node
     plan: free
+    # main 푸시마다 자동 재배포 — 명시하지 않으면 서비스 생성 방식에 따라
+    # 꺼져 있을 수 있고, 그러면 새 기능이 사이트에 반영되지 않는다 (라운드 17.5)
+    autoDeploy: true
+    branch: main
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
     startCommand: node packages/server/dist/index.js
     healthCheckPath: /health
