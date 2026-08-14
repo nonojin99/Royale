@@ -47,6 +47,8 @@ export class Match {
   readonly bot: Bot | null;
   /** 실험장 경기 — 봇 없음, 승패 없음, 리플레이 저장 안 함 */
   readonly sandbox: boolean;
+  /** 침공 경기 — 봇 없음, 시뮬이 파도를 스폰한다 */
+  readonly invasion: boolean;
 
   /** 양 팀 종족 id — 리플레이 재현에 필요하다 */
   private readonly factions: [string, string];
@@ -73,16 +75,17 @@ export class Match {
     // 맵은 먼저 온 쪽(a)의 선택 — 알 수 없는 id는 getMap이 기본 맵으로
     this.mapId = getMap(a.mapId ?? DEFAULT_MAP_ID).id;
     this.sandbox = b === null && a.sandbox;
+    this.invasion = b === null && !this.sandbox && a.invasion;
     this.startWallMs = Date.now();
 
     const f0 = getFaction(a.factionId);
     const f1 = getFaction(b ? b.factionId : botFactionId);
     this.factions = [f0.id, f1.id];
-    this.playerNames = [a.name, b ? b.name : this.sandbox ? '실험장' : `봇 (${f1.name})`];
+    this.playerNames = [a.name, b ? b.name : this.sandbox ? '실험장' : this.invasion ? '침공' : `봇 (${f1.name})`];
 
-    this.state = createState(this.seed, this.factions, this.mapId, this.sandbox);
+    this.state = createState(this.seed, this.factions, this.mapId, this.sandbox, this.invasion);
     this.conns = [a, b];
-    this.bot = b === null && !this.sandbox ? new Bot(this.seed, botLevelOf(a.botLevel)) : null;
+    this.bot = b === null && !this.sandbox && !this.invasion ? new Bot(this.seed, botLevelOf(a.botLevel)) : null;
 
     a.match = this;
     a.team = 0;
@@ -103,6 +106,7 @@ export class Match {
         opponent: b === null ? this.playerNames[1] : this.other(c)?.name ?? '???',
         startWallMs: this.startWallMs,
         sandbox: this.sandbox || undefined,
+        invasion: this.invasion || undefined,
       });
     }
   }
@@ -254,7 +258,7 @@ export class Match {
    */
   private emitReplay(): void {
     // 실험장은 경기가 아니다 — 리플레이 목록을 어지럽히지 않는다
-    if (!this.onReplay || this.sandbox) return;
+    if (!this.onReplay || this.sandbox || this.invasion) return;
     try {
       const replay = buildReplay({
         matchId: this.id,

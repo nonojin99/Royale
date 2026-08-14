@@ -85,7 +85,7 @@ export class NetClient {
     name: string,
     factionId: string,
     mapId?: string,
-    opts?: { solo?: boolean; botLevel?: string; sandbox?: boolean; onOpen?: () => void },
+    opts?: { solo?: boolean; botLevel?: string; sandbox?: boolean; invasion?: boolean; onOpen?: () => void },
   ): void {
     let url = this.url;
     if (opts?.solo) url += (url.includes('?') ? '&' : '?') + 'solo=1';
@@ -93,7 +93,7 @@ export class NetClient {
     this.ws = ws;
 
     ws.onopen = () => {
-      this.send({ t: 'hello', name, factionId, mapId, botLevel: opts?.botLevel, sandbox: opts?.sandbox });
+      this.send({ t: 'hello', name, factionId, mapId, botLevel: opts?.botLevel, sandbox: opts?.sandbox, invasion: opts?.invasion });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
       opts?.onOpen?.();
@@ -145,7 +145,7 @@ export class NetClient {
         this.scheduled.clear();
         this.lastHashSent = -1;
         this.desyncs = 0;
-        this.state = createState(msg.seed, msg.factions, msg.mapId, msg.sandbox ?? false);
+        this.state = createState(msg.seed, msg.factions, msg.mapId, msg.sandbox ?? false, msg.invasion ?? false);
         this.lastStepWallMs = Date.now();
         this.events.onMatch?.(msg.team, msg.opponent);
         return;

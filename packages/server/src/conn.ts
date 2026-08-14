@@ -19,6 +19,8 @@ export class Conn {
   botLevel: string | undefined;
   /** 실험장 요청 — hello에서 온다 */
   sandbox = false;
+  /** 침공 요청 — hello에서 온다 */
+  invasion = false;
   team: 0 | 1 = 0;
   match: Match | null = null;
   /** 속한 방 코드. 없으면 null */

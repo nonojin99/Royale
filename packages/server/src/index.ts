@@ -233,6 +233,7 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
       conn.mapId = msg.mapId;
       conn.botLevel = msg.botLevel;
       conn.sandbox = !!msg.sandbox;
+      conn.invasion = !!msg.invasion;
       if (conn.match) return;
       if (solo) {
         // 연습 모드 봇은 무작위 종족을 쓴다 — 같은 종족만 상대하면

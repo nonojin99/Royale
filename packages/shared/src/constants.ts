@@ -103,6 +103,22 @@ export const BASE_BUILD_COST = 12 * MINERAL_SCALE;
 export const SKILL_CHARGE_TICKS = 14 * TICK_RATE;
 export const SKILL_CAST_RANGE = 7000; // 7타일 (밀리타일)
 
+/**
+ * 침공 모드 (라운드 23 — 로그라이트 1단계).
+ *
+ * 파도 예산은 정수 백분율 곱으로 커진다 (부동소수점 금지 — 결정론).
+ * 첫 파도는 느긋하게(빌드 시간), 이후 간격이 조금씩 줄어 숨통을 조인다.
+ */
+export const INVASION_FIRST_WAVE_TICKS = 30 * TICK_RATE;
+export const INVASION_WAVE_TICKS = 25 * TICK_RATE;
+/** 파도마다 간격이 이만큼 줄어든다 (최소 12초) */
+export const INVASION_WAVE_ACCEL = 0.4 * TICK_RATE;
+export const INVASION_WAVE_MIN_TICKS = 12 * TICK_RATE;
+/** 첫 파도 예산 (밀리미네랄) */
+export const INVASION_BUDGET_START = 6 * MINERAL_SCALE;
+/** 파도마다 예산 ×118/100 (정수 연산) */
+export const INVASION_BUDGET_GROWTH = 118;
+
 /** 기지 건설 후 가동까지 걸리는 시간 (틱) — 4초.
  * 라운드 20에서 2초→4초: "확장이 무조건 정답"이라는 실전 관측에 대한
  * 두 번째 브레이크(첫 번째는 라운드 10C의 확장비 12). 건설 중 기지는

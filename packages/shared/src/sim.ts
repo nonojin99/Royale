@@ -59,6 +59,12 @@ import {
   EXPAND_RANGE,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
+  INVASION_FIRST_WAVE_TICKS,
+  INVASION_WAVE_TICKS,
+  INVASION_WAVE_ACCEL,
+  INVASION_WAVE_MIN_TICKS,
+  INVASION_BUDGET_START,
+  INVASION_BUDGET_GROWTH,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -75,7 +81,7 @@ import {
   UnitDef,
   getUnit,
 } from './units.js';
-import { Rng, createRng } from './rng.js';
+import { Rng, createRng, nextInt } from './rng.js';
 import { clamp, dist2, isqrt, tiles } from './fixed.js';
 
 export type EntityKind = 'unit' | 'building' | 'base';
@@ -156,6 +162,18 @@ export interface GameState {
    * 시뮬 규칙을 바꾸는 플래그이므로 해시에 들어간다.
    */
   sandbox: boolean;
+  /**
+   * 침공 모드 (로그라이트 1단계) — 팀 1은 사람이 아니라 **파도**다.
+   * 예산이 자라는 유닛 무리가 주기적으로 침공자 본진에서 쏟아진다.
+   * 점수는 버틴 파도 수. 시간 종료가 없고, 내 본진 함락으로만 끝난다.
+   */
+  invasion: boolean;
+  /** 지금까지 쏟아진 파도 수 */
+  wave: number;
+  /** 다음 파도 틱 */
+  nextWaveTick: number;
+  /** 다음 파도 예산 (밀리미네랄) */
+  waveBudget: number;
 }
 
 /** 커맨드 종류 */
@@ -220,6 +238,7 @@ export function createState(
   factions: readonly [string, string] = [DEFAULT_FACTION_ID, DEFAULT_FACTION_ID],
   mapId: string = DEFAULT_MAP_ID,
   sandbox = false,
+  invasion = false,
 ): GameState {
   setActiveMap(mapId);
   const s: GameState = {
@@ -233,6 +252,10 @@ export function createState(
     over: false,
     winner: -1,
     sandbox,
+    invasion,
+    wave: 0,
+    nextWaveTick: INVASION_FIRST_WAVE_TICKS,
+    waveBudget: INVASION_BUDGET_START,
   };
   if (sandbox) {
     // **전 종족** 전 유닛 해금 + 미네랄 만땅 — 실험장의 존재 이유는 종족을
@@ -602,6 +625,60 @@ function unlock(p: PlayerState, unit: string): void {
   p.unlocked.sort(); // 해시 결정론을 위해 항상 정렬 상태를 유지한다
 }
 
+/**
+ * 침공 파도 하나를 쏟아낸다 (침공 모드 전용).
+ *
+ * 예산을 침공 종족의 유닛 목록(코스트 순)에 결정론적으로 쓴다 — 파도
+ * 번호에 따라 상위 유닛이 섞이기 시작해 "다음 파도는 뭐가 올까"가 생긴다.
+ * 위치는 침공자 본진 둘레, 시뮬 RNG 사용(상태에 포함되므로 결정론 안전).
+ */
+function spawnWave(s: GameState): void {
+  s.wave++;
+  const interval = Math.max(
+    INVASION_WAVE_MIN_TICKS,
+    INVASION_WAVE_TICKS - (s.wave - 1) * INVASION_WAVE_ACCEL,
+  );
+  s.nextWaveTick = s.tick + Math.trunc(interval);
+
+  const home = s.entities.find((e) => e.kind === 'base' && e.team === 1 && e.isMain);
+  const cx = home ? home.x : ARENA_W - 5000;
+  const cy = home ? home.y : 5000;
+
+  // 침공 종족의 유닛을 코스트 오름차순으로 — 파도 번호가 클수록 뒤(비싼) 유닛부터 산다
+  const f = getFaction(s.players[1].faction);
+  const pool = f.tech
+    .map((n) => n.unit)
+    .filter((id) => getUnit(id).kind === 'unit')
+    .sort((a, b) => getUnit(a).cost - getUnit(b).cost || (a < b ? -1 : 1));
+  if (pool.length === 0) return;
+
+  let budget = s.waveBudget;
+  // 다음 파도 예산 — 정수 백분율 곱 (부동소수점 금지)
+  s.waveBudget = Math.trunc((s.waveBudget * INVASION_BUDGET_GROWTH) / 100);
+
+  // 3파도마다 시작 지점을 한 단계 올린다 — 후반 파도는 고급 유닛 위주
+  let idx = Math.min(pool.length - 1, Math.trunc((s.wave - 1) / 3));
+  let guard = 64;
+  while (budget > 0 && guard-- > 0) {
+    const u = getUnit(pool[idx]);
+    const cost = u.cost * MINERAL_SCALE;
+    if (cost <= budget) {
+      budget -= cost;
+      const ox = nextInt(s.rng, 4000) - 2000;
+      const oy = nextInt(s.rng, 4000) - 2000;
+      for (let i = 0; i < u.count; i++) {
+        const [fx, fy] = formationOffset(u.count, i);
+        spawnUnit(s, 1, u, cx + ox + fx, cy + oy + fy);
+      }
+      // 다음 구매는 풀을 한 칸 내려가 저렴한 것을 섞는다
+      idx = idx > 0 ? idx - 1 : Math.min(pool.length - 1, Math.trunc((s.wave - 1) / 3));
+    } else {
+      idx = idx > 0 ? idx - 1 : 0;
+      if (idx === 0 && getUnit(pool[0]).cost * MINERAL_SCALE > budget) break;
+    }
+  }
+}
+
 /** 주문은 즉발 광역. 기지에는 피해를 주지 않는다 (설계 결정) */
 function applySpell(s: GameState, team: Team, u: UnitDef, x: number, y: number): void {
   const r2 = u.splash * u.splash;
@@ -733,6 +810,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
   // 1) 예약된 커맨드 실행
   for (const cmd of cmds) applyCommand(s, cmd);
+
+  // 1.5) 침공 파도 — 예산이 자라는 무리가 침공자 본진에서 쏟아진다
+  if (s.invasion && s.tick >= s.nextWaveTick && !s.over) spawnWave(s);
 
   // 2) 채굴
   mine(s);
@@ -1001,6 +1081,9 @@ function resolveDeaths(s: GameState): void {
     }
     changed = true;
     if (e.kind === 'base' && e.isMain && !s.sandbox) {
+      // 침공 모드: 침공자(팀1) 본진은 파괴돼도 파도가 계속 온다 — 끝은
+      // 오직 내 본진 함락. (원정 격파는 3단계 런 체인의 보스전 몫)
+      if (s.invasion && e.team === 1) continue;
       s.over = true;
       s.winner = e.team === 0 ? 1 : 0;
     }
@@ -1009,7 +1092,7 @@ function resolveDeaths(s: GameState): void {
 }
 
 function checkEnd(s: GameState): void {
-  if (s.over || s.sandbox) return;
+  if (s.over || s.sandbox || s.invasion) return;
 
   const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
   if (s.tick < limit) return;
@@ -1076,6 +1159,10 @@ export function restore(target: GameState, snap: GameState): void {
   target.over = fresh.over;
   target.winner = fresh.winner;
   target.sandbox = fresh.sandbox;
+  target.invasion = fresh.invasion;
+  target.wave = fresh.wave;
+  target.nextWaveTick = fresh.nextWaveTick;
+  target.waveBudget = fresh.waveBudget;
 }
 
 /**
@@ -1094,6 +1181,10 @@ export function hashState(s: GameState): number {
 
   mixStr(s.mapId);
   mix(s.sandbox ? 1 : 0);
+  mix(s.invasion ? 1 : 0);
+  mix(s.wave);
+  mix(s.nextWaveTick);
+  mix(s.waveBudget);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);

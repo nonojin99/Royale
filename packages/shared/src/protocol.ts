@@ -21,6 +21,8 @@ export interface CHello {
   botLevel?: string;
   /** 실험장 모드 (솔로 전용) — 봇 없이 양 팀 유닛을 자유 배치한다 */
   sandbox?: boolean;
+  /** 침공 모드 (솔로 전용) — 파도를 버티는 로그라이트 1단계 */
+  invasion?: boolean;
 }
 
 /**
@@ -107,6 +109,8 @@ export interface SMatch {
   startWallMs: number;
   /** 실험장 경기 — 클라이언트도 같은 규칙으로 시뮬해야 한다 */
   sandbox?: boolean;
+  /** 침공 경기 */
+  invasion?: boolean;
 }
 
 /** 확정된 커맨드. 양쪽 클라에 동일하게 브로드캐스트된다. */

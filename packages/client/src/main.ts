@@ -98,6 +98,9 @@ const net = new NetClient(serverUrl(), {
       // 실험장은 배울 온보딩이 아니라 관찰 도구다 — 조작법 한 줄이면 된다
       stopOnboarding();
       flash('실험장 — 클릭: 아군 배치 · Alt+클릭: 적군 배치 · 어디든 놓입니다');
+    } else if (net.state?.invasion) {
+      stopOnboarding();
+      flash('침공 — 파도가 밀려온다. 첫 파도까지 30초, 진지를 다져라');
     } else {
       startOnboarding();
     }
@@ -106,12 +109,17 @@ const net = new NetClient(serverUrl(), {
     stopOnboarding();
     const me = net.myTeam;
     const foe = me === 0 ? 1 : 0;
-    const text = winner === -1 ? '무승부' : winner === me ? '승리!' : '패배';
+    const inv = net.state?.invasion;
+    const text = inv
+      ? `파도 ${net.state?.wave ?? 0}에서 함락`
+      : winner === -1 ? '무승부' : winner === me ? '승리!' : '패배';
     sound.play(winner === -1 ? 'draw' : winner === me ? 'win' : 'lose');
     showOverlay(
       text,
-      `기지 ${bases[me]} : ${bases[foe]}\n` +
-        `총 채굴 ${Math.floor(mined[me] / MINERAL_SCALE)} : ${Math.floor(mined[foe] / MINERAL_SCALE)}`,
+      inv
+        ? `버틴 시간 ${Math.floor((net.state?.tick ?? 0) / TICK_RATE)}초 · 총 채굴 ${Math.floor(mined[me] / MINERAL_SCALE)}`
+        : `기지 ${bases[me]} : ${bases[foe]}\n` +
+            `총 채굴 ${Math.floor(mined[me] / MINERAL_SCALE)} : ${Math.floor(mined[foe] / MINERAL_SCALE)}`,
     );
     showOverActions(replayId);
   },
@@ -199,10 +207,12 @@ async function boot(): Promise<void> {
   $('start').addEventListener('click', () => showSetup('solo'));
   $('btn-solo-start').addEventListener('click', () => {
     const sandbox = selectedLevel === 'sandbox';
+    const invasion = selectedLevel === 'invasion';
     net.connect(playerName(), selectedFaction, selectedMap, {
       solo: true,
       sandbox,
-      botLevel: sandbox ? undefined : selectedLevel,
+      invasion,
+      botLevel: sandbox || invasion ? undefined : selectedLevel,
     });
     setStatus('접속 중…');
     ($('btn-solo-start') as HTMLButtonElement).disabled = true;
@@ -974,6 +984,14 @@ function deployable(s: GameState, x: number, y: number): boolean {
 
 function frame(): void {
   const now = performance.now();
+  // 히트스톱 — 큰 죽음의 순간 그리기만 얼린다. 시뮬(net.update)은 계속
+  // 돌아야 lockstep이 깨지지 않는다
+  if (renderer.inHitstop) {
+    lastFrameMs = now;
+    net.update();
+    requestAnimationFrame(frame);
+    return;
+  }
   renderer.advanceAnimations(now - lastFrameMs);
   lastFrameMs = now;
 
@@ -1018,7 +1036,10 @@ function updateHud(s: GameState): void {
 
   $('score').textContent = `🏠 ${baseCount(s, net.myTeam)} : ${baseCount(s, foe)}`;
 
-  if (s.sandbox) {
+  if (s.invasion) {
+    const untilNext = Math.max(0, Math.ceil((s.nextWaveTick - s.tick) / TICK_RATE));
+    $('timer').textContent = `🌊 파도 ${s.wave} · 다음 ${untilNext}초`;
+  } else if (s.sandbox) {
     const el = Math.floor(s.tick / TICK_RATE);
     $('timer').textContent = `🧪 ${Math.floor(el / 60)}:${String(el % 60).padStart(2, '0')}`;
   } else {

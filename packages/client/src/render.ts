@@ -181,6 +181,9 @@ export class Renderer {
       autoDensity: true,
     });
     host.appendChild(this.app.canvas);
+    // 흔들림 회전의 축이 화면 중앙이 되도록 피벗을 옮긴다 (모서리 축 회전은 어지럽다)
+    this.world.pivot.set(VIEW_W / 2, VIEW_H / 2);
+    this.world.position.set(VIEW_W / 2, VIEW_H / 2);
     this.sprites.sortableChildren = true;
     this.world.addChild(
       this.gTiles,
@@ -234,10 +237,17 @@ export class Renderer {
     // world 컨테이너 전체를 밀므로 지형·유닛·이펙트가 한 몸으로 흔들린다
     const shakeLeft = this.shakeUntil - this.nowMs;
     if (shakeLeft > 0) {
-      const amp = 3 * Math.min(1, shakeLeft / 150);
-      this.world.position.set((Math.random() * 2 - 1) * amp, (Math.random() * 2 - 1) * amp);
+      const k = Math.min(1, shakeLeft / 150);
+      const amp = 3 * k;
+      this.world.position.set(
+        VIEW_W / 2 + (Math.random() * 2 - 1) * amp,
+        VIEW_H / 2 + (Math.random() * 2 - 1) * amp,
+      );
+      // 순수 평행이동은 글리치처럼 보인다 — 0.3°쯤의 회전이 '힘'으로 읽힌다
+      this.world.rotation = (Math.random() * 2 - 1) * 0.005 * k;
     } else {
-      this.world.position.set(0, 0);
+      this.world.position.set(VIEW_W / 2, VIEW_H / 2);
+      this.world.rotation = 0;
     }
     // 미네랄·일꾼도 스프라이트를 쓰므로 풀 반납은 첫 사용처보다 앞에서 한 번에 한다
     this.resetSprites();
@@ -752,10 +762,19 @@ export class Renderer {
         // 걸음 바운스 — 걷기 프레임이 밋밋한 시트(광전사 등)도 발걸음
         // 리듬이 생긴다. 그림자·링은 지면에 남아 발이 땅을 딛는 것으로 읽힌다
         const bob = moved && !e.flying ? (Math.floor(this.nowMs / 125) + e.id) % 2 : 0;
-        this.applyHit(
-          this.place(tex, sx, by - bob, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam)),
-          hit,
-        );
+        const sp2 = this.place(tex, sx, by - bob, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam));
+        // squash & stretch — 딛는 프레임엔 낮고 넓게, 뜨는 프레임엔 높고 좁게.
+        // 진폭 3%면 의식은 못 해도 접지감으로 읽힌다
+        if (moved && !e.flying) {
+          if (bob === 1) {
+            sp2.scale.y *= 1.03;
+            sp2.scale.x *= 0.98;
+          } else {
+            sp2.scale.y *= 0.98;
+            sp2.scale.x *= 1.02;
+          }
+        }
+        this.applyHit(sp2, hit);
       } else {
         g.circle(sx, by, r);
         g.fill(u.color);
@@ -1026,6 +1045,26 @@ export class Renderer {
   private shakeUntil = 0;
   /** 마지막 흔들림 시작 시각 — 연쇄 파괴 쿨다운용 */
   private lastShakeMs = -9999;
+  /** 히트스톱 종료 시각 (벽시계 ms) — 이 동안 프레임을 얼린다 */
+  private hitstopUntilWall = 0;
+  private lastHitstopWall = -9999;
+
+  /**
+   * 히트스톱 — 큰 죽음의 순간 화면을 70ms 얼린다 ("그게 중요했다"는 신호).
+   * 시뮬은 계속 돈다(lockstep 불가침) — 어는 것은 그리기뿐이다.
+   * 쿨다운 300ms: 대군 전투에서 슬라이드쇼가 되는 것을 막는다.
+   */
+  private requestHitstop(ms: number): void {
+    const now = performance.now();
+    if (now - this.lastHitstopWall < 300) return;
+    this.hitstopUntilWall = now + ms;
+    this.lastHitstopWall = now;
+  }
+
+  /** 프레임 루프가 매 프레임 묻는다 — true면 이번 프레임은 그리지 않는다 */
+  get inHitstop(): boolean {
+    return performance.now() < this.hitstopUntilWall;
+  }
 
   advanceAnimations(deltaMs: number): void {
     this.nowMs += deltaMs;
@@ -1097,7 +1136,7 @@ export class Renderer {
   /** 직전 프레임에 살아 있던 엔티티 — 사라지면 그 자리에 죽음 이펙트 */
   private readonly fxSeen = new Map<
     number,
-    { sx: number; sy: number; faction: string; flying: boolean; kind: string }
+    { sx: number; sy: number; faction: string; flying: boolean; kind: string; unit: string }
   >();
   private fxLastTick = -1;
   /** 원거리 사격의 히트스캔 트레이서 — 120ms 섬광 한 줄 */
@@ -1111,6 +1150,15 @@ export class Renderer {
   }> = [];
   /** 죽음 데칼 — 지상 유닛이 쓰러진 자리의 그을음. 8초에 걸쳐 스며 사라진다 */
   private readonly decals: Array<{ sx: number; sy: number; startMs: number }> = [];
+  /** 죽음 파편 — 종족색 사각 파티클, 450ms 수명 */
+  private readonly particles: Array<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    color: number;
+    startMs: number;
+  }> = [];
 
   /**
    * 시뮬 상태의 변화(발사·죽음)를 보고 이펙트를 만든다.
@@ -1130,6 +1178,7 @@ export class Renderer {
       this.fxList.length = 0;
       this.tracers.length = 0;
       this.decals.length = 0;
+      this.particles.length = 0;
       this.lastHp.clear();
       this.flashUntil.clear();
       this.shakeUntil = 0;
@@ -1207,6 +1256,27 @@ export class Renderer {
         PX_PER_TILE * 1.3,
       );
       this.onFx?.('death', seen.faction, seen.sx);
+      // 히트스톱 — 4코스트 이상 대형 유닛·구조물의 죽음만. 소형 유닛까지
+      // 얼리면 대군 전투가 슬라이드쇼가 된다
+      const bigDeath =
+        seen.kind !== 'unit' ||
+        (seen.unit !== '__base' && getUnit(seen.unit).cost >= 4 && getUnit(seen.unit).count === 1);
+      if (bigDeath) this.requestHitstop(70);
+      // 파티클 버스트 — 죽음마다 종족색 파편이 튄다 (렌더 전용)
+      if (this.particles.length < 240) {
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2 + Math.random() * 0.8;
+          const sp = 0.6 + Math.random() * 1.3;
+          this.particles.push({
+            x: seen.sx,
+            y: seen.sy,
+            vx: Math.cos(a) * sp,
+            vy: Math.sin(a) * sp - 0.6,
+            color: FX_COLOR[seen.faction] ?? 0xffffff,
+            startMs: this.nowMs,
+          });
+        }
+      }
       // 흔들림은 **구조물 파괴에만** — 유닛 하나하나에 흔들면 대군 전투에서
       // 화면이 상시 진동해 멀미가 된다 (라운드 21 실전 보고). 유닛 죽음의
       // 무게는 플래시·연기·데칼·사운드가 이미 지고 있다. 쿨다운 600ms로
@@ -1229,6 +1299,7 @@ export class Renderer {
         faction: state.players[e.team].faction,
         flying: e.flying,
         kind: e.kind,
+        unit: e.unit,
       });
     }
   }
@@ -1270,6 +1341,21 @@ export class Renderer {
   }
 
   private drawFx(d: Graphics): void {
+    // 죽음 파편 — 위로 튀었다 살짝 가라앉으며 사라진다
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const pt = this.particles[i];
+      const t = (this.nowMs - pt.startMs) / 450;
+      if (t >= 1) {
+        this.particles.splice(i, 1);
+        continue;
+      }
+      const px = pt.x + pt.vx * t * 26;
+      const py = pt.y + pt.vy * t * 26 + 18 * t * t; // 중력 한 스푼
+      const size = 2 * (1 - t * 0.5);
+      d.rect(px - size / 2, py - size / 2, size, size);
+      d.fill({ color: pt.color, alpha: 0.9 * (1 - t) });
+    }
+
     // 트레이서 — 꼬리부터 사라지는 섬광. 잔상의 방향이 곧 사선(射線)이다
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const tr = this.tracers[i];

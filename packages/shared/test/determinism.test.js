@@ -1249,3 +1249,25 @@ test('충전 스킬 — 게이지가 차면 사거리 안에서 자동 발사한
   assert.ok(before - after >= 3, `광역 즉사 기대 (${before}→${after}) — 일반 공격으로는 불가능한 속도`);
   assert.ok(byId(s, gs.id).charge < SKILL_CHARGE_TICKS, '발사 후 게이지가 리셋된다');
 });
+
+test('침공 — 파도가 예정 틱에 쏟아지고, 시간 종료 없이 본진 함락으로만 끝난다', () => {
+  const s = createState(3, ['steel', 'swarmhive'], 'coast', false, true);
+  assert.equal(s.invasion, true);
+
+  // 첫 파도 직전까지: 침공군 유닛 없음
+  while (s.tick < s.nextWaveTick) step(s, []);
+  step(s, []);
+  assert.equal(s.wave, 1, '첫 파도가 쏟아졌다');
+  assert.ok(
+    s.entities.some((e) => e.kind === 'unit' && e.team === 1),
+    '파도 유닛이 생성됐다',
+  );
+  // 예산은 정수 곱으로 자란다
+  assert.ok(s.waveBudget > 6000, '다음 파도 예산이 커졌다');
+
+  // 내 본진을 부수면 끝난다
+  for (const e of s.entities) if (e.kind === 'base' && e.isMain && e.team === 0) e.hp = 0;
+  step(s, []);
+  assert.equal(s.over, true, '본진 함락 = 종료');
+  assert.equal(s.winner, 1);
+});
