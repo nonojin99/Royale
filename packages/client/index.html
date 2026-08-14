@@ -459,6 +459,12 @@
     }
     .draft-card .ddesc { display: block; font-size: 11px; line-height: 1.45; color: #8fa8bd; }
     .draft-card.unlock .dname { color: #fbbf24; }
+    #mode-picker { display: flex; gap: 8px; width: min(360px, 88vw); }
+    #mode-picker.hidden, #lobby-label-mode.hidden { display: none; }
+    #mode-picker .mode.selected {
+      color: #0a1626; background: #7dd3fc;
+      box-shadow: inset 0 0 0 1.5px #bae6fd, 0 0 12px rgba(125, 211, 252, .4);
+    }
     #level-picker { display: flex; gap: 8px; width: min(360px, 88vw); }
     #level-picker.hidden { display: none; }
     #lobby-label-level.hidden { display: none; }
@@ -734,6 +740,12 @@
         <div id="room-code"></div>
         <div id="room-players"></div>
       </div>
+      <div id="lobby-label-mode" class="lobby-label">모드</div>
+      <div id="mode-picker">
+        <button class="lvl mode selected" data-mode="versus">대전</button>
+        <button class="lvl mode" data-mode="sandbox">실험장</button>
+        <button class="lvl mode" data-mode="invasion">침공</button>
+      </div>
       <div id="lobby-label">종족</div>
       <div id="faction-picker"></div>
       <div id="faction-detail"></div>
@@ -745,8 +757,6 @@
         <button class="lvl" data-level="easy">초급</button>
         <button class="lvl selected" data-level="normal">중급</button>
         <button class="lvl" data-level="hard">고급</button>
-        <button class="lvl" data-level="sandbox">실험장</button>
-        <button class="lvl" data-level="invasion">침공</button>
       </div>
       <button id="btn-solo-start" class="hidden">시작</button>
       <button id="btn-ready" class="hidden">준비</button>

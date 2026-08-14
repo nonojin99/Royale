@@ -204,17 +204,16 @@ async function boot(): Promise<void> {
   buildFactionPicker();
   buildMapPicker();
   wireLevelPicker();
+  wireModePicker();
 
   // 봇전 — 설정 화면(종족·맵)을 거쳐 시작한다 (라운드 11.5)
   $('start').addEventListener('click', () => showSetup('solo'));
   $('btn-solo-start').addEventListener('click', () => {
-    const sandbox = selectedLevel === 'sandbox';
-    const invasion = selectedLevel === 'invasion';
     net.connect(playerName(), selectedFaction, selectedMap, {
       solo: true,
-      sandbox,
-      invasion,
-      botLevel: sandbox || invasion ? undefined : selectedLevel,
+      sandbox: selectedMode === 'sandbox',
+      invasion: selectedMode === 'invasion',
+      botLevel: selectedMode === 'versus' ? selectedLevel : undefined,
     });
     setStatus('접속 중…');
     ($('btn-solo-start') as HTMLButtonElement).disabled = true;
@@ -339,9 +338,21 @@ function showSetup(mode: 'solo' | 'room'): void {
     $('map-picker').classList.remove('hidden');
     $('room-map').classList.add('hidden');
   }
-  // 봇 난이도는 솔로에서만 의미가 있다 — 방에는 봇이 없다
-  $('lobby-label-level').classList.toggle('hidden', mode !== 'solo');
-  $('level-picker').classList.toggle('hidden', mode !== 'solo');
+  // 모드 픽커는 솔로 설정에만 — 방은 언제나 대전이다
+  $('lobby-label-mode').classList.toggle('hidden', mode !== 'solo');
+  $('mode-picker').classList.toggle('hidden', mode !== 'solo');
+  if (mode === 'solo') {
+    applyModeToSetup();
+  } else {
+    // 방(PvP): 침공 전용 맵·난이도 줄 없이 대전 규칙으로
+    if (MAPS.find((m) => m.id === selectedMap)?.invasionOnly) selectedMap = DEFAULT_MAP_ID;
+    const keep = selectedMode;
+    selectedMode = 'versus';
+    buildMapPicker();
+    selectedMode = keep;
+    $('lobby-label-level').classList.add('hidden');
+    $('level-picker').classList.add('hidden');
+  }
   setStatus('');
 }
 
@@ -418,8 +429,10 @@ let selectedMap =
   new URLSearchParams(location.search).get('map') ?? DEFAULT_MAP_ID;
 
 /** 맵 선택 — 종족 픽커와 같은 문법의 카드 줄 */
-/** 솔로 봇 난이도 — 픽커에서 고르고 hello로 보낸다 */
+/** 솔로 봇 난이도 (대전 전용) */
 let selectedLevel = 'normal';
+/** 게임 모드 — 모드가 맵 목록과 난이도 줄 표시를 결정한다 (라운드 26 분리) */
+let selectedMode: 'versus' | 'sandbox' | 'invasion' = 'versus';
 
 function wireLevelPicker(): void {
   const root = document.getElementById('level-picker');
@@ -428,12 +441,37 @@ function wireLevelPicker(): void {
     b.addEventListener('click', () => {
       selectedLevel = b.dataset.level ?? 'normal';
       root.querySelectorAll('.lvl').forEach((x) => x.classList.toggle('selected', x === b));
-      // 침공 전용 맵은 침공에서만 — 목록을 다시 그리고 선택을 정리한다
-      const cur = MAPS.find((m) => m.id === selectedMap);
-      if (cur?.invasionOnly && selectedLevel !== 'invasion') selectedMap = DEFAULT_MAP_ID;
-      buildMapPicker();
     });
   });
+}
+
+function wireModePicker(): void {
+  const root = document.getElementById('mode-picker');
+  if (!root) return;
+  root.querySelectorAll<HTMLButtonElement>('.mode').forEach((b) => {
+    b.addEventListener('click', () => {
+      selectedMode = (b.dataset.mode as typeof selectedMode) ?? 'versus';
+      root.querySelectorAll('.mode').forEach((x) => x.classList.toggle('selected', x === b));
+      applyModeToSetup();
+    });
+  });
+}
+
+/** 모드에 맞춰 설정 화면을 재구성 — 전용 맵만 뜨고, 난이도는 대전에서만 */
+function applyModeToSetup(): void {
+  const invasion = selectedMode === 'invasion';
+  const cur = MAPS.find((m) => m.id === selectedMap);
+  if (invasion && !cur?.invasionOnly) {
+    selectedMap = MAPS.find((m) => m.invasionOnly)?.id ?? DEFAULT_MAP_ID;
+  } else if (!invasion && cur?.invasionOnly) {
+    selectedMap = DEFAULT_MAP_ID;
+  }
+  buildMapPicker();
+  const showLevel = selectedMode === 'versus';
+  $('lobby-label-level').classList.toggle('hidden', !showLevel);
+  $('level-picker').classList.toggle('hidden', !showLevel);
+  const rooms = $('pvp-row');
+  if (rooms) rooms.classList.toggle('hidden', selectedMode !== 'versus');
 }
 
 function buildMapPicker(): void {
@@ -441,8 +479,8 @@ function buildMapPicker(): void {
   if (!root) return;
   root.replaceChildren();
   for (const m of MAPS) {
-    // 침공 전용 맵(포위)은 침공을 골랐을 때만 목록에 나온다
-    if (m.invasionOnly && selectedLevel !== 'invasion') continue;
+    // 모드별 전용 맵 — 침공 모드에는 침공 맵만, 그 외에는 대전 맵만
+    if (selectedMode === 'invasion' ? !m.invasionOnly : m.invasionOnly) continue;
     const el = document.createElement('button');
     el.className = 'faction mappick';
     el.innerHTML =
