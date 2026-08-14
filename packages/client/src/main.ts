@@ -18,6 +18,8 @@ import {
   MATCH_TICKS,
   MINERAL_MAX,
   RELIC_BY_ID,
+  pathExists,
+  tileIndex,
   SKILL_CAST_RANGE,
   SKILL_CHARGE_TICKS,
   waveTypeOf,
@@ -1053,6 +1055,13 @@ function onPointerDown(ev: PointerEvent): void {
     flash('내 기지 반경 안에만 배치할 수 있습니다');
     return;
   }
+  // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 시뮬이 거절하므로,
+  // 전송 전에 같은 판정을 미리 해 즉시 알린다 (라운드 29)
+  if (s.invasion && getUnit(selectedUnit).kind === 'building' && wouldSeal(s, x, y)) {
+    sound.play('error');
+    flash('여기를 막으면 적이 올 길이 사라집니다 — 길은 하나 남겨야 합니다');
+    return;
+  }
   // 실험장: Alt+클릭이면 상대 팀으로 배치 — 상성을 부딪혀 보는 손잡이
   net.act('unit', selectedUnit, x, y, s.sandbox && ev.altKey);
   sound.play('deploy');
@@ -1099,6 +1108,31 @@ function onPointerUp(ev: PointerEvent): void {
     }
   }
   if (selectedIds.size > 0) sound.play('ui');
+}
+
+/** 시뮬의 봉쇄 금지 판정과 같은 검사 — 클릭 즉시 피드백을 주기 위한 미리보기 */
+function wouldSeal(s: GameState, x: number, y: number): boolean {
+  const home = s.entities.find(
+    (e) => e.kind === 'base' && e.team === net.myTeam && e.isMain,
+  );
+  if (!home) return false;
+  const probe: number[] = [];
+  const tx = Math.floor(x / 1000);
+  const ty = Math.floor(y / 1000);
+  for (const [dx, dy] of [[0, 0], [0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+    const i = tileIndex(tx + dx, ty + dy);
+    if (i >= 0) probe.push(i);
+  }
+  const gx = Math.floor(home.x / 1000);
+  const gy = Math.floor(home.y / 1000);
+  const corners: Array<[number, number]> = [[1, 1], [46, 1], [1, 46], [46, 46]];
+  const foe = s.entities.find((e) => e.kind === 'base' && e.team !== net.myTeam && e.isMain);
+  if (foe) corners.push([Math.floor(foe.x / 1000), Math.floor(foe.y / 1000)]);
+  for (const [sx, sy] of corners) {
+    if (!pathExists(sx, sy, gx, gy)) continue;
+    if (!pathExists(sx, sy, gx, gy, probe)) return true;
+  }
+  return false;
 }
 
 function deployable(s: GameState, x: number, y: number): boolean {

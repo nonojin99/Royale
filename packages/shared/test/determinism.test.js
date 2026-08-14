@@ -54,6 +54,7 @@ import {
   canResearch,
   createRng,
   applyCommand,
+  pathExists,
   createState,
   getFaction,
   getUnit,
@@ -1376,5 +1377,45 @@ test('이동 명령 — 전진 본능을 이기고 도착하면 스스로 해제
   assert.equal(
     applyCommand(s, { execTick: s.tick, team: 0, kind: 'move', id: foe.join(',') || '9999', x: tx, y: ty }),
     false,
+  );
+});
+
+test('방벽 = 지형 — 침공에서만 길을 막고, 완전 봉쇄는 거절된다', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', true, false); // 실험장(대전 규칙)
+  for (let i = 0; i < 30; i++) step(s, []);
+  applyCommand(s, { execTick: s.tick, team: 0, kind: 'unit', id: 'bulwark', x: 22500, y: 17500 });
+  step(s, []);
+  const bx = 22;
+  const by = 17;
+  assert.equal(walkable(bx, by), true, '대전 규칙에서는 건물이 길을 막지 않는다');
+
+  // 침공: 같은 자리에 지으면 길찾기 격자가 막힌다
+  const inv = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  for (let i = 0; i < 30; i++) step(inv, []);
+  const main = inv.entities.find((e) => e.kind === 'base' && e.team === 0);
+  const before = navDistance(23500, 6500, main.x, main.y);
+  applyCommand(inv, { execTick: inv.tick, team: 0, kind: 'unit', id: 'bulwark', x: 22500, y: 17500 });
+  applyCommand(inv, { execTick: inv.tick, team: 0, kind: 'unit', id: 'bulwark', x: 25500, y: 17500 });
+  step(inv, []);
+  assert.equal(walkable(bx, by), false, '침공에서는 건물이 길을 막는다');
+  const after = navDistance(23500, 6500, main.x, main.y);
+  assert.ok(after > before, `문을 좁히면 경로가 길어진다 (${before} → ${after})`);
+
+  // 완전 봉쇄는 거절 — 본진 둘레를 촘촘히 두르면 어느 순간부터 안 지어진다
+  let rejected = 0;
+  for (let a = 0; a < 64; a++) {
+    const ang = (a / 64) * Math.PI * 2;
+    const ok = applyCommand(inv, {
+      execTick: inv.tick, team: 0, kind: 'unit', id: 'bulwark',
+      x: main.x + Math.cos(ang) * 3200, y: main.y + Math.sin(ang) * 3200,
+    });
+    if (!ok) rejected++;
+    step(inv, []);
+  }
+  assert.ok(rejected > 0, '완전 봉쇄 배치는 거절된다');
+  assert.equal(
+    pathExists(1, 1, Math.floor(main.x / 1000), Math.floor(main.y / 1000)),
+    true,
+    '적이 올 길은 언제나 남는다',
   );
 });

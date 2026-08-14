@@ -53,6 +53,85 @@ const COST: readonly number[] = [10, 10, 10, 10, 14, 14, 14, 14];
 export let TERRAIN: Uint8Array = new Uint8Array(W * H);
 let terrainVersion = -1;
 
+/**
+ * 동적 장애물 — 방어 건물이 차지한 타일 (라운드 29 "방벽 = 지형").
+ *
+ * 지형과 달리 경기 중에 변한다. 시뮬이 매 틱 건물 목록에서 파생해 넣어주고
+ * (setBlockers), 바뀐 순간에만 거리장 캐시를 버린다. 시뮬 상태에서 파생된
+ * 값이므로 모든 클라이언트가 같은 격자를 갖는다 — 결정론은 그대로다.
+ *
+ * 이 레이어가 있어야 "터렛 놓기"가 "성 설계"가 된다: 파도가 방벽을 돌아
+ * 긴 사선으로 유도되고, 그 사선에 화력을 배치하는 것이 전략이 된다.
+ */
+let BLOCKERS: Uint8Array = new Uint8Array(W * H);
+let blockerSig = 0;
+
+/**
+ * 건물 점유 타일을 갈아끼운다. `sig`가 같으면 아무것도 하지 않는다 —
+ * 매 틱 호출되므로 변화가 없을 때 거리장을 버리면 안 된다.
+ */
+export function setBlockers(tiles: readonly number[], sig: number): void {
+  if (sig === blockerSig) return;
+  blockerSig = sig;
+  const g = new Uint8Array(W * H);
+  for (const t of tiles) if (t >= 0 && t < g.length) g[t] = 1;
+  BLOCKERS = g;
+  fields.clear();
+}
+
+/** 타일 인덱스 (경계 밖은 -1) */
+export function tileIndex(tx: number, ty: number): number {
+  if (tx < 0 || ty < 0 || tx >= W || ty >= H) return -1;
+  return ty * W + tx;
+}
+
+/**
+ * `extra`를 추가로 막았다고 가정하고 sx,sy → gx,gy 경로가 남는지 본다.
+ *
+ * **완전 봉쇄 금지의 집행자**다 (스타의 규칙과 같다): 막다른 길과 미로는
+ * 허용하되, 적이 내 본진에 닿는 길이 하나도 없어지는 배치는 거절한다.
+ * 그게 없으면 방벽 도배로 게임이 정지한다.
+ */
+export function pathExists(
+  sx: number,
+  sy: number,
+  gx: number,
+  gy: number,
+  extra: readonly number[] = [],
+): boolean {
+  syncTerrain();
+  const start = tileIndex(sx, sy);
+  const goal = tileIndex(gx, gy);
+  if (start < 0 || goal < 0) return false;
+  const block = new Uint8Array(W * H);
+  for (let i = 0; i < block.length; i++) block[i] = TERRAIN[i] | BLOCKERS[i];
+  for (const t of extra) if (t >= 0 && t < block.length) block[t] = 1;
+  if (block[start] === 1 || block[goal] === 1) return false;
+
+  const seen = new Uint8Array(W * H);
+  const queue = new Int32Array(W * H);
+  let head = 0;
+  let tail = 0;
+  queue[tail++] = start;
+  seen[start] = 1;
+  while (head < tail) {
+    const cur = queue[head++];
+    if (cur === goal) return true;
+    const cx = cur % W;
+    const cy = (cur / W) | 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + DIRS[d][0];
+      const ny = cy + DIRS[d][1];
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const ni = ny * W + nx;
+      if (seen[ni] || block[ni]) continue;
+      seen[ni] = 1;
+      queue[tail++] = ni;
+    }
+  }
+  return false;
+}
+
 function syncTerrain(): void {
   if (terrainVersion === mapVersion()) return;
   const g = new Uint8Array(W * H);
@@ -79,7 +158,8 @@ export function tileY(y: number): number {
 export function walkable(tx: number, ty: number): boolean {
   syncTerrain();
   if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
-  return TERRAIN[ty * W + tx] === 0;
+  const i = ty * W + tx;
+  return TERRAIN[i] === 0 && BLOCKERS[i] === 0;
 }
 
 /**

@@ -20,6 +20,8 @@
 import {
   ARENA_H,
   ARENA_W,
+  ARENA_W_TILES,
+  ARENA_H_TILES,
   BASE_SITES,
   BaseSite,
   DEFAULT_MAP_ID,
@@ -32,7 +34,7 @@ import {
   nearestFreeSite,
   setActiveMap,
 } from './arena.js';
-import { navStep } from './nav.js';
+import { navStep, pathExists, setBlockers, tileIndex, tileX, tileY } from './nav.js';
 import {
   BASE_BUILD_COST,
   BASE_BUILD_TICKS,
@@ -629,6 +631,16 @@ function produceUnit(s: GameState, cmd: Command): boolean {
   const zone = s.sandbox ? ([[cmd.x, cmd.y]] as const) : ownBasePositions(s, cmd.team);
   if (!canDeployAt(cmd.x, cmd.y, zone)) return false;
 
+  // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 거절한다 (라운드 29, 침공 전용)
+  if (s.invasion && u.kind === 'building') {
+    const probe: number[] = [];
+    blockerTilesOf(
+      { x: cmd.x, y: cmd.y } as Entity,
+      probe,
+    );
+    if (wouldSealOff(s, cmd.team, probe)) return false;
+  }
+
   p.minerals -= cost;
   for (let i = 0; i < u.count; i++) {
     const [ox, oy] = formationOffset(u.count, i);
@@ -925,6 +937,83 @@ export function siteReachable(
   return false;
 }
 
+/* ── 방벽 = 지형 (라운드 29) ───────────────────────────────────────────── */
+
+const EMPTY_BLOCKERS: readonly number[] = [];
+
+/**
+ * 건물 하나가 막는 타일 — 중심 칸과 직교 이웃 4칸(십자).
+ *
+ * 물리적 근거: 건물 반경 900 + 유닛 반경 400 = 1300. 즉 건물 중심에서
+ * 1.3타일 안으로는 유닛의 몸이 들어가지 못한다. 이웃 칸(거리 1.0)까지
+ * 막아야 길찾기와 충돌이 어긋나지 않는다 — 어긋나면 유닛이 "지나갈 수
+ * 있다고 믿고" 들어갔다가 끼는 라운드 19식 사고가 난다.
+ */
+function blockerTilesOf(e: Entity, out: number[]): void {
+  const tx = tileX(e.x);
+  const ty = tileY(e.y);
+  for (const [dx, dy] of [[0, 0], [0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+    const i = tileIndex(tx + dx, ty + dy);
+    if (i >= 0) out.push(i);
+  }
+}
+
+/**
+ * 건물 목록 → 길찾기 장애물 격자. 매 틱 호출되지만 서명이 같으면 공짜다.
+ * 기지는 제외한다 — 고정 지점이라 막으면 기존 맵의 통로가 닫힌다.
+ */
+function syncBlockers(s: GameState): void {
+  // **침공 전용이다.** 대전에 켜 보니 방어 건물이 접근로를 닫아 삼각이
+  // 무너졌다 (하네스 실측: RUSH vs TECH 58% → 38%). 대전 도입은 방어
+  // 건물 재튜닝을 끝낸 뒤 별도 라운드로 — 기존 모드는 건드리지 않는다
+  if (!s.invasion) {
+    setBlockers(EMPTY_BLOCKERS, 0);
+    return;
+  }
+  const tiles: number[] = [];
+  let sig = 0x811c9dc5;
+  for (const e of s.entities) {
+    if (e.kind !== 'building') continue;
+    const before = tiles.length;
+    blockerTilesOf(e, tiles);
+    for (let i = before; i < tiles.length; i++) {
+      sig ^= tiles[i];
+      sig = Math.imul(sig, 0x01000193) >>> 0;
+    }
+  }
+  setBlockers(tiles, sig);
+}
+
+/**
+ * 이 건물을 지으면 적이 내 본진에 닿을 길이 하나도 없어지는가.
+ *
+ * 완전 봉쇄 금지 — 미로와 막다른 길은 허용하되 전면 폐쇄는 거절한다.
+ * 지금 길이 있는 출발점만 검사한다(원래 막혀 있던 섬 때문에 배치가
+ * 거절되면 안 된다).
+ */
+function wouldSealOff(s: GameState, team: Team, extra: readonly number[]): boolean {
+  const home = s.entities.find((e) => e.kind === 'base' && e.team === team && e.isMain);
+  if (!home) return false;
+  const gx = tileX(home.x);
+  const gy = tileY(home.y);
+
+  const sources: Array<[number, number]> = [
+    [1, 1],
+    [ARENA_W_TILES - 2, 1],
+    [1, ARENA_H_TILES - 2],
+    [ARENA_W_TILES - 2, ARENA_H_TILES - 2],
+  ];
+  const foe = s.entities.find((e) => e.kind === 'base' && e.team !== team && e.isMain);
+  if (foe) sources.push([tileX(foe.x), tileY(foe.y)]);
+
+  for (const [sx, sy] of sources) {
+    // 지금도 못 오는 출발점은 따지지 않는다
+    if (!pathExists(sx, sy, gx, gy)) continue;
+    if (!pathExists(sx, sy, gx, gy, extra)) return true;
+  }
+  return false;
+}
+
 /* ── 침공 파도 타입·유물 ───────────────────────────────────────────────── */
 
 export type WaveType = 'normal' | 'air' | 'siege' | 'rush' | 'boss';
@@ -1050,6 +1139,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
   // 1) 예약된 커맨드 실행
   for (const cmd of cmds) applyCommand(s, cmd);
+
+  // 1.2) 방벽 = 지형 — 건물이 길찾기 격자를 바꾼다 (서명이 같으면 공짜)
+  syncBlockers(s);
 
   // 1.5) 침공 파도 — 예산이 자라는 무리가 침공자 본진에서 쏟아진다
   if (s.invasion && s.tick >= s.nextWaveTick && !s.over) spawnWave(s);
