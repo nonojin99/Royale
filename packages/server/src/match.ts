@@ -45,6 +45,8 @@ export class Match {
   readonly state: GameState;
   readonly conns: (Conn | null)[];
   readonly bot: Bot | null;
+  /** 실험장 경기 — 봇 없음, 승패 없음, 리플레이 저장 안 함 */
+  readonly sandbox: boolean;
 
   /** 양 팀 종족 id — 리플레이 재현에 필요하다 */
   private readonly factions: [string, string];
@@ -70,16 +72,17 @@ export class Match {
     this.seed = (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
     // 맵은 먼저 온 쪽(a)의 선택 — 알 수 없는 id는 getMap이 기본 맵으로
     this.mapId = getMap(a.mapId ?? DEFAULT_MAP_ID).id;
+    this.sandbox = b === null && a.sandbox;
     this.startWallMs = Date.now();
 
     const f0 = getFaction(a.factionId);
     const f1 = getFaction(b ? b.factionId : botFactionId);
     this.factions = [f0.id, f1.id];
-    this.playerNames = [a.name, b ? b.name : `봇 (${f1.name})`];
+    this.playerNames = [a.name, b ? b.name : this.sandbox ? '실험장' : `봇 (${f1.name})`];
 
-    this.state = createState(this.seed, this.factions, this.mapId);
+    this.state = createState(this.seed, this.factions, this.mapId, this.sandbox);
     this.conns = [a, b];
-    this.bot = b === null ? new Bot(this.seed, botLevelOf(a.botLevel)) : null;
+    this.bot = b === null && !this.sandbox ? new Bot(this.seed, botLevelOf(a.botLevel)) : null;
 
     a.match = this;
     a.team = 0;
@@ -99,6 +102,7 @@ export class Match {
         factions: this.factions,
         opponent: b === null ? this.playerNames[1] : this.other(c)?.name ?? '???',
         startWallMs: this.startWallMs,
+        sandbox: this.sandbox || undefined,
       });
     }
   }
@@ -249,7 +253,8 @@ export class Match {
    * 중간에 나간 경기는 분석에 노이즈가 되고 재현해도 의미가 없다.
    */
   private emitReplay(): void {
-    if (!this.onReplay) return;
+    // 실험장은 경기가 아니다 — 리플레이 목록을 어지럽히지 않는다
+    if (!this.onReplay || this.sandbox) return;
     try {
       const replay = buildReplay({
         matchId: this.id,

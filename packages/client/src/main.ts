@@ -92,7 +92,13 @@ const net = new NetClient(serverUrl(), {
     $('overlay').classList.add('hidden');
     $('opponent').textContent = `vs ${opponent}`;
     buildPalette();
-    startOnboarding();
+    if (net.state?.sandbox) {
+      // 실험장은 배울 온보딩이 아니라 관찰 도구다 — 조작법 한 줄이면 된다
+      stopOnboarding();
+      flash('실험장 — 클릭: 아군 배치 · Alt+클릭: 적군 배치 · 어디든 놓입니다');
+    } else {
+      startOnboarding();
+    }
   },
   onOver: (winner, bases, mined, replayId) => {
     stopOnboarding();
@@ -190,7 +196,12 @@ async function boot(): Promise<void> {
   // 봇전 — 설정 화면(종족·맵)을 거쳐 시작한다 (라운드 11.5)
   $('start').addEventListener('click', () => showSetup('solo'));
   $('btn-solo-start').addEventListener('click', () => {
-    net.connect(playerName(), selectedFaction, selectedMap, { solo: true, botLevel: selectedLevel });
+    const sandbox = selectedLevel === 'sandbox';
+    net.connect(playerName(), selectedFaction, selectedMap, {
+      solo: true,
+      sandbox,
+      botLevel: sandbox ? undefined : selectedLevel,
+    });
     setStatus('접속 중…');
     ($('btn-solo-start') as HTMLButtonElement).disabled = true;
   });
@@ -551,6 +562,10 @@ function nodeIcon(el: HTMLElement, unitId: string): void {
 }
 
 function buildPalette(): void {
+  if (net.state?.sandbox) {
+    buildSandboxPalette();
+    return;
+  }
   const root = $('palette');
   root.replaceChildren();
   paletteEls = [];
@@ -630,6 +645,54 @@ function buildPalette(): void {
   // 선행 관계 연결선 — 카드 배치가 끝난 뒤 좌표를 실측해 그린다
   requestAnimationFrame(() => drawTreeLinks(root, svg));
   window.addEventListener('resize', () => drawTreeLinks(root, svg));
+}
+
+/**
+ * 실험장 팔레트 — 세 종족의 전 유닛을 종족 열로 늘어놓는다.
+ *
+ * 상성 실험이 목적이므로 연구 트리는 없다(전부 해금 상태). 소총병 vs
+ * 물어뜯는것처럼 **종족을 가로지르는 매치업**이 이 화면의 존재 이유다.
+ */
+function buildSandboxPalette(): void {
+  const root = $('palette');
+  root.replaceChildren();
+  paletteEls = [];
+  workerNode = null;
+
+  const legend = document.createElement('div');
+  legend.id = 'tree-legend';
+  legend.innerHTML =
+    '🧪 실험장 — 카드를 고르고 <b>클릭 = 아군</b> · <kbd>Alt</kbd>+클릭 = 적군. ' +
+    '어디든 배치되고 자원은 무한, 승패는 없습니다';
+  root.appendChild(legend);
+
+  let key = 0;
+  for (const fid of FACTION_IDS) {
+    const f = getFaction(fid);
+    const col = document.createElement('div');
+    col.className = 'tcol';
+    col.innerHTML = `<div class="tcol-head">${f.name}</div>`;
+    root.appendChild(col);
+    for (const node of f.tech) {
+      const u = getUnit(node.unit);
+      const el = document.createElement('button');
+      el.className = 'tnode';
+      el.dataset.unit = node.unit;
+      el.style.setProperty('--unit-color', hex(u.color));
+      el.innerHTML =
+        `<span class="ukey"></span><span class="nlock"></span>` +
+        `<span class="nicon"></span><span class="nname"></span>` +
+        `<span class="ncost"></span><span class="nprog"><i></i></span>`;
+      el.querySelector<HTMLElement>('.nname')!.innerHTML = u.name + (u.flying ? ' ✈' : '');
+      nodeIcon(el, node.unit);
+      key++;
+      el.querySelector<HTMLElement>('.ukey')!.textContent = key <= 8 ? String(key) : '';
+      el.addEventListener('click', () => selectUnit(node.unit));
+      attachTip(el, node.unit);
+      col.appendChild(el);
+      paletteEls.push({ el, unit: node.unit });
+    }
+  }
 }
 
 function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
@@ -884,13 +947,17 @@ function onPointerDown(ev: PointerEvent): void {
     flash('내 기지 반경 안에만 배치할 수 있습니다');
     return;
   }
-  net.act('unit', selectedUnit, x, y);
+  // 실험장: Alt+클릭이면 상대 팀으로 배치 — 상성을 부딪혀 보는 손잡이
+  net.act('unit', selectedUnit, x, y, s.sandbox && ev.altKey);
   sound.play('deploy');
   // 선택을 유지한다 — 물량전에서 매번 다시 고르게 하면 클릭이 2배가 된다.
   // 해제는 Esc 또는 카드 재클릭(토글).
 }
 
 function deployable(s: GameState, x: number, y: number): boolean {
+  // 실험장은 기지 반경을 묻지 않는다 — 자기 좌표를 기지로 속이면 반경 검사가
+  // 0이 되고 경계·지형 검사만 남는다 (시뮬의 produceUnit과 같은 트릭)
+  if (s.sandbox) return canDeployAt(x, y, [[x, y]]);
   return canDeployAt(x, y, ownBasePositions(s, net.myTeam));
 }
 
@@ -942,16 +1009,22 @@ function updateHud(s: GameState): void {
 
   $('score').textContent = `🏠 ${baseCount(s, net.myTeam)} : ${baseCount(s, foe)}`;
 
-  const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
-  const left = Math.max(0, Math.ceil((limit - s.tick) / TICK_RATE));
-  $('timer').textContent =
-    `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  if (s.sandbox) {
+    const el = Math.floor(s.tick / TICK_RATE);
+    $('timer').textContent = `🧪 ${Math.floor(el / 60)}:${String(el % 60).padStart(2, '0')}`;
+  } else {
+    const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
+    const left = Math.max(0, Math.ceil((limit - s.tick) / TICK_RATE));
+    $('timer').textContent =
+      `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  }
 
   // 통합 트리 — 해금 노드는 생산 카드, 잠긴 노드는 연구 카드로 갱신한다
   const f = factionOfMe();
   for (const { el, unit } of paletteEls) {
     const u = getUnit(unit);
-    const node = f.tech.find((n) => n.unit === unit)!;
+    // 실험장 팔레트에는 타 종족 카드가 섞인다 — 내 트리에 없으면 node가 없다
+    const node = f.tech.find((n) => n.unit === unit);
     const unlocked = isUnlocked(me, unit);
     const researching = me.research?.unit === unit;
     const researchable =
@@ -971,9 +1044,9 @@ function updateHud(s: GameState): void {
 
     const cost = el.querySelector<HTMLElement>('.ncost')!;
     // 잠긴 카드의 숫자는 생산비가 아니라 연구비다 — 🔬로 구분한다
-    cost.textContent = unlocked ? String(u.cost) : `🔬${node.cost}`;
+    cost.textContent = unlocked ? String(u.cost) : `🔬${node?.cost ?? '?'}`;
 
-    if (researching && me.research) {
+    if (researching && me.research && node) {
       const frac = 1 - me.research.ticks / node.researchTicks;
       el.querySelector<HTMLElement>('.nprog i')!.style.width =
         `${Math.round(frac * 100)}%`;

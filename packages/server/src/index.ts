@@ -232,6 +232,7 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
       conn.factionId = getFaction(msg.factionId).id;
       conn.mapId = msg.mapId;
       conn.botLevel = msg.botLevel;
+      conn.sandbox = !!msg.sandbox;
       if (conn.match) return;
       if (solo) {
         // 연습 모드 봇은 무작위 종족을 쓴다 — 같은 종족만 상대하면
@@ -322,7 +323,9 @@ function handle(conn: Conn, msg: ClientMsg, solo: boolean): void {
         conn.send({ t: 'reject', reqTick: msg.reqTick, reason: 'not-playing' });
         return;
       }
-      m.scheduleAct(conn.team as Team, msg.kind, msg.id, msg.x, msg.y, msg.reqTick);
+      // 실험장에서만 상대 팀 배치를 허용한다 — 일반 경기의 foe는 무시
+      const team = (m.sandbox && msg.foe ? 1 : conn.team) as Team;
+      m.scheduleAct(team, msg.kind, msg.id, msg.x, msg.y, msg.reqTick);
       return;
     }
 

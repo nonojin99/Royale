@@ -85,7 +85,7 @@ export class NetClient {
     name: string,
     factionId: string,
     mapId?: string,
-    opts?: { solo?: boolean; botLevel?: string; onOpen?: () => void },
+    opts?: { solo?: boolean; botLevel?: string; sandbox?: boolean; onOpen?: () => void },
   ): void {
     let url = this.url;
     if (opts?.solo) url += (url.includes('?') ? '&' : '?') + 'solo=1';
@@ -93,7 +93,7 @@ export class NetClient {
     this.ws = ws;
 
     ws.onopen = () => {
-      this.send({ t: 'hello', name, factionId, mapId, botLevel: opts?.botLevel });
+      this.send({ t: 'hello', name, factionId, mapId, botLevel: opts?.botLevel, sandbox: opts?.sandbox });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
       opts?.onOpen?.();
@@ -145,7 +145,7 @@ export class NetClient {
         this.scheduled.clear();
         this.lastHashSent = -1;
         this.desyncs = 0;
-        this.state = createState(msg.seed, msg.factions, msg.mapId);
+        this.state = createState(msg.seed, msg.factions, msg.mapId, msg.sandbox ?? false);
         this.lastStepWallMs = Date.now();
         this.events.onMatch?.(msg.team, msg.opponent);
         return;
@@ -241,7 +241,7 @@ export class NetClient {
     this.send({ t: 'start-room' });
   }
 
-  act(kind: CommandKind, id: string, x = 0, y = 0): void {
+  act(kind: CommandKind, id: string, x = 0, y = 0, foe = false): void {
     if (!this.state) return;
     this.send({
       t: 'act',
@@ -250,6 +250,7 @@ export class NetClient {
       id,
       x: Math.round(x),
       y: Math.round(y),
+      foe: foe || undefined,
     });
   }
 

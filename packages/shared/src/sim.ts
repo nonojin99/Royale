@@ -69,6 +69,7 @@ import {
   EXPANSION_BASE_STATS,
   MAIN_BASE_STATS,
   TargetPref,
+  UNIT_IDS,
   UnitDef,
   getUnit,
 } from './units.js';
@@ -145,6 +146,12 @@ export interface GameState {
   over: boolean;
   /** 승자. -1이면 무승부 또는 미결 */
   winner: Team | -1;
+  /**
+   * 실험장 모드 — 미네랄 무한, 전 유닛 해금, 배치 반경 해제, 승패·시간
+   * 제한 없음. 유닛 상성(사거리·속도·데미지)을 부딪혀 보는 관찰실이다.
+   * 시뮬 규칙을 바꾸는 플래그이므로 해시에 들어간다.
+   */
+  sandbox: boolean;
 }
 
 /** 커맨드 종류 */
@@ -207,6 +214,7 @@ export function createState(
   seed: number,
   factions: readonly [string, string] = [DEFAULT_FACTION_ID, DEFAULT_FACTION_ID],
   mapId: string = DEFAULT_MAP_ID,
+  sandbox = false,
 ): GameState {
   setActiveMap(mapId);
   const s: GameState = {
@@ -219,7 +227,19 @@ export function createState(
     overtime: false,
     over: false,
     winner: -1,
+    sandbox,
   };
+  if (sandbox) {
+    // **전 종족** 전 유닛 해금 + 미네랄 만땅 — 실험장의 존재 이유는 종족을
+    // 가로지르는 매치업(소총병 vs 물어뜯는것)이다. 준비 시간도 0으로
+    for (const p of s.players) {
+      for (const id of UNIT_IDS) {
+        if (!p.unlocked.includes(id)) p.unlocked.push(id);
+      }
+      p.unlocked.sort();
+      p.minerals = MINERAL_MAX;
+    }
+  }
 
   // 본진은 BASE_SITES 순서대로 생성 → id가 결정론적으로 고정된다
   for (const site of BASE_SITES) {
@@ -510,7 +530,10 @@ function produceUnit(s: GameState, cmd: Command): boolean {
     applySpell(s, cmd.team, u, cmd.x, cmd.y);
     return true;
   }
-  if (!canDeployAt(cmd.x, cmd.y, ownBasePositions(s, cmd.team))) return false;
+  // 실험장은 기지 반경을 묻지 않는다 — 자기 위치를 기지로 속이면 반경
+  // 검사가 0이 되고, 경계·지형(물·벽) 검사는 canDeployAt 안에 그대로 남는다
+  const zone = s.sandbox ? ([[cmd.x, cmd.y]] as const) : ownBasePositions(s, cmd.team);
+  if (!canDeployAt(cmd.x, cmd.y, zone)) return false;
 
   p.minerals -= cost;
   for (let i = 0; i < u.count; i++) {
@@ -707,6 +730,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
   // 2) 채굴
   mine(s);
+  // 실험장 — 자원 걱정 없이 아무거나 계속 배치할 수 있게 상시 보충
+  if (s.sandbox) for (const p of s.players) p.minerals = MINERAL_MAX;
 
   // 3) 연구·강화 진행
   for (const p of s.players) {
@@ -927,7 +952,7 @@ function resolveDeaths(s: GameState): void {
       continue;
     }
     changed = true;
-    if (e.kind === 'base' && e.isMain) {
+    if (e.kind === 'base' && e.isMain && !s.sandbox) {
       s.over = true;
       s.winner = e.team === 0 ? 1 : 0;
     }
@@ -936,7 +961,7 @@ function resolveDeaths(s: GameState): void {
 }
 
 function checkEnd(s: GameState): void {
-  if (s.over) return;
+  if (s.over || s.sandbox) return;
 
   const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
   if (s.tick < limit) return;
@@ -1002,6 +1027,7 @@ export function restore(target: GameState, snap: GameState): void {
   target.overtime = fresh.overtime;
   target.over = fresh.over;
   target.winner = fresh.winner;
+  target.sandbox = fresh.sandbox;
 }
 
 /**
@@ -1019,6 +1045,7 @@ export function hashState(s: GameState): number {
   };
 
   mixStr(s.mapId);
+  mix(s.sandbox ? 1 : 0);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);

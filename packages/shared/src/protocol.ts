@@ -19,6 +19,8 @@ export interface CHello {
   mapId?: string;
   /** 봇 난이도 (솔로 전용): 'easy' | 'normal' | 'hard'. 그 외 값은 중급 */
   botLevel?: string;
+  /** 실험장 모드 (솔로 전용) — 봇 없이 양 팀 유닛을 자유 배치한다 */
+  sandbox?: boolean;
 }
 
 /**
@@ -34,6 +36,8 @@ export interface CAct {
   id: string;
   x: number;
   y: number;
+  /** 실험장 전용 — 상대 팀(1)으로 배치. 일반 경기에서는 무시된다 */
+  foe?: boolean;
 }
 
 /** 데스싱크 감지용 상태 해시 */
@@ -101,6 +105,8 @@ export interface SMatch {
   opponent: string;
   /** 서버가 틱 0을 시작한 벽시계 시각 (ms) */
   startWallMs: number;
+  /** 실험장 경기 — 클라이언트도 같은 규칙으로 시뮬해야 한다 */
+  sandbox?: boolean;
 }
 
 /** 확정된 커맨드. 양쪽 클라에 동일하게 브로드캐스트된다. */

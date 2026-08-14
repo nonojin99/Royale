@@ -1198,3 +1198,34 @@ test('모든 맵: 점대칭 + 뭍 연결 + 섬 고립 + 지점이 지형 위에 
   }
   setActiveMap(DEFAULT_MAP_ID); // 다른 테스트를 오염시키지 않는다
 });
+
+test('실험장 — 반경 해제·무한 자원·승패 없음, 해시에 모드가 들어간다', () => {
+  const s = createState(11, ['steel', 'swarmhive'], 'coast', true);
+
+  // 전 유닛 해금 상태로 시작한다
+  assert.ok(s.players[0].unlocked.length > 5, '실험장은 전 유닛 해금');
+  assert.equal(s.players[0].minerals, MINERAL_MAX);
+
+  // 기지 반경 밖(맵 한가운데)에 배치가 통한다 — 양 팀 모두
+  const mid = 24 * 1000;
+  step(s, [
+    { execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman', x: mid - 3000, y: mid },
+    { execTick: s.tick, team: 1, kind: 'unit', id: 'gnawer', x: mid + 3000, y: mid },
+  ]);
+  assert.ok(
+    s.entities.some((e) => e.kind === 'unit' && e.team === 0) &&
+      s.entities.some((e) => e.kind === 'unit' && e.team === 1),
+    '실험장은 어디든 배치된다',
+  );
+  // 자원은 계속 만땅
+  assert.equal(s.players[0].minerals, MINERAL_MAX);
+
+  // 본진이 죽어도 경기는 계속된다
+  for (const e of s.entities) if (e.kind === 'base' && e.isMain && e.team === 0) e.hp = 0;
+  step(s, []);
+  assert.equal(s.over, false, '실험장은 본진 파괴로 끝나지 않는다');
+
+  // 같은 시드의 일반 경기와 해시가 다르다 (모드가 해시에 들어간다)
+  const normal = createState(11, ['steel', 'swarmhive'], 'coast');
+  assert.notEqual(hashState(normal), hashState(createState(11, ['steel', 'swarmhive'], 'coast', true)));
+});
