@@ -127,6 +127,10 @@ export const INVASION_RICH_MINE_PCT = 80;
 export const INVASION_BOUNTY_PCT = 70;
 /** 집결 깃발 도착 판정 반경 (밀리타일) — 이 안이면 주둔으로 친다 */
 export const RALLY_ARRIVE = 2000;
+/** 이동 명령 도착 판정 반경 — 뭉치가 서로 밀며 진동하지 않을 만큼 넉넉히 */
+export const ORDER_ARRIVE = 1200;
+/** 한 명령이 움직일 수 있는 최대 유닛 수 — 위조 메시지 방어 */
+export const ORDER_MAX_UNITS = 64;
 
 /** 기지 건설 후 가동까지 걸리는 시간 (틱) — 4초.
  * 라운드 20에서 2초→4초: "확장이 무조건 정답"이라는 실전 관측에 대한

@@ -69,6 +69,8 @@ import {
   INVASION_RICH_MINE_PCT,
   INVASION_BOUNTY_PCT,
   RALLY_ARRIVE,
+  ORDER_ARRIVE,
+  ORDER_MAX_UNITS,
 } from './constants.js';
 import {
   DEFAULT_FACTION_ID,
@@ -113,6 +115,14 @@ export interface Entity {
   flying: boolean;
   /** 충전 스킬 게이지 (틱). 스킬 없는 엔티티는 0에 머문다 */
   charge: number;
+  /**
+   * 이동 명령 목적지 (밀리타일). -1이면 명령 없음.
+   *
+   * 명령 이동 중에도 사거리 안의 적은 쏘지만 **쫓아가지 않는다** — 목적지에
+   * 닿으면 스스로 해제되고 기본 행동(대전=전진 / 침공=집결·대기)으로 돌아간다.
+   */
+  orderX: number;
+  orderY: number;
 
   /* ── 기지 전용 ── */
   /** 기지가 선 지점 id. 기지가 아니면 -1 */
@@ -195,7 +205,7 @@ export interface GameState {
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic' | 'rally';
+export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic' | 'rally' | 'move';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -249,6 +259,8 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     target: -1,
     flying: false,
     charge: 0,
+    orderX: -1,
+    orderY: -1,
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -539,6 +551,8 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     target: -1,
     flying: u.flying,
     charge: 0,
+    orderX: -1,
+    orderY: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -569,6 +583,8 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
       return pickRelic(s, cmd);
     case 'rally':
       return setRally(s, cmd);
+    case 'move':
+      return orderMove(s, cmd);
     default:
       return false;
   }
@@ -823,6 +839,30 @@ function offerDraft(s: GameState): void {
     if (!picks.includes(c)) picks.push(c);
   }
   s.draft = picks;
+}
+
+/**
+ * 이동 명령 — `id`에 대상 엔티티 id를 쉼표로 잇는다.
+ *
+ * Command를 평평하게 유지하려는 선택이다(정렬·직렬화·리플레이가 그대로 산다).
+ * 남의 유닛·건물·기지는 조용히 걸러지므로 위조해도 남을 조종할 수 없다.
+ */
+function orderMove(s: GameState, cmd: Command): boolean {
+  if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
+  if (blockedAt(cmd.x, cmd.y)) return false;
+  let moved = false;
+  let count = 0;
+  for (const part of cmd.id.split(',')) {
+    if (++count > ORDER_MAX_UNITS) break;
+    const id = Number(part);
+    if (!Number.isInteger(id)) continue;
+    const e = findById(s, id);
+    if (!e || e.kind !== 'unit' || e.team !== cmd.team) continue;
+    e.orderX = cmd.x;
+    e.orderY = cmd.y;
+    moved = true;
+  }
+  return moved;
 }
 
 /**
@@ -1138,7 +1178,15 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
     let gx: number;
     let gy: number;
-    if (e.target >= 0) {
+    if (e.orderX >= 0) {
+      // 명령 이동 — 도착하면 스스로 해제하고 기본 행동으로 돌아간다
+      if (dist2(e.x, e.y, e.orderX, e.orderY) <= ORDER_ARRIVE * ORDER_ARRIVE) {
+        e.orderX = -1;
+        e.orderY = -1;
+        continue;
+      }
+      [gx, gy] = moveGoal(e, e.orderX, e.orderY);
+    } else if (e.target >= 0) {
       const t = findById(s, e.target);
       if (!t) continue;
       const st = statsOf(e);
@@ -1433,6 +1481,8 @@ export function hashState(s: GameState): number {
     mix(e.id);
     mix(e.team);
     mix(e.charge);
+    mix(e.orderX);
+    mix(e.orderY);
     mix(e.x);
     mix(e.y);
     mix(e.hp);

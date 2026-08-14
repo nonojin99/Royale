@@ -143,6 +143,10 @@ export interface RenderInput {
   pendingSite: { x: number; y: number } | null;
   /** 배치 가능 구역을 표시할지 */
   showDeployZone: boolean;
+  /** 드래그로 고른 내 유닛 id (순수 렌더 정보) */
+  selected?: ReadonlySet<number>;
+  /** 끄는 중인 드래그 박스 (아레나 좌표) */
+  dragBox?: { x0: number; y0: number; x1: number; y1: number } | null;
 }
 
 export class Renderer {
@@ -796,6 +800,11 @@ export class Renderer {
         d.circle(sx, by, r + 4);
         d.stroke({ width: 2, color: COLORS.deployRing, alpha: 0.9 });
         this.progressBar(d, sx, by + r + 6, r * 2, 1 - e.deploy / DEPLOY_TICKS);
+      }
+      if (input.selected?.has(e.id)) {
+        // 선택 링 — 발밑 흰 타원. 팀 링보다 크고 밝아 한눈에 구분된다
+        d.ellipse(sx, sy, r * 1.35, r * 0.6);
+        d.stroke({ width: 2, color: 0xffffff, alpha: 0.9 });
       }
       this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
       // 충전 스킬 게이지 — 청록 바. 만땅이면 밝게 빛나 "곧 쏜다"를 알린다
@@ -1472,6 +1481,20 @@ export class Renderer {
   private drawOverlay(input: RenderInput): void {
     const g = this.gOverlay;
     g.clear();
+
+    // 드래그 선택 박스
+    if (input.dragBox) {
+      const [ax, ay] = this.toScreen(input.dragBox.x0, input.dragBox.y0, input.myTeam);
+      const [bx, by] = this.toScreen(input.dragBox.x1, input.dragBox.y1, input.myTeam);
+      const rx = Math.min(ax, bx);
+      const ry = Math.min(ay, by);
+      const rw = Math.abs(bx - ax);
+      const rh = Math.abs(by - ay);
+      g.rect(rx, ry, rw, rh);
+      g.fill({ color: 0x4ade80, alpha: 0.1 });
+      g.rect(rx, ry, rw, rh);
+      g.stroke({ width: 1.5, color: 0x4ade80, alpha: 0.9 });
+    }
 
     // 집결 깃발 (침공) — 수비군이 모일 자리. 맥동하는 고리 + 십자 표식
     const rally = input.state.invasion ? input.state.players[input.myTeam]?.rally : null;

@@ -86,6 +86,10 @@ let selectedUnit = '';
 /** 기지 건설 모드 */
 let baseMode = false;
 let cursor: [number, number] | null = null;
+/** 드래그로 고른 내 유닛 id — 순수 클라 상태(시뮬은 모른다) */
+const selectedIds = new Set<number>();
+/** 드래그 박스 (아레나 좌표). 끄는 중에만 값이 있다 */
+let dragBox: { x0: number; y0: number; x1: number; y1: number } | null = null;
 const prevPos = new Map<number, [number, number]>();
 let lastFrameMs = performance.now();
 
@@ -200,14 +204,24 @@ async function boot(): Promise<void> {
     cursor = null;
   });
   canvas.addEventListener('pointerdown', onPointerDown);
-  // 침공의 컨트롤은 우클릭 하나 — 집결 깃발. 브라우저 메뉴는 막는다
+  canvas.addEventListener('pointerup', onPointerUp);
+  // 우클릭 = 명령. 선택된 유닛이 있으면 이동, 없으면 침공의 집결 깃발
   canvas.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
     const st = net.state;
-    if (!st?.invasion) return;
+    if (!st) return;
     const [x, y] = pointerToArena(ev as unknown as PointerEvent);
-    net.act('rally', '', x, y);
-    sound.play('ui');
+    if (selectedIds.size > 0) {
+      // 죽은 유닛은 이미 걸러졌으므로 목록을 그대로 보낸다 (id 오름차순 — 결정론)
+      const ids = [...selectedIds].sort((a, b) => a - b).join(',');
+      net.act('move', ids, x, y);
+      sound.play('deploy');
+      return;
+    }
+    if (st.invasion) {
+      net.act('rally', '', x, y);
+      sound.play('ui');
+    }
   });
 
   buildFactionPicker();
@@ -293,6 +307,7 @@ async function boot(): Promise<void> {
     if (e.key === 'Escape') {
       selectedUnit = '';
       baseMode = false;
+      selectedIds.clear();
       refreshActionButtons();
     }
     // 숫자 = 생산 선택, Shift+숫자 = 그 칸 연구 시작 (라운드 9 피드백 #4).
@@ -980,14 +995,26 @@ function pointerToArena(ev: PointerEvent): [number, number] {
 }
 
 function onPointerMove(ev: PointerEvent): void {
+  if (dragBox) {
+    const [dx, dy] = pointerToArena(ev);
+    dragBox.x1 = dx;
+    dragBox.y1 = dy;
+  }
   cursor = pointerToArena(ev);
 }
 
 function onPointerDown(ev: PointerEvent): void {
   const s = net.state;
   if (!s) return;
+  if (ev.button !== 0) return; // 우클릭은 contextmenu가 받는다
   const [x, y] = pointerToArena(ev);
   cursor = [x, y];
+
+  // 카드도 기지 모드도 아니면 좌클릭은 **선택**이다 — 드래그 박스를 연다
+  if (!baseMode && !selectedUnit) {
+    dragBox = { x0: x, y0: y, x1: x, y1: y };
+    return;
+  }
 
   if (baseMode) {
     const me = s.players[net.myTeam];
@@ -1033,6 +1060,47 @@ function onPointerDown(ev: PointerEvent): void {
   // 해제는 Esc 또는 카드 재클릭(토글).
 }
 
+/** 드래그를 놓는 순간 — 박스 안 내 유닛을 고른다. 점 클릭이면 그 자리 한 기 */
+function onPointerUp(ev: PointerEvent): void {
+  if (ev.button !== 0 || !dragBox) return;
+  const s = net.state;
+  const box = dragBox;
+  dragBox = null;
+  if (!s) return;
+
+  const [x, y] = pointerToArena(ev);
+  box.x1 = x;
+  box.y1 = y;
+  if (!ev.shiftKey) selectedIds.clear();
+
+  const lo = (a: number, b: number): number => (a < b ? a : b);
+  const hi = (a: number, b: number): number => (a > b ? a : b);
+  const w = Math.abs(box.x1 - box.x0);
+  const h = Math.abs(box.y1 - box.y0);
+  // 사실상 점 클릭 — 커서에 가장 가까운 내 유닛 하나
+  if (w < 400 && h < 400) {
+    let best = -1;
+    let bestD = 1800 * 1800;
+    for (const e of s.entities) {
+      if (e.kind !== 'unit' || e.team !== net.myTeam) continue;
+      const d = (e.x - x) ** 2 + (e.y - y) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = e.id;
+      }
+    }
+    if (best >= 0) selectedIds.add(best);
+  } else {
+    for (const e of s.entities) {
+      if (e.kind !== 'unit' || e.team !== net.myTeam) continue;
+      if (e.x < lo(box.x0, box.x1) || e.x > hi(box.x0, box.x1)) continue;
+      if (e.y < lo(box.y0, box.y1) || e.y > hi(box.y0, box.y1)) continue;
+      selectedIds.add(e.id);
+    }
+  }
+  if (selectedIds.size > 0) sound.play('ui');
+}
+
 function deployable(s: GameState, x: number, y: number): boolean {
   // 실험장은 기지 반경을 묻지 않는다 — 자기 좌표를 기지로 속이면 반경 검사가
   // 0이 되고 경계·지형 검사만 남는다 (시뮬의 produceUnit과 같은 트릭)
@@ -1060,6 +1128,12 @@ function frame(): void {
   const s = net.state;
   if (s) {
     const site = baseMode && cursor ? nearestFreeSite(cursor[0], cursor[1], occupiedSites(s)) : null;
+    // 죽은 유닛은 선택에서 걷어낸다 — 명령이 허공에 나가지 않게
+    if (selectedIds.size > 0) {
+      const live = new Set<number>();
+      for (const e of s.entities) if (e.kind === 'unit') live.add(e.id);
+      for (const id of selectedIds) if (!live.has(id)) selectedIds.delete(id);
+    }
     renderer.draw({
       state: s,
       myTeam: net.myTeam,
@@ -1069,6 +1143,8 @@ function frame(): void {
       cursorValid: cursor ? deployable(s, cursor[0], cursor[1]) : false,
       pendingSite: site ? { x: site.x, y: site.y } : null,
       showDeployZone: Boolean(selectedUnit),
+      selected: selectedIds,
+      dragBox,
     });
     updateHud(s);
   }

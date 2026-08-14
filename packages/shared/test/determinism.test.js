@@ -732,6 +732,8 @@ function place(s, team, unitId, x, y) {
     target: -1,
     flying: u.flying,
     charge: 0,
+    orderX: -1,
+    orderY: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -1339,4 +1341,40 @@ test('침공 집결 깃발 — 수비군이 모이고, 재지정은 해제, 지�
   // 같은 자리 재지정 = 해제
   step(s, [{ execTick: s.tick, team: 0, kind: 'rally', id: '', x: rx, y: ry }]);
   assert.equal(s.players[0].rally, null, '재지정은 해제');
+});
+
+test('이동 명령 — 전진 본능을 이기고 도착하면 스스로 해제, 남의 유닛은 못 움직인다', () => {
+  const s = createState(9, ['steel', 'swarmhive'], 'coast');
+  const main = s.entities.find((e) => e.kind === 'base' && e.team === 0);
+  for (let i = 0; i < 3; i++) {
+    applyCommand(s, {
+      execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
+      x: main.x + (i - 1) * 900, y: main.y - 1200,
+    });
+  }
+  for (let i = 0; i < 25; i++) step(s, []);
+  const mine = () => s.entities.filter((e) => e.kind === 'unit' && e.team === 0);
+  const ids = mine().map((e) => e.id);
+
+  // 전진 방향(북)과 직각인 서쪽으로 명령
+  const tx = main.x - 9000;
+  const ty = main.y;
+  assert.equal(
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'move', id: ids.join(','), x: tx, y: ty }),
+    true,
+  );
+  let best = Infinity;
+  for (let i = 0; i < 400; i++) {
+    step(s, []);
+    for (const e of mine()) best = Math.min(best, Math.hypot(e.x - tx, e.y - ty));
+  }
+  assert.ok(best < 2000, `명령 지점에 도달해야 한다 (최근접 ${(best / 1000).toFixed(2)}타일)`);
+  assert.ok(mine().every((e) => e.orderX < 0), '도착하면 명령이 스스로 풀린다');
+
+  // 남의 유닛은 조종 불가 — 위조 메시지 방어
+  const foe = s.entities.filter((e) => e.kind === 'unit' && e.team === 1).map((e) => e.id);
+  assert.equal(
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'move', id: foe.join(',') || '9999', x: tx, y: ty }),
+    false,
+  );
 });
