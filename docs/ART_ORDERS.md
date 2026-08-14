@@ -488,15 +488,22 @@ rm -f packages/client/public/art/units/*.png
 >
 > 캐릭터: [§4의 해당 유닛 설명 + 종족 스타일 문장]
 >
-> 1행: 정면 걷기 5프레임 (front view, walking toward camera)
+> 1행: 정면 걷기 5프레임 (front view, walking toward camera, **clear leg
+> movement — contact, down, passing, up gait positions, legs visibly
+> alternating each frame**)
 > 2행: **같은 캐릭터가 180도 뒤돌아선 뒷모습 걷기 5프레임 (back view,
-> walking away from camera, facing away)** — 투구 뒤통수와 등판만
-> 보이고 눈이 보이지 않음
+> walking away from camera, facing away, same clear leg movement)** —
+> 투구 뒤통수와 등판만 보이고 눈이 보이지 않음
 > 3행: 정면 공격 5프레임 — **무기가 5프레임 내내 켜져 있고** 팔 각도만
 > 프레임마다 변함
 > 4행: 뒷모습 공격 5프레임 (back view, attacking)
 >
 > 모든 칸에서 같은 캐릭터, 같은 크기, 같은 발 위치. 칸 사이 여백 균일.
+
+**걷기 행에는 보행 단계를 반드시 명시한다** — 라운드 20에서 광전사 걷기
+5프레임이 전부 정지 자세로 나와 "붕 떠서 가는" 유닛이 됐다. "walking"만
+쓰면 생성기가 서 있는 그림 5장을 준다. contact/down/passing/up 네 단계와
+"legs visibly alternating each frame"을 걷기 행마다 붙일 것.
 
 ### 결과물 특성 (그대로 받아들인다)
 
