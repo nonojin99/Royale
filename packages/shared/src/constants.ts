@@ -101,6 +101,13 @@ export const BASE_BUILD_COST = 12 * MINERAL_SCALE;
  * 스킬을 쓰려면 그 유닛을 뽑아 전선에 살려 둬야 한다.
  */
 export const SKILL_CHARGE_TICKS = 14 * TICK_RATE;
+/**
+ * 굴착 진동(4축)이 얹는 이동 속도 — 백분율.
+ *
+ * 버프를 받은 유닛은 출처를 모른다(효과만 틱으로 남는다). 그래서 세기는
+ * 유닛 테이블이 아니라 여기 한 곳에 산다 — 굴착충의 ability.power도 이 값을 쓴다.
+ */
+export const HASTE_SPEED_PCT = 45;
 export const SKILL_CAST_RANGE = 7000; // 7타일 (밀리타일)
 
 /**

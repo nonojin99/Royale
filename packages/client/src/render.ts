@@ -37,8 +37,12 @@ import {
   TEAM_COLOR_ME,
   Team,
   WORKER_CAP_PER_BASE,
+  chargeTicksOf,
   getFaction,
   getUnit,
+  inSiegeMode,
+  isCloakedNow,
+  isHiddenFrom,
   siteReachable,
   workersAtBase,
 } from '@royale/shared';
@@ -881,6 +885,9 @@ export class Renderer {
     this.drawDecals(g); // 유닛보다 먼저 = 유닛 아래 — 데칼은 땅의 일부다
 
     for (const e of state.entities) {
+      // 숨은 적은 그리지 않는다 — 시뮬과 같은 판정을 쓴다. 화면에 보이는데
+      // 때리지 못하는 것만큼 플레이어를 배신하는 표시는 없다 (4축)
+      if (isHiddenFrom(state, myTeam, e)) continue;
       const p = prev.get(e.id);
       const ix = p ? p[0] + (e.x - p[0]) * alpha : e.x;
       const iy = p ? p[1] + (e.y - p[1]) * alpha : e.y;
@@ -897,6 +904,24 @@ export class Renderer {
       const moved = !!p && (p[0] !== e.x || p[1] !== e.y);
       const tex = this.frameFor(e, moved, this.vfacingOf(e, p, myTeam) < 0);
       const hit = this.flashOf(e);
+
+      if (e.kind === 'building' && u.mine) {
+        // 지뢰 — 묻힌 것은 작다. 내 것만 보이므로(숨은 적 지뢰는 없다)
+        // 위치를 알려 주는 표식이면 충분하다
+        const mr = PX_PER_TILE * 0.22;
+        g.ellipse(sx, sy + mr * 0.4, mr * 1.1, mr * 0.5);
+        g.fill({ color: 0x000000, alpha: 0.25 });
+        g.circle(sx, sy, mr);
+        g.fill({ color: u.color, alpha: 0.85 });
+        g.circle(sx, sy, mr);
+        g.stroke({ width: 1.5, color: teamColor, alpha: 0.9 });
+        // 점멸 — 살아 있는 함정이라는 신호
+        if (Math.floor(this.nowMs / 500) % 2 === 0) {
+          g.circle(sx, sy - mr * 0.3, 1.4);
+          g.fill({ color: 0xfef08a });
+        }
+        continue;
+      }
 
       if (e.kind === 'building') {
         const size = PX_PER_TILE * 1.5;
@@ -986,6 +1011,8 @@ export class Renderer {
             sp2.scale.x *= 1.02;
           }
         }
+        // 은신 중인 내 유닛 — 반투명. 스타의 아지랑이와 같은 문법이다
+        if (isCloakedNow(state, e)) sp2.alpha *= 0.5;
         this.applyHit(sp2, hit);
       } else {
         g.circle(sx, by, r);
@@ -1003,6 +1030,17 @@ export class Renderer {
         d.circle(sx, by, ring);
         d.stroke({ width: 1.5, color: tex ? teamColor : 0xffffff, alpha: tex ? 0.9 : 0.55 });
       }
+      // 시즈 자세 — 발밑 각괄호. "지금 이 포는 뿌리내렸다"가 한눈에 읽혀야
+      // 플레이어가 이동 명령의 대가(포를 접는다)를 이해한다
+      if (inSiegeMode(state, e)) {
+        const w = r * 1.5;
+        for (const side of [-1, 1]) {
+          d.moveTo(sx + side * w, sy - r * 0.35);
+          d.lineTo(sx + side * w, sy + r * 0.35);
+          d.lineTo(sx + side * (w - r * 0.4), sy + r * 0.35);
+          d.stroke({ width: 2, color: 0xfbbf24, alpha: 0.9 });
+        }
+      }
       if (e.deploy > 0) {
         d.circle(sx, by, r + 4);
         d.stroke({ width: 2, color: COLORS.deployRing, alpha: 0.9 });
@@ -1015,9 +1053,9 @@ export class Renderer {
       }
       this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
       // 충전 스킬 게이지 — 청록 바. 만땅이면 밝게 빛나 "곧 쏜다"를 알린다
-      if (getUnit(e.unit).charges && e.charge > 0) {
+      if ((u.charges || u.ability?.charge) && e.charge > 0) {
         const w = PX_PER_TILE * 1.1;
-        const frac = Math.min(1, e.charge / SKILL_CHARGE_TICKS);
+        const frac = Math.min(1, e.charge / chargeTicksOf(u));
         const gy = by - r - (e.hp < e.maxHp ? 11 : 6);
         d.rect(sx - w / 2, gy, w, 2.5);
         d.fill({ color: 0x0f172a, alpha: 0.7 });
@@ -1449,7 +1487,9 @@ export class Renderer {
       // 되짚어 그 자리에 큰 링을 그린다. 렌더 전용 추정이라 어긋나도 무해
       const pc = this.fxPrevCharge.get(e.id);
       this.fxPrevCharge.set(e.id, e.charge);
-      if (pc !== undefined && pc >= SKILL_CHARGE_TICKS && e.charge < pc) {
+      // 주문 유닛만 — 능동 특성(은신·지뢰)도 게이지를 비우지만 폭발 연출은 없다
+      const casts = e.kind !== 'base' && !!getUnit(e.unit).charges;
+      if (casts && pc !== undefined && pc >= SKILL_CHARGE_TICKS && e.charge < pc) {
         let bx = e.x;
         let by2 = e.y;
         let bd = SKILL_CAST_RANGE * SKILL_CAST_RANGE + 1;

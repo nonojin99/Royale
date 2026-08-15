@@ -1600,3 +1600,170 @@ test('3축 특성 유물 — 유닛 하나의 성격을 바꾸고, 미해금 유
     while (inv.entities.every((e) => e.team !== 1 || e.kind !== 'unit')) step(inv, []);
   }
 });
+
+/* ── 4축 능동 스킬 (라운드 35) ─────────────────────────────────────────── */
+
+test('4축 능동 스킬 — 은신·디텍팅·시즈모드·지뢰·가속이 침공에서만 작동한다', () => {
+  const FY = 9000; // coast 중립 평지 — 본진 사거리 밖
+  const mk = (invasion) => {
+    const s = createState(11, ['steel', 'swarmhive'], 'coast', false, invasion);
+    s.nextWaveTick = 1 << 28; // 파도가 실측에 끼어들지 않게
+    return s;
+  };
+  /** 엔티티를 직접 세운다 — 자리가 통행 가능하고 기지에서 먼지 단언한다 */
+  const put = (s, team, id, x, y) => {
+    assert.ok(!blockedAt(x, y), `배치 자리가 막혀 있다: ${id}`);
+    for (const b of s.entities) {
+      if (b.kind !== 'base') continue;
+      assert.ok(
+        (b.x - x) ** 2 + (b.y - y) ** 2 >= 12000 ** 2,
+        `${id}가 기지 사거리 안이다 — 기지가 대신 때린다`,
+      );
+    }
+    const u = getUnit(id);
+    const e = {
+      id: s.nextId++, team, unit: id,
+      kind: u.kind === 'building' ? 'building' : 'unit',
+      x, y, hp: u.hp, maxHp: u.hp, cd: 0, deploy: 0,
+      life: u.lifetime, target: -1, flying: u.flying,
+      charge: 0, mode: 0, haste: 0, orderX: -1, orderY: -1,
+      siteId: -1, isMain: false, reserve: 0,
+    };
+    s.entities.push(e);
+    return e;
+  };
+  const live = (s, id) => s.entities.find((e) => e.id === id);
+  /** 못박은 유닛은 매 틱 자기 자리로 명령을 다시 받는다 (도착하면 풀리므로) */
+  const run = (s, n, pins = []) => {
+    for (let i = 0; i < n; i++) {
+      for (const p of pins) {
+        const e = live(s, p.id);
+        if (e) { e.orderX = p.x; e.orderY = p.y; }
+      }
+      step(s, []);
+    }
+  };
+  const pin = (e) => ({ id: e.id, x: e.x, y: e.y });
+
+  // 은신 — 게이지가 차면 표적에서 빠지고, 때리면 드러난다
+  {
+    const s = mk(true);
+    const shade = put(s, 0, 'shade', 20000, FY);
+    const spit = put(s, 1, 'spitter', 23000, FY);
+    const pins = [pin(shade), pin(spit)];
+    run(s, 20, pins);
+    assert.equal(live(s, spit.id).target, shade.id, '은신 전에는 표적이 된다');
+    run(s, 110, pins);
+    assert.ok(live(s, shade.id).charge >= 100, '5초면 게이지가 찬다');
+    assert.notEqual(live(s, spit.id).target, shade.id, '은신하면 표적에서 빠진다');
+    const hp = live(s, shade.id).hp;
+    run(s, 60, pins);
+    assert.equal(live(s, shade.id).hp, hp, '은신 중에는 맞지 않는다');
+
+    // 디텍터가 오면 다시 보인다
+    put(s, 1, 'scoutcar', 25000, FY);
+    run(s, 3, pins);
+    assert.equal(live(s, spit.id).target, shade.id, '디텍터 반경 안이면 표적이 된다');
+  }
+
+  // 은신 해제 — 공격이 곧 노출이다 (디텍터 없는 상대의 유일한 반격로)
+  {
+    const s = mk(true);
+    const shade = put(s, 0, 'shade', 20000, FY);
+    run(s, 110, [pin(shade)]);
+    assert.ok(live(s, shade.id).charge >= 100);
+    const foe = put(s, 1, 'gnawer', 20900, FY);
+    run(s, 10, [pin(shade), pin(foe)]);
+    assert.ok(live(s, shade.id).charge < 100, '때리면 게이지가 비워진다');
+  }
+
+  // 시즈모드 — 정지 2초로 사거리 7 → 9.5, 공격 +35%
+  {
+    const reach = (dist) => {
+      const s = mk(true);
+      put(s, 0, 'siegetank', 16000, FY);
+      run(s, 60); // 적 없이 자리를 잡는다 (이동 명령은 곧 시즈 해제라 핀을 쓰지 않는다)
+      const foe = put(s, 1, 'devourer', 16000 + dist, FY);
+      const hp0 = foe.hp;
+      run(s, 200, [pin(foe)]);
+      return hp0 - (live(s, foe.id)?.hp ?? 0);
+    };
+    assert.ok(reach(8500) > 0, '시즈 사거리(8.5타일)에서 닿는다');
+    assert.equal(reach(11000), 0, '9.5타일 밖에는 못 닿는다');
+
+    const oneHit = (settle) => {
+      const s = mk(true);
+      const tank = put(s, 0, 'siegetank', 16000, FY);
+      if (settle) run(s, 60);
+      const foe = put(s, 1, 'devourer', 22000, FY);
+      let hp = foe.hp;
+      for (let i = 0; i < 80; i++) {
+        run(s, 1, [pin(foe)]);
+        const f = live(s, foe.id);
+        if (f.hp !== hp) return hp - f.hp;
+      }
+      return 0;
+    };
+    const base = getUnit('siegetank').damage;
+    assert.equal(oneHit(false), base, '평시 타격은 기본 공격력');
+    assert.equal(oneHit(true), Math.trunc((base * 135) / 100), '시즈 타격은 +35%');
+  }
+
+  // 지뢰 — 방벽이 상한까지 묻고, 밟히면 자폭한다
+  {
+    const s = mk(true);
+    put(s, 0, 'bulwark', 20000, FY);
+    const mines = () => s.entities.filter((e) => e.unit === 'landmine');
+    run(s, 181);
+    assert.equal(mines().length, 1, '9초에 한 기');
+    run(s, 1000);
+    assert.equal(mines().length, 3, '상한 3기에서 멈춘다');
+    const mine = mines()[0];
+    const foe = put(s, 1, 'devourer', mine.x + 1100, mine.y);
+    const hp0 = foe.hp;
+    run(s, 40, [pin(foe)]);
+    assert.ok(!live(s, mine.id), '밟은 지뢰는 사라진다');
+    assert.ok(hp0 - live(s, foe.id).hp > 0, '폭발 피해가 들어간다');
+    // 묻은 것은 길을 막지 않는다 — 1축의 벽과 다르다
+    for (const m of mines()) {
+      assert.ok(!blockedAt(m.x, m.y), '지뢰가 길찾기 장애물이 됐다');
+    }
+  }
+
+  // 가속 — 굴착충 둘레의 아군 지상군이 빨라진다
+  {
+    const march = (withTunneler) => {
+      const s = mk(true);
+      const g = put(s, 0, 'gnawer', 16000, FY);
+      if (withTunneler) put(s, 0, 'tunneler', 16000, FY - 2000); // 행군로 밖
+      run(s, 239);
+      const x0 = live(s, g.id).x;
+      run(s, 80, [{ id: g.id, x: 34000, y: FY }]);
+      return live(s, g.id).x - x0;
+    };
+    const plain = march(false);
+    const fast = march(true);
+    assert.ok(fast > plain * 130 / 100, `가속이 붙는다 (${plain} → ${fast})`);
+  }
+
+  // 대전 불가침 — 같은 유닛도 대전에서는 아무 능동기를 쓰지 않는다
+  {
+    const s = mk(false);
+    const shade = put(s, 0, 'shade', 20000, FY);
+    const spit = put(s, 1, 'spitter', 23000, FY);
+    run(s, 130, [pin(shade), pin(spit)]);
+    const sh = live(s, shade.id);
+    assert.ok(!sh || sh.charge === 0, '대전에서는 게이지가 차지 않는다');
+    assert.ok(!sh || sh.hp < sh.maxHp, '대전에서 그림자는 그냥 맞는다');
+  }
+
+  // 지뢰는 카드가 없다 — 종족 트리에도, 실험장 해금에도 없다
+  for (const f of FACTION_IDS) {
+    assert.ok(
+      !getFaction(f).tech.some((n) => n.unit === 'landmine'),
+      '지뢰가 종족 트리에 새어 들어갔다',
+    );
+  }
+  const sb = createState(3, ['steel', 'swarmhive'], 'coast', true);
+  assert.ok(!sb.players[0].unlocked.includes('landmine'), '실험장 해금에 지뢰가 섞였다');
+});

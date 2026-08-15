@@ -18,7 +18,7 @@
  * 오리지널이다. 특정 상용 IP의 고유명사·디자인을 가져다 쓰지 않는다.
  */
 
-import { TICK_RATE } from './constants.js';
+import { HASTE_SPEED_PCT, TICK_RATE } from './constants.js';
 import { seconds, tiles } from './fixed.js';
 
 export type UnitKind = 'unit' | 'building' | 'spell';
@@ -52,6 +52,39 @@ export interface UnitDef {
   targets: TargetPref;
   /** 충전 스킬 — 게이지가 차면 이 주문을 사거리 안에서 자동 발사한다 */
   charges?: string;
+  /**
+   * 능동 특성 (4축, 라운드 35) — **침공 전용**.
+   *
+   * 라운드 21의 게이지 틀을 재사용하되, "주문을 쏜다"가 아니라 **상태를
+   * 바꾼다**. 유닛마다 다른 동사를 하나씩 쥐어 주는 것이 목적이다:
+   *
+   *   cloak      게이지가 차면 은신. 공격하는 순간 드러난다(게이지 0)
+   *   detect     상시. 반경 안 적의 은신을 무효로 만든다
+   *   siegemode  제자리에 charge 틱 머물면 고정 포대가 된다(사거리·공격 ↑, 이동 ✗)
+   *   mine       게이지가 차면 둘레에 지뢰를 묻는다 (power기까지)
+   *   sprint     게이지가 차면 반경 안 아군 지상 유닛이 ticks 틱 동안 빨라진다
+   *
+   * 대전에는 켜지지 않는다 — 삼각(RUSH/TECH/ECON)이 이 값들을 모른 채
+   * 실측된 것이라, 침공에서 먼저 익힌 뒤 별도 라운드로 옮긴다.
+   */
+  ability?: {
+    kind: 'cloak' | 'detect' | 'siegemode' | 'mine' | 'sprint';
+    /** 게이지 충전 틱 (siegemode는 '정지 유지' 틱) */
+    charge?: number;
+    /** 효과 반경 (밀리타일) */
+    radius?: number;
+    /** 세기 — 백분율(sprint·siegemode) 또는 개수(mine) */
+    power?: number;
+    /** 지속 틱 (sprint) */
+    ticks?: number;
+    /** 사거리 보너스 (밀리타일, siegemode) */
+    rangeAdd?: number;
+  };
+  /**
+   * 지뢰인가 — 상시 은신 + 접촉 자폭. 이 둘은 늘 함께 다니므로 한 플래그다.
+   * 길찾기 장애물에서도 빠진다: 1축의 벽은 '지은 것'이지 '묻은 것'이 아니다.
+   */
+  mine?: boolean;
   /**
    * 구조물(기지·건물) 상대 데미지 배율 — **백분율 정수** (100 = 그대로).
    *
@@ -131,12 +164,21 @@ const defs: UnitDef[] = [
     id: 'scoutcar', name: '정찰차', cost: 2, kind: 'unit',
     hp: 420, damage: 130, hitSpeed: seconds(1.1, TICK_RATE),
     range: tiles(0.8), speed: spd(1.4), targets: 'buildings', siege: 120, color: 0xfbbf24,
+    // 디텍터 — 값싼 정찰 유닛에 붙여야 "보는 눈을 사서 데리고 다닌다"가 된다
+    ability: { kind: 'detect', radius: tiles(6.5) },
   }),
   unit({
     id: 'siegetank', name: '공성전차', cost: 5, kind: 'unit',
     hp: 1000, damage: 230, hitSpeed: seconds(2.2, TICK_RATE),
     range: tiles(7.0), speed: spd(0.45), splash: tiles(2.0),
     targets: 'ground', siege: 220, color: 0x1d4ed8,
+    // 시즈모드 — 2초 정지로 진입. 사거리 7→9.5, 공격 +35%. 이동하면 즉시 풀린다
+    ability: {
+      kind: 'siegemode',
+      charge: seconds(2, TICK_RATE),
+      rangeAdd: tiles(2.5),
+      power: 35,
+    },
   }),
   unit({
     id: 'ironwalker', name: '강철거인', cost: 4, kind: 'unit',
@@ -147,6 +189,8 @@ const defs: UnitDef[] = [
     id: 'bulwark', name: '방벽', cost: 2, kind: 'building',
     hp: 1000, damage: 165, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0x78716c,
+    // 지뢰 부설 — 9초마다 둘레에 한 기, 셋까지. 벽이 스스로 지뢰밭을 기른다
+    ability: { kind: 'mine', charge: seconds(9, TICK_RATE), radius: tiles(3.0), power: 3 },
   }),
   unit({
     id: 'gunship', name: '전투비행선', cost: 4, kind: 'unit', flying: true,
@@ -207,6 +251,15 @@ const defs: UnitDef[] = [
     id: 'tunneler', name: '굴착충', cost: 2, kind: 'unit',
     hp: 520, damage: 140, hitSpeed: seconds(1.2, TICK_RATE),
     range: tiles(0.7), speed: spd(1.6), targets: 'buildings', siege: 120, color: 0xca8a04,
+    // 굴착 진동 — 12초마다 둘레 아군 지상군이 4초간 +45%. 재배치가 곧 생존인
+    // 침공에서, 군체가 "빨리 다시 선다"는 정체성을 얻는다
+    ability: {
+      kind: 'sprint',
+      charge: seconds(12, TICK_RATE),
+      radius: tiles(5.0),
+      power: HASTE_SPEED_PCT,
+      ticks: seconds(4, TICK_RATE),
+    },
   }),
 
   /* ── 신념단 ───────────────────────────────────────────────────────────
@@ -248,6 +301,9 @@ const defs: UnitDef[] = [
     id: 'shade', name: '그림자', cost: 4, kind: 'unit',
     hp: 650, damage: 320, hitSpeed: seconds(1.8, TICK_RATE),
     range: tiles(0.8), speed: spd(1.35), targets: 'ground', siege: 70, color: 0x4c1d95,
+    // 은신 — 5초 충전. **때리는 순간 드러난다**: 디텍터가 없어도 맞받아칠
+    // 길이 남아야 "은신 종족을 만나면 진다"는 잠금이 생기지 않는다
+    ability: { kind: 'cloak', charge: seconds(5, TICK_RATE) },
   }),
   unit({
     id: 'skiff', name: '부유선', cost: 4, kind: 'unit', flying: true,
@@ -282,10 +338,24 @@ const defs: UnitDef[] = [
     lifetime: BUILDING_LIFE, color: 0x4ade80,
     aura: { kind: 'mend', radius: tiles(4.0), power: 25 },
   }),
+  unit({
+    // 방벽의 능동기가 심는다 — 카드도 테크트리도 없다. 밟히면 터지고 사라진다.
+    // 수명은 무한이지만 상한(방벽당 3기)이 있어 지뢰밭이 무한히 자라지 않는다
+    id: 'landmine', name: '지뢰', cost: 1, kind: 'building', mine: true,
+    hp: 90, damage: 230, hitSpeed: seconds(1.0, TICK_RATE),
+    range: tiles(1.0), speed: 0, splash: tiles(1.8),
+    targets: 'ground', siege: 50, lifetime: -1, color: 0xef4444,
+  }),
 ];
 
 /** 침공 전용 지원 건물 — 드래프트 해금 풀. 종족 트리에는 없다 */
 export const INVASION_BUILDINGS: readonly string[] = ['chilltower', 'commandpost', 'repairbay'];
+
+/**
+ * 카드로 존재하지 않는 유닛 — 능동기가 낳는 것들.
+ * 해금 목록(실험장의 전체 해금 포함)에서 빠진다.
+ */
+export const SPAWNED_ONLY: readonly string[] = ['landmine'];
 
 export const UNITS: ReadonlyMap<string, UnitDef> = new Map(defs.map((d) => [d.id, d]));
 

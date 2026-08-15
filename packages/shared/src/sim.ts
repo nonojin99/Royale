@@ -59,6 +59,7 @@ import {
   WORKER_MINE_PER_TICK,
   WORKER_LOSS_DAMAGE,
   EXPAND_RANGE,
+  HASTE_SPEED_PCT,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
   INVASION_FIRST_WAVE_TICKS,
@@ -91,6 +92,7 @@ import {
   TargetPref,
   UNIT_IDS,
   INVASION_BUILDINGS,
+  SPAWNED_ONLY,
   UnitDef,
   getUnit,
 } from './units.js';
@@ -122,6 +124,14 @@ export interface Entity {
   flying: boolean;
   /** 충전 스킬 게이지 (틱). 스킬 없는 엔티티는 0에 머문다 */
   charge: number;
+  /**
+   * 능동 특성 상태 (4축, 라운드 35). 뜻은 유닛의 ability.kind가 정한다:
+   *   siegemode  제자리에 머문 틱 수 — charge 틱을 넘기면 고정 포대가 된다
+   *   그 밖      쓰지 않는다 (게이지는 charge가 센다)
+   */
+  mode: number;
+  /** 남은 가속 틱 (굴착충의 굴착 진동). 0이면 평속 */
+  haste: number;
   /**
    * 이동 명령 목적지 (밀리타일). -1이면 명령 없음.
    *
@@ -269,6 +279,8 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     target: -1,
     flying: false,
     charge: 0,
+    mode: 0,
+    haste: 0,
     orderX: -1,
     orderY: -1,
     siteId: site.id,
@@ -309,6 +321,7 @@ export function createState(
     // 가로지르는 매치업(소총병 vs 물어뜯는것)이다. 준비 시간도 0으로
     for (const p of s.players) {
       for (const id of UNIT_IDS) {
+        if (SPAWNED_ONLY.includes(id)) continue; // 능동기가 낳는 것들은 카드가 없다
         if (!p.unlocked.includes(id)) p.unlocked.push(id);
       }
       p.unlocked.sort();
@@ -350,10 +363,13 @@ function statsOf(
   }
   const u = getUnit(e.unit);
   const t = traitMod(s.players[e.team], e.unit);
+  // 시즈모드 — 자리를 잡은 대가로 사거리와 화력을 받는다 (4축, 침공 전용)
+  const sm = inSiegeMode(s, e) ? u.ability! : null;
+  const pct = t.damagePct + (sm?.power ?? 0);
   return {
-    damage: t.damagePct ? Math.trunc((u.damage * (100 + t.damagePct)) / 100) : u.damage,
+    damage: pct ? Math.trunc((u.damage * (100 + pct)) / 100) : u.damage,
     hitSpeed: u.hitSpeed,
-    range: u.range + t.rangeAdd,
+    range: u.range + t.rangeAdd + (sm?.rangeAdd ?? 0),
     splash: u.splash,
     siege: u.siege,
   };
@@ -568,6 +584,8 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     target: -1,
     flying: u.flying,
     charge: 0,
+    mode: 0,
+    haste: 0,
     orderX: -1,
     orderY: -1,
     siteId: -1,
@@ -1001,6 +1019,7 @@ function syncBlockers(s: GameState): void {
   let sig = 0x811c9dc5;
   for (const e of s.entities) {
     if (e.kind !== 'building') continue;
+    if (getUnit(e.unit).mine) continue; // 묻은 것은 길을 막지 않는다
     const before = tiles.length;
     blockerTilesOf(e, tiles);
     for (let i = before; i < tiles.length; i++) {
@@ -1069,6 +1088,112 @@ function auraPower(
     if (dist2(e.x, e.y, x, y) <= a.radius * a.radius) sum += a.power;
   }
   return kind === 'chill' ? (sum > 90 ? 90 : sum) : sum;
+}
+
+/* ── 능동 특성 (4축, 라운드 35) ────────────────────────────────────────── */
+
+/**
+ * 이 엔티티의 능동 특성 — **침공에서만 켜진다**.
+ *
+ * 문지기가 여기 하나뿐이라, 대전·실험장으로 새는 길이 구조적으로 없다.
+ * 대전 도입은 삼각(RUSH/TECH 58%)을 다시 재고 나서 별도 라운드로 한다.
+ */
+function abilityOf(s: GameState, e: Entity): UnitDef['ability'] {
+  if (!s.invasion || e.kind === 'base' || e.deploy > 0) return undefined;
+  return getUnit(e.unit).ability;
+}
+
+/** 게이지가 다 차는 데 걸리는 틱 — 능동 특성은 저마다 다르다 */
+export function chargeTicksOf(u: UnitDef): number {
+  return u.ability?.charge ?? SKILL_CHARGE_TICKS;
+}
+
+/**
+ * 지금 숨어 있는가.
+ *
+ * 지뢰는 늘 숨어 있고, 은신 유닛은 게이지가 만충일 때만 숨는다 — 때리면
+ * 게이지가 0이 되므로 **공격은 곧 노출**이다. 디텍터가 없는 상대에게도
+ * 맞받아칠 길이 남아야 "은신을 만나면 진다"는 잠금이 생기지 않는다.
+ */
+function isCloaked(s: GameState, e: Entity): boolean {
+  if (!s.invasion || e.kind === 'base') return false;
+  const u = getUnit(e.unit);
+  if (u.mine) return true;
+  if (u.ability?.kind !== 'cloak') return false;
+  return e.charge >= chargeTicksOf(u);
+}
+
+/**
+ * 디텍터 목록 캐시 — 틱당 한 번만 훑는다.
+ *
+ * 은신 판정은 (공격자 × 은신 대상)마다 불린다. 지뢰밭이 깔린 후반에는 그
+ * 곱이 수만 번이 되는데, 매번 전체 엔티티를 훑으면 틱 예산이 무너진다
+ * (실측: 1877 엔티티에서 최악 84ms → 캐시 후 16ms). 디텍터는 보통 0~2기라
+ * 목록만 만들어 두면 판정이 사실상 공짜가 된다.
+ *
+ * 무효화는 (상태 · 틱 · 엔티티 수) 삼중 확인 — 렌더러가 틱 사이에 물어도
+ * 안전하고, 한 틱 안에서 시체가 걷혀도 다시 만든다.
+ */
+let detState: GameState | null = null;
+let detTick = -1;
+let detCount = -1;
+const detCache: [Entity[], Entity[]] = [[], []];
+
+function detectorsOf(s: GameState, team: Team): Entity[] {
+  if (detState !== s || detTick !== s.tick || detCount !== s.entities.length) {
+    detCache[0] = [];
+    detCache[1] = [];
+    for (const e of s.entities) {
+      if (e.kind === 'base' || e.deploy > 0) continue;
+      if (getUnit(e.unit).ability?.kind === 'detect') detCache[e.team].push(e);
+    }
+    detState = s;
+    detTick = s.tick;
+    detCount = s.entities.length;
+  }
+  return detCache[team];
+}
+
+/** 이 지점이 team의 디텍터에 잡히는가 */
+function detectedBy(s: GameState, team: Team, x: number, y: number): boolean {
+  for (const d of detectorsOf(s, team)) {
+    const r = getUnit(d.unit).ability?.radius ?? 0;
+    if (dist2(d.x, d.y, x, y) <= r * r) return true;
+  }
+  return false;
+}
+
+/**
+ * viewer 팀이 target을 때릴 수 있는가 — 은신 판정.
+ *
+ * 숨은 것을 보려면 디텍터가 필요하다. 스플래시는 이 관문을 타지 않는다:
+ * 위치를 모른 채 쏜 광역에 우연히 맞는 것까지 막으면 지뢰가 무적이 된다.
+ */
+function visibleTo(s: GameState, viewer: Team, target: Entity): boolean {
+  if (!isCloaked(s, target)) return true;
+  return detectedBy(s, viewer, target.x, target.y);
+}
+
+/**
+ * 이 엔티티가 viewer에게 **보이지 않는가** — 렌더러가 쓰는 공개 판정.
+ *
+ * 화면과 시뮬이 같은 함수로 판단해야 "보이는데 못 때린다"가 생기지 않는다.
+ */
+export function isHiddenFrom(s: GameState, viewer: Team, e: Entity): boolean {
+  if (e.team === viewer) return false;
+  return !visibleTo(s, viewer, e);
+}
+
+/** 내 은신 유닛인가 — 반투명으로 그려 "지금 숨어 있다"를 알린다 */
+export function isCloakedNow(s: GameState, e: Entity): boolean {
+  return isCloaked(s, e);
+}
+
+/** 시즈모드에 들어갔는가 — 제자리에 charge 틱 이상 머문 공성 유닛 */
+export function inSiegeMode(s: GameState, e: Entity): boolean {
+  const a = abilityOf(s, e);
+  if (a?.kind !== 'siegemode') return false;
+  return e.mode >= (a.charge ?? SKILL_CHARGE_TICKS);
 }
 
 /* ── 침공 파도 타입·유물 ───────────────────────────────────────────────── */
@@ -1160,6 +1285,8 @@ function pickTarget(s: GameState, e: Entity): number {
   for (const o of s.entities) {
     if (o.team === e.team || o.hp <= 0) continue;
     if (!canAttack(e, o)) continue;
+    // 숨은 것은 겨냥할 수 없다 — 디텍터가 있어야 표적이 된다 (4축)
+    if (!visibleTo(s, e.team, o)) continue;
     const d2 = dist2(e.x, e.y, o.x, o.y);
 
     if (o.kind === 'unit') {
@@ -1299,6 +1426,65 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     c.caster.charge = 0;
   }
 
+  // 4.6) 능동 특성 (4축) — 침공 전용. 게이지를 채우고, 다 차면 **상태를 바꾼다**.
+  // 주문 패스와 나란히 두되 섞지 않는다: 저쪽은 피해를 쏘고 이쪽은 판을 바꾼다
+  if (s.invasion) {
+    const plants: Array<{ team: Team; x: number; y: number }> = [];
+    const sprints: Array<{ team: Team; x: number; y: number; r2: number; ticks: number }> = [];
+    for (const e of s.entities) {
+      if (e.haste > 0) e.haste--;
+      const a = abilityOf(s, e);
+      if (!a) continue;
+      const full = a.charge ?? SKILL_CHARGE_TICKS;
+      if (a.kind === 'cloak') {
+        // 게이지가 곧 은신이다 — 때리면 0이 되고(공격 패스), 다시 차오르면 숨는다
+        if (e.charge < full) e.charge++;
+        continue;
+      }
+      if (a.kind !== 'mine' && a.kind !== 'sprint') continue; // detect·siegemode는 게이지가 없다
+      if (e.charge < full) {
+        e.charge++;
+        continue;
+      }
+      if (a.kind === 'sprint') {
+        e.charge = 0;
+        const r = a.radius ?? 0;
+        sprints.push({ team: e.team, x: e.x, y: e.y, r2: r * r, ticks: a.ticks ?? 0 });
+        continue;
+      }
+      // 지뢰 — 둘레 상한(power기)을 넘지 않는다. 벽 하나가 지뢰밭이 되면 안 된다
+      const r = a.radius ?? 0;
+      let near = 0;
+      for (const o of s.entities) {
+        if (o.team !== e.team || o.kind === 'base' || !getUnit(o.unit).mine) continue;
+        if (dist2(o.x, o.y, e.x, e.y) <= r * r) near++;
+      }
+      if (near >= (a.power ?? 1)) continue;
+      // 고정 8방 링에서 시작 방향만 rng로 고른다 (rng는 상태에 있으므로 결정론)
+      const k = nextInt(s.rng, 8);
+      const RING = 2000;
+      const DX = [0, 1, 1, 1, 0, -1, -1, -1];
+      const DY = [-1, -1, 0, 1, 1, 1, 0, -1];
+      for (let i = 0; i < 8; i++) {
+        const d = (k + i) % 8;
+        const px = clamp(e.x + DX[d] * RING, 0, ARENA_W - 1);
+        const py = clamp(e.y + DY[d] * RING, 0, ARENA_H - 1);
+        if (blockedAt(px, py)) continue;
+        e.charge = 0;
+        plants.push({ team: e.team, x: px, y: py });
+        break;
+      }
+    }
+    // 생성·부여는 순회가 끝난 뒤에 (배열을 순회 중에 늘리지 않는다)
+    for (const pl of plants) spawnUnit(s, pl.team, getUnit('landmine'), pl.x, pl.y);
+    for (const sp of sprints) {
+      for (const o of s.entities) {
+        if (o.kind !== 'unit' || o.team !== sp.team || o.flying) continue;
+        if (dist2(o.x, o.y, sp.x, sp.y) <= sp.r2) o.haste = sp.ticks;
+      }
+    }
+  }
+
   // 5) 타겟 선정 (읽기 전용 패스)
   const n = s.entities.length;
   const targets = new Array<number>(n);
@@ -1325,6 +1511,11 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (e.cd > 0) continue;
 
     e.cd = st.hitSpeed;
+    // 은신은 때리는 순간 풀리고(게이지 0), 지뢰는 밟히는 순간 함께 사라진다.
+    // 여기 한 줄이 "은신 상대에게는 손도 못 쓴다"를 막는 안전판이다 (4축)
+    const ab = abilityOf(s, e);
+    if (ab?.kind === 'cloak') e.charge = 0;
+    if (s.invasion && e.kind !== 'base' && getUnit(e.unit).mine) e.hp = 0;
     if (st.splash > 0) {
       const sp2 = st.splash * st.splash;
       for (let j = 0; j < n; j++) {
@@ -1351,9 +1542,15 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
     const u = getUnit(e.unit);
     if (u.speed <= 0) continue;
+    // 시즈모드 — 자리를 잡은 포는 움직이지 않는다. 이동 명령이 오면 포를 접는다
+    const abil = abilityOf(s, e);
+    if (abil?.kind === 'siegemode') {
+      if (e.orderX >= 0) e.mode = 0;
+      else if (e.mode >= (abil.charge ?? SKILL_CHARGE_TICKS)) continue;
+    }
     // 냉각탑 — 적 진영의 감속 오라. 킬존에 가두는 장치다
     const chill = auraPower(s, 'chill', e.team === 0 ? 1 : 0, e.x, e.y);
-    const boost = traitMod(s.players[e.team], e.unit).speedPct;
+    const boost = traitMod(s.players[e.team], e.unit).speedPct + (e.haste > 0 ? HASTE_SPEED_PCT : 0);
     const base = boost ? Math.trunc((u.speed * (100 + boost)) / 100) : u.speed;
     const speed = chill > 0 ? Math.trunc((base * (100 - chill)) / 100) : base;
     if (speed <= 0) continue;
@@ -1410,8 +1607,14 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     ny[i] = clamp(ny[i], 0, ARENA_H - 1);
   }
   for (let i = 0; i < n; i++) {
-    s.entities[i].x = nx[i];
-    s.entities[i].y = ny[i];
+    const e = s.entities[i];
+    // 시즈 자세는 "제자리에 머문 틱"으로 잰다 — 한 걸음이라도 걸으면 처음부터
+    if (abilityOf(s, e)?.kind === 'siegemode') {
+      if (e.x === nx[i] && e.y === ny[i]) e.mode++;
+      else e.mode = 0;
+    }
+    e.x = nx[i];
+    e.y = ny[i];
   }
 
   // 8) 겹침 해소
@@ -1726,6 +1929,8 @@ export function hashState(s: GameState): number {
     mix(e.id);
     mix(e.team);
     mix(e.charge);
+    mix(e.mode);
+    mix(e.haste);
     mix(e.orderX);
     mix(e.orderY);
     mix(e.x);
