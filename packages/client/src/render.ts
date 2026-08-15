@@ -459,6 +459,17 @@ export class Renderer {
       );
     };
 
+    /**
+     * 절벽 벽면 — 고지·메사의 남쪽 가장자리 **아래 타일까지** 벽이 이어진다
+     * (MAP_RULES §8-2, 라운드 33).
+     *
+     * 스타1이 "언덕이 언덕으로 보이는" 이유의 절반이 이것이다: 평면도에서
+     * 고지는 색만 다른 땅이지만, 아래 칸에 수직 벽면이 서면 눈이 높이를
+     * 읽는다. 지형 타일을 먼저 다 깐 뒤 2패스로 덧그린다 — 같은 패스에서
+     * 그리면 아래 칸의 바닥 타일이 벽면을 덮는다
+     */
+    const faces: Array<{ sx: number; sy: number; cell: number; n: number }> = [];
+
     for (let sy = 0; sy < H; sy++) {
       for (let sx = 0; sx < W; sx++) {
         const [wx, wy] = worldTile(sx, sy);
@@ -540,7 +551,13 @@ export class Renderer {
             const openW = sx - 1 < 0 || !wallTile(...worldTile(sx - 1, sy));
             const openE = sx + 1 >= W || !wallTile(...worldTile(sx + 1, sy));
             const openN = sy - 1 < 0 || !wallTile(...worldTile(sx, sy - 1));
-            if (openS) cell = pickCell(T_CLIFF_S, n);
+            if (openS) {
+              cell = pickCell(T_CLIFF_S, n);
+              // 아래 칸이 통행 가능한 뭍이면 그 칸까지 벽이 내려온다
+              if (sy + 1 < H && !waterTile(...worldTile(sx, sy + 1))) {
+                faces.push({ sx, sy: sy + 1, cell: pickCell(T_CLIFF_S, (n + 0.37) % 1), n });
+              }
+            }
             else if (openW) cell = T_CLIFF_W;
             else if (openE) cell = T_CLIFF_E;
             else cell = pickCell(T_HIGH, nf);
@@ -557,7 +574,12 @@ export class Renderer {
             continue;
           }
           if (!high) cell = pickCell(T_LOW, nf);
-          else if (edge(0, 1)) cell = pickCell(T_CLIFF_S, n);
+          else if (edge(0, 1)) {
+            cell = pickCell(T_CLIFF_S, n);
+            if (sy + 1 < H && !waterTile(...worldTile(sx, sy + 1))) {
+              faces.push({ sx, sy: sy + 1, cell: pickCell(T_CLIFF_S, (n + 0.37) % 1), n });
+            }
+          }
           else if (edge(-1, 0)) cell = T_CLIFF_W;
           else if (edge(1, 0)) cell = T_CLIFF_E;
           else cell = pickCell(T_HIGH, nf);
@@ -577,11 +599,13 @@ export class Renderer {
             g.rect(sx * t, sy * t, t, 3);
             g.fill({ color: 0xd9cf9a, alpha: 0.55 });
           }
-          // 절벽 발치 그림자 — 진한 심 + 디더 꼬리로 부드럽게 사라진다
+          // 절벽 발치 그림자 — 벽면(아래 한 칸) **밑**에서 시작해 남동쪽으로
+          // 드리운다. 광원은 북서 고정 (§8-1)
           if (high && edge(0, 1)) {
-            g.rect(sx * t, (sy + 1) * t, t, 2);
-            g.fill({ color: 0x000000, alpha: 0.3 });
-            this.dither(g, sx * t, (sy + 1) * t + 2, t, 3, t / 8, 0x000000, 0.28);
+            const fy = (sy + 2) * t; // 벽면 아래
+            g.rect(sx * t + 2, fy, t, 3);
+            g.fill({ color: 0x000000, alpha: 0.34 });
+            this.dither(g, sx * t + 2, fy + 3, t, 6, t / 8, 0x000000, 0.3);
           }
           continue;
         }
@@ -615,6 +639,28 @@ export class Renderer {
       }
     }
 
+    // 2패스 — 절벽 벽면. 바닥 타일이 다 깔린 뒤라 덮이지 않는다
+    for (const f of faces) {
+      const tex = art.terrain(f.cell);
+      if (!tex) continue;
+      const sp = new Sprite(tex);
+      sp.position.set(f.sx * t, f.sy * t);
+      sp.width = t;
+      // 벽면은 한 칸을 다 채우지 않는다 — 0.72칸이면 "벽이 서 있고 그 밑에
+      // 땅이 있다"로 읽히고, 유닛이 벽에 파묻힌 것처럼 보이지 않는다
+      sp.height = t * 0.72;
+      // 아래로 갈수록 그늘 — 수직면은 하늘을 못 봐서 어둡다
+      sp.tint = 0x9a9a9a;
+      this.gTiles.addChild(sp);
+
+      // 벽면 위 테두리 — 고지 바닥과 벽면이 만나는 선. 여기가 밝아야 모서리가 선다
+      g.rect(f.sx * t, f.sy * t, t, 1.5);
+      g.fill({ color: 0xe8dcae, alpha: 0.5 });
+      // 벽면 아래 끝 — 땅에 닿는 어두운 심
+      g.rect(f.sx * t, f.sy * t + t * 0.72 - 1.5, t, 1.5);
+      g.fill({ color: 0x0a0806, alpha: 0.45 });
+    }
+
     // 벽 — 지상 유닛이 못 지나가는 지형. 아래쪽에 그림자를 깔아 높이를 준다
     for (const [x0, y0, x1, y1] of WALLS) {
       const [ax, ay] = this.toScreen(x0 * SCALE, y0 * SCALE, myTeam);
@@ -625,10 +671,14 @@ export class Renderer {
       const rh = Math.abs(by - ay);
 
       if (hasTiles) {
-        // 메사(절벽 타일)가 몸통이다 — 그림자는 진한 심 + 디더 꼬리
-        g.rect(rx + 2, ry + rh, rw, 1.5);
-        g.fill({ color: 0x000000, alpha: 0.32 });
-        this.dither(g, rx + 2, ry + rh + 1.5, rw, 2.5, PX_PER_TILE / 8, 0x000000, 0.3);
+        // 메사(절벽 타일)가 몸통이다 — 벽면 아래로 그림자가 드리운다.
+        // 광원 북서 고정: 그림자는 남동으로 흐른다 (§8-1)
+        g.rect(rx + 3, ry + rh + PX_PER_TILE * 0.72, rw, 3);
+        g.fill({ color: 0x000000, alpha: 0.34 });
+        this.dither(
+          g, rx + 3, ry + rh + PX_PER_TILE * 0.72 + 3, rw, 6,
+          PX_PER_TILE / 8, 0x000000, 0.3,
+        );
         g.rect(rx + rw, ry + 3, 1.5, rh);
         g.fill({ color: 0x000000, alpha: 0.32 });
         this.dither(g, rx + rw + 1.5, ry + 3, 2, rh, PX_PER_TILE / 8, 0x000000, 0.3);
