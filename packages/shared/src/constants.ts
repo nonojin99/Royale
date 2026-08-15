@@ -245,3 +245,38 @@ export const HERO_HP_PER_LEVEL = 10;
  * 다시 일어선다: 죽음이 아프되 치명적이지는 않다.
  */
 export const HERO_RESPAWN_TICKS = 25 * TICK_RATE;
+
+/* ── 런 체인 (로그라이트 3단계, 라운드 38) ─────────────────────────────── */
+
+/**
+ * 런은 세 무대를 잇는다 — **방어 두 번, 공격 한 번**.
+ *
+ * 끝없는 파도는 점수판이지 이야기가 아니다. 무대를 나누면 런에 마디가
+ * 생기고("여기만 넘기면 다음"), 마지막에 동사가 바뀐다: 지키던 사람이
+ * 쳐들어간다. 무대가 바뀌어도 성장(유물·해금·영웅 레벨)은 따라간다 —
+ * 잃는 것은 전장뿐이다.
+ *
+ * `map`이 빈 문자열이면 로비에서 고른 맵을 그대로 쓴다(1무대).
+ * `waves`가 0이면 파도 수가 아니라 **둥지 격파**가 조건이다.
+ */
+export interface StageDef {
+  map: string;
+  waves: number;
+  name: string;
+  tagline: string;
+  nest?: boolean;
+}
+
+export const RUN_STAGES: readonly StageDef[] = [
+  { map: '', waves: 6, name: '전초 방어', tagline: '사방에서 온다 — 여섯 파도를 넘겨라' },
+  { map: 'coast', waves: 6, name: '포위망', tagline: '바다를 등졌다 — 여섯 파도 더' },
+  {
+    map: 'rift', waves: 0, nest: true,
+    name: '둥지 격파', tagline: '이제 우리가 간다 — 둥지를 부숴라',
+  },
+];
+
+/** 무대를 넘길 때 주는 방벽 설치권 (성은 새로 지어야 한다) */
+export const STAGE_WALL_GRANT = 4;
+/** 둥지 체력 — 파도를 헤치고 도달해야 하므로 넉넉히 */
+export const NEST_HP = 7000;

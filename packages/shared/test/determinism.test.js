@@ -57,6 +57,7 @@ import {
   INVASION_WALL_PER_WAVE,
   INVASION_BUILDINGS,
   HERO_IDS,
+  RUN_STAGES,
   HERO_RESPAWN_TICKS,
   RELIC_BY_ID,
   applyCommand,
@@ -1891,4 +1892,75 @@ test('5축 영웅 — 런 시작 3택1·성장·재기, 대전에는 없다', ()
     }
     assert.ok(brood() < 16, `새끼가 무한 증식하지 않는다 (${brood()}마리)`);
   }
+});
+
+/* ── 로그라이트 3단계: 런 체인 (라운드 38) ────────────────────────────── */
+
+test('런 체인 — 무대를 넘기면 전장만 바뀌고 성장은 따라온다', () => {
+  const pick = (s, id) =>
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'relic', id, x: 0, y: 0 });
+  const wipe = (s) => {
+    for (const e of s.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
+    step(s, []);
+  };
+  const forceWave = (s) => {
+    s.nextWaveTick = s.tick;
+    step(s, []);
+  };
+
+  const s = createState(9, ['steel', 'swarmhive'], 'siege', false, true);
+  pick(s, 'hero:hero_commander');
+  assert.equal(s.stage, 0, '런은 1무대에서 시작한다');
+
+  // 1무대 → 2무대
+  let guard = 0;
+  while (s.stage === 0 && guard++ < 40) {
+    forceWave(s);
+    wipe(s);
+    if (s.draft.length > 0) pick(s, s.draft[0]);
+  }
+  assert.equal(s.stage, 1, '목표 파도를 넘기면 다음 무대');
+  assert.equal(s.mapId, RUN_STAGES[1].map, '전장이 바뀐다');
+  assert.ok(s.wave >= RUN_STAGES[0].waves, '파도 번호는 이어진다(예산 연속)');
+  assert.ok(
+    s.entities.some((e) => e.kind === 'base' && e.team === 0 && e.isMain),
+    '새 전장에 내 본진이 선다',
+  );
+  assert.ok(
+    s.entities.some((e) => e.kind !== 'base' && getUnit(e.unit).hero),
+    '영웅이 따라온다',
+  );
+  assert.ok(s.players[0].relics.length + s.players[0].unlocked.length > 0, '성장이 남는다');
+  assert.equal(s.players[0].rally, null, '집결 깃발은 초기화');
+
+  // 2무대 → 3무대(둥지)
+  guard = 0;
+  while (s.stage === 1 && guard++ < 40) {
+    forceWave(s);
+    wipe(s);
+    if (s.draft.length > 0) pick(s, s.draft[0]);
+  }
+  assert.equal(s.stage, 2, '2무대를 넘기면 둥지 무대');
+  const nest = s.entities.find((e) => e.unit === 'nest');
+  assert.ok(nest, '둥지가 선다');
+  assert.equal(nest.team, 1, '둥지는 적의 것이다');
+  assert.equal(s.over, false, '아직 런은 끝나지 않았다');
+
+  // 둥지 격파 = 런 완주
+  nest.hp = 0;
+  step(s, []);
+  assert.equal(s.over, true, '둥지를 부수면 런이 끝난다');
+  assert.equal(s.winner, 0, '완주는 승리다');
+
+  // 본진 함락은 여전히 패배
+  const lose = createState(3, ['steel', 'swarmhive'], 'siege', false, true);
+  lose.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain).hp = 0;
+  step(lose, []);
+  assert.equal(lose.winner, 1, '본진이 무너지면 패배');
+
+  // 대전은 무대를 모른다
+  const v = createState(3, ['covenant', 'swarmhive'], 'coast');
+  for (let i = 0; i < 200; i++) step(v, []);
+  assert.equal(v.stage, 0);
+  assert.ok(!v.entities.some((e) => e.unit === 'nest'), '대전에 둥지가 없다');
 });

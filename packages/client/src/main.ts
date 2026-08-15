@@ -23,6 +23,7 @@ import {
   SKILL_CAST_RANGE,
   SKILL_CHARGE_TICKS,
   waveTypeOf,
+  RUN_STAGES,
   MINERAL_SCALE,
   OVERTIME_TICKS,
   TICK_RATE,
@@ -1234,6 +1235,8 @@ function updateMusic(s: GameState): void {
 /* ── 침공 드래프트 패널 ─────────────────────────────────────────────────── */
 
 let draftShownKey = '';
+/** 마지막으로 안내한 무대 — 전환 순간에만 배너를 띄운다 */
+let stageShown = 0;
 
 /** 영웅 능동기 한 줄 설명 — 데이터가 아니라 표시라 여기 산다 */
 const HERO_BLURB: Record<string, string> = {
@@ -1318,6 +1321,22 @@ function updateHud(s: GameState): void {
       normal: '', air: '공중✈', siege: '공성💥', rush: '물량🐜', boss: '보스💀',
     };
     const nextLabel = WAVE_LABEL[waveTypeOf(s.wave + 1)];
+    // 무대 — 런 체인의 마디. 목표 파도가 곧 "여기만 넘기면 다음"이다
+    const st = RUN_STAGES[s.stage] ?? RUN_STAGES[RUN_STAGES.length - 1];
+    // 무대가 바뀌는 순간은 런의 마디다 — 놓치면 전장이 왜 바뀌었는지 모른다
+    if (s.stage !== stageShown) {
+      stageShown = s.stage;
+      if (s.stage > 0) {
+        hint(`${s.stage + 1}무대 — ${st.name}: ${st.tagline}`);
+        sound.play('build');
+      }
+    }
+    let goal = 0;
+    for (let i = 0; i <= s.stage && i < RUN_STAGES.length; i++) goal += RUN_STAGES[i].waves;
+    const stageTag = st.nest
+      ? `🏴 ${s.stage + 1}/${RUN_STAGES.length} ${st.name}`
+      : `🏴 ${s.stage + 1}/${RUN_STAGES.length} ${st.name} ${s.wave}/${goal}`;
+
     // 영웅 상태 — 레벨, 쓰러졌으면 재기까지 남은 초
     let heroTag = '';
     if (me.hero) {
@@ -1325,8 +1344,11 @@ function updateHud(s: GameState): void {
         ? ` · ⚔ 재기 ${Math.ceil(me.heroRespawn / TICK_RATE)}초`
         : ` · ⚔ Lv${me.heroLevel}`;
     }
+    // 목표를 채운 뒤에는 파도가 더 오지 않는다 — 카운트다운도 거짓말하면 안 된다
+    const noMore = !st.nest && s.wave >= goal;
     $('timer').textContent =
-      `🌊 파도 ${s.wave} · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초` +
+      `${stageTag} · 🌊 ${s.wave}` +
+      (noMore ? ' · 전장 소탕 중' : ` · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초`) +
       ` · 🧱 ${me.wallCharges}${heroTag}`;
     updateDraft(s);
   } else if (s.sandbox) {

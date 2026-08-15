@@ -64,6 +64,9 @@ import {
   HERO_HP_PER_LEVEL,
   HERO_LEVEL_MAX,
   HERO_RESPAWN_TICKS,
+  RUN_STAGES,
+  STAGE_WALL_GRANT,
+  StageDef,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
   INVASION_FIRST_WAVE_TICKS,
@@ -245,6 +248,15 @@ export interface GameState {
    * 선택은 줄도 따로 서야 한다.
    */
   heroDraft: string[];
+  /**
+   * 런 체인의 현재 무대 (0~2, 로그라이트 3단계 — 라운드 38).
+   *
+   * 침공이 아니면 늘 0이고 아무 뜻이 없다. 무대가 바뀌면 전장만 갈아엎고
+   * 성장(유물·해금·영웅·미네랄)은 그대로 따라간다.
+   */
+  stage: number;
+  /** 3무대의 둥지가 살아 있는가 — 부서지는 순간이 런의 끝(승리)이다 */
+  nestAlive: boolean;
 }
 
 /** 커맨드 종류 */
@@ -343,6 +355,8 @@ export function createState(
     waveReward: 0,
     draft: [],
     heroDraft: [],
+    stage: 0,
+    nestAlive: false,
   };
   if (sandbox) {
     // **전 종족** 전 유닛 해금 + 미네랄 만땅 — 실험장의 존재 이유는 종족을
@@ -1314,6 +1328,88 @@ function tickHero(s: GameState): void {
   }
 }
 
+/* ── 런 체인 (로그라이트 3단계, 라운드 38) ─────────────────────────────── */
+
+/** 이 무대의 규칙 */
+export function stageOf(s: GameState): StageDef {
+  return RUN_STAGES[s.stage] ?? RUN_STAGES[RUN_STAGES.length - 1];
+}
+
+/** 이 무대를 넘기려면 몇 파도까지 버텨야 하는가 (둥지 무대는 0) */
+export function stageGoal(s: GameState): number {
+  let sum = 0;
+  for (let i = 0; i <= s.stage && i < RUN_STAGES.length; i++) sum += RUN_STAGES[i].waves;
+  return sum;
+}
+
+/**
+ * 다음 무대로 넘어간다 — **전장만 갈아엎고 성장은 데려간다**.
+ *
+ * 새 GameState를 만들지 않는다: 유물·해금·영웅 레벨·미네랄은 그대로 두고
+ * 엔티티와 맵만 바꾼다. 그래야 "같은 런이 이어진다"는 감각이 산다.
+ * nextId는 이어서 쓴다 — 재사용하면 리플레이의 id가 겹친다.
+ */
+function advanceStage(s: GameState): void {
+  s.stage++;
+  const def = stageOf(s);
+  if (def.map) {
+    setActiveMap(def.map);
+    s.mapId = def.map;
+  }
+
+  const p = s.players[0];
+  p.rally = null;
+  // 성은 두고 왔다 — 새 전장에서 다시 짓는다
+  p.wallCharges = STAGE_WALL_GRANT;
+  if (p.workers > WORKER_CAP_PER_BASE) p.workers = WORKER_CAP_PER_BASE;
+
+  s.entities = [];
+  syncBlockers(s);
+  for (const site of BASE_SITES) {
+    if (site.startFor !== 0) continue;
+    s.entities.push(makeBase(s, 0, site, true));
+  }
+  // 3무대의 둥지 — 침공자 시작 지점에 선다. "적 본진 자리"라는 읽기가
+  // 그대로 목적지가 된다
+  if (def.nest) {
+    const lair = BASE_SITES.find((b) => b.startFor === 1);
+    if (lair) {
+      spawnUnit(s, 1, getUnit('nest'), lair.x, lair.y);
+      const n = s.entities[s.entities.length - 1];
+      n.deploy = 0;
+      s.nestAlive = true;
+    }
+  }
+  // 영웅은 무대를 따라온다 (레벨 그대로)
+  if (p.hero) {
+    p.heroRespawn = 0;
+    summonHero(s, 0);
+  }
+  s.waveAlive = false;
+  s.nextWaveTick = s.tick + INVASION_FIRST_WAVE_TICKS;
+}
+
+/**
+ * 무대 판정 — 매 틱 한 번.
+ *   방어 무대: 목표 파도까지 넘기고 전장이 비면 다음 무대로
+ *   둥지 무대: 둥지가 부서지면 런 승리
+ */
+function tickStage(s: GameState): void {
+  if (s.over) return;
+  const def = stageOf(s);
+  if (def.nest) {
+    if (s.nestAlive && !s.entities.some((e) => e.team === 1 && e.unit === 'nest')) {
+      s.nestAlive = false;
+      s.over = true;
+      s.winner = 0; // 런 완주 — 로그라이트의 유일한 승리 조건
+    }
+    return;
+  }
+  if (s.wave < stageGoal(s) || s.waveAlive) return;
+  if (s.entities.some((e) => e.team === 1 && e.kind === 'unit')) return;
+  advanceStage(s);
+}
+
 /* ── 침공 파도 타입·유물 ───────────────────────────────────────────────── */
 
 export type WaveType = 'normal' | 'air' | 'siege' | 'rush' | 'boss';
@@ -1471,7 +1567,11 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   syncBlockers(s);
 
   // 1.5) 침공 파도 — 예산이 자라는 무리가 침공자 본진에서 쏟아진다
-  if (s.invasion && s.tick >= s.nextWaveTick && !s.over) spawnWave(s);
+  // 무대 목표를 채웠으면 더 부르지 않는다 — 마지막 파도가 그 무대의 끝이다.
+  // (이게 없으면 후반 간격 10초가 앞 파도를 다 잡기 전에 다음을 불러
+  //  전장이 영영 비지 않고, 무대가 넘어가지 않는다 — 라운드 38 실측)
+  const staged = s.invasion && !stageOf(s).nest && s.wave >= stageGoal(s);
+  if (s.invasion && !staged && s.tick >= s.nextWaveTick && !s.over) spawnWave(s);
 
   // 2) 채굴
   mine(s);
@@ -1823,6 +1923,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     }
   }
 
+  // 9.6) 런 체인 — 무대를 넘기거나, 둥지를 부쉈으면 런이 끝난다 (3단계)
+  if (s.invasion) tickStage(s);
+
   // 10) 종료 조건
   s.tick++;
   checkEnd(s);
@@ -2075,6 +2178,8 @@ export function hashState(s: GameState): number {
   for (const d of s.draft) mixStr(d);
   mix(s.heroDraft.length);
   for (const d of s.heroDraft) mixStr(d);
+  mix(s.stage);
+  mix(s.nestAlive ? 1 : 0);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);

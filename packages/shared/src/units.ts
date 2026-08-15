@@ -18,7 +18,7 @@
  * 오리지널이다. 특정 상용 IP의 고유명사·디자인을 가져다 쓰지 않는다.
  */
 
-import { HASTE_SPEED_PCT, TICK_RATE } from './constants.js';
+import { HASTE_SPEED_PCT, NEST_HP, TICK_RATE } from './constants.js';
 import { seconds, tiles } from './fixed.js';
 
 export type UnitKind = 'unit' | 'building' | 'spell';
@@ -385,6 +385,13 @@ const defs: UnitDef[] = [
     ability: { kind: 'heal', charge: seconds(8, TICK_RATE), radius: tiles(5.0), power: 220 },
   }),
   unit({
+    // 3무대의 목표물 — 부수면 런이 끝난다. 스스로 쏘지 않는다:
+    // 둥지를 지키는 것은 파도의 몫이고, 둥지는 그저 거기 있어야 한다
+    id: 'nest', name: '둥지', cost: 0, kind: 'building',
+    hp: NEST_HP, damage: 0, hitSpeed: 0, range: 0, speed: 0,
+    lifetime: -1, color: 0x7f1d1d,
+  }),
+  unit({
     // 방벽의 능동기가 심는다 — 카드도 테크트리도 없다. 밟히면 터지고 사라진다.
     // 수명은 무한이지만 상한(방벽당 3기)이 있어 지뢰밭이 무한히 자라지 않는다
     id: 'landmine', name: '지뢰', cost: 1, kind: 'building', mine: true,
@@ -403,6 +410,7 @@ export const INVASION_BUILDINGS: readonly string[] = ['chilltower', 'commandpost
  */
 export const SPAWNED_ONLY: readonly string[] = [
   'landmine',
+  'nest',
   'broodling',
   'hero_commander',
   'hero_queen',
