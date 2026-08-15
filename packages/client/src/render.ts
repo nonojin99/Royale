@@ -94,6 +94,19 @@ const T_CLIFF_W = 14;
 const T_CLIFF_E = 15;
 // 4행 바위(18~23)는 벽이 메사가 되면서 지형에서는 은퇴 — 소품용으로 남겨둔다
 
+/**
+ * 두들(지형 소품) 칸 배정 — `doodads.png` 12칸 (MAP_RULES §8-3).
+ *
+ * 저지에는 풀·덤불·이끼가, 고지에는 마른 가시·석판이 어울린다. 바위와
+ * 해골은 양쪽 모두 — 어디에 굴러도 이상하지 않은 것들이다.
+ */
+const D_LOW: Array<[number, number]> = [
+  [3, 20], [4, 16], [5, 12], [11, 8], [0, 14], [1, 10], [2, 6], [6, 5], [7, 5], [8, 4],
+];
+const D_HIGH: Array<[number, number]> = [
+  [10, 22], [9, 16], [0, 18], [1, 12], [2, 8], [6, 8], [8, 6],
+];
+
 /** [칸, 가중치] 표에서 0~1 난수로 하나 고른다 */
 function pickCell(table: Array<[number, number]>, n: number): number {
   const total = table.reduce((s, [, w]) => s + w, 0);
@@ -588,6 +601,9 @@ export class Renderer {
           sp.position.set(sx * t, sy * t);
           sp.width = t;
           sp.height = t;
+          // 고도별 팔레트 온도 (§8-5) — 고지는 햇빛을 더 받아 밝고 따뜻하게,
+          // 저지는 그늘에 잠겨 어둡고 차갑게. 높이를 색으로도 말한다
+          sp.tint = high ? 0xfff4e2 : 0xdfe8ea;
           this.gTiles.addChild(sp);
 
           // 해안 장식 — 물과 닿는 변에 모래띠, 그 위에 자갈 몇 알.
@@ -635,6 +651,79 @@ export class Renderer {
         if (edge(1, 0)) {
           g.rect(sx * t + t - 3, sy * t, 3, t);
           g.fill({ color: 0x4a3f2c, alpha: 0.7 });
+        }
+      }
+    }
+
+    // 램프 아트 (§8-4) — 고지 주머니로 오르는 길을 경사면으로 그린다.
+    //
+    // 램프는 데이터에 없다. 지형에서 **읽어낸다**: 통행 가능한 저지 타일인데
+    // 북쪽이 고지이고 좌우가 막혀 있으면 그곳이 오르는 길이다. 맵을 바꿔도
+    // 자동으로 따라오므로 램프 목록을 손으로 관리하지 않아도 된다.
+    for (let sy = 1; sy < H; sy++) {
+      for (let sx = 0; sx < W; sx++) {
+        const [wx, wy] = worldTile(sx, sy);
+        if (blockedTile(wx, wy) || elevTile(wx, wy) === 1) continue;
+        const [nx, ny] = worldTile(sx, sy - 1);
+        if (elevTile(nx, ny) !== 1 || blockedTile(nx, ny)) continue;
+
+        // 경사면 — 위(고지)는 밝고 아래로 갈수록 어두워진다
+        const x0 = sx * t;
+        const y0 = sy * t;
+        for (let i = 0; i < 5; i++) {
+          const band = t / 5;
+          g.rect(x0, y0 + i * band, t, band);
+          g.fill({ color: 0xc2a878, alpha: 0.5 - i * 0.09 });
+        }
+        // 발자국 결 — 경사를 가로지르는 짧은 선 두 줄
+        for (const fy of [0.35, 0.68]) {
+          g.rect(x0 + 2, y0 + t * fy, t - 4, 1);
+          g.fill({ color: 0x6b5a3e, alpha: 0.35 });
+        }
+        // 양 옆 난간 — 램프 폭이 눈에 보여야 "여기로 오른다"가 읽힌다
+        for (const [dx, ex] of [[-1, 0], [1, t - 1.5]] as const) {
+          const [ax, ay] = worldTile(sx + dx, sy);
+          if (!blockedTile(ax, ay)) continue;
+          g.rect(x0 + ex, y0, 1.5, t);
+          g.fill({ color: 0xe8dcae, alpha: 0.4 });
+        }
+      }
+    }
+
+    // 3패스 — 두들 산포 (§8-3). 통행에 영향이 없는 순수 장식이다.
+    //   · 물·벽 위에는 놓지 않는다 (물에 뜬 바위는 즉시 들킨다)
+    //   · 기지 지점 둘레는 비운다 — 소품이 배치를 방해하면 역효과 (§6)
+    //   · 좌표 시드 난수라 같은 맵은 언제나 같은 자리에 난다
+    if (art.doodad(0)) {
+      for (let sy = 0; sy < H; sy++) {
+        for (let sx = 0; sx < W; sx++) {
+          const [wx, wy] = worldTile(sx, sy);
+          if (blockedTile(wx, wy)) continue;
+          const d = noise(wx * 3 + 17, wy * 3 - 11);
+          if (d > 0.09) continue; // 9%쯤만 — 빽빽하면 전장이 안 읽힌다
+          // 기지 반경 2타일은 비운다
+          let nearSite = false;
+          for (const site of BASE_SITES) {
+            const dx = site.x / SCALE - wx;
+            const dy = site.y / SCALE - wy;
+            if (dx * dx + dy * dy < 6.25) {
+              nearSite = true;
+              break;
+            }
+          }
+          if (nearSite) continue;
+          const pick = noise(wx - 5, wy + 31);
+          const cell = pickCell(elevTile(wx, wy) === 1 ? D_HIGH : D_LOW, pick);
+          const tex = art.doodad(cell);
+          if (!tex) continue;
+          const sp = new Sprite(tex);
+          // 24px 소품을 타일(15px)에 맞춘다. 살짝 작게 — 유닛보다 커 보이면 안 된다
+          const size = t * (0.85 + pick * 0.25);
+          sp.width = size;
+          sp.height = size;
+          sp.anchor.set(0.5, 0.85); // 발밑 기준
+          sp.position.set(sx * t + t / 2, sy * t + t * 0.9);
+          this.gTiles.addChild(sp);
         }
       }
     }

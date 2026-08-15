@@ -72,6 +72,13 @@ export interface ArtManifest {
    * 24칸 스트립이고, 칸 배정은 렌더러의 지형 표가 안다.
    */
   terrain?: boolean | AnimDef;
+  /**
+   * 지형 소품 — `doodads.png`.
+   *
+   * 역시 변형 모음이다. 24px 정사각 12칸 가로 스트립이고, 몇 번이 무엇인지는
+   * 렌더러의 두들 표가 안다 (MAP_RULES §8-3).
+   */
+  doodads?: boolean | AnimDef;
 }
 
 /** 재생 가능한 프레임 묶음 */
@@ -164,7 +171,7 @@ class ArtLibrary {
 
     // 일꾼·미네랄은 유닛이 아니라서 매니페스트 항목이 따로다.
     // `true`면 한 장, 정의가 오면 스트립으로 읽는다.
-    for (const name of ['worker', 'mineral', 'fx', 'terrain'] as const) {
+    for (const name of ['worker', 'mineral', 'fx', 'terrain', 'doodads'] as const) {
       const def = manifest?.[name];
       if (probe || def === true) wanted.push([name, artUrl(`${name}.png`), null]);
       else if (def) wanted.push([`clip:${name}:all`, artUrl(`${name}.png`), def]);
@@ -258,6 +265,11 @@ class ArtLibrary {
   /** 이펙트 칸. 번호는 렌더러의 FX 표가 정한다. 시트가 없으면 null */
   fx(index: number): Texture | null {
     return this.cellOf('fx', index);
+  }
+
+  /** 지형 소품 칸 (§8-3). 시트가 없으면 null — 소품 없이 그려진다 */
+  doodad(index: number): Texture | null {
+    return this.cellOf('doodads', index);
   }
 
   /** 텍셀 번짐을 막은 지형 타일 텍스처 캐시 */

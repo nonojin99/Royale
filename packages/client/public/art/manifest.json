@@ -425,5 +425,9 @@
   "terrain": {
     "frames": 24,
     "fps": 8
+  },
+  "doodads": {
+    "frames": 12,
+    "fps": 1
   }
 }
