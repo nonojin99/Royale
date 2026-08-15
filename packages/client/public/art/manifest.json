@@ -376,6 +376,24 @@
         "frames": 1,
         "fps": 1
       }
+    },
+    "chilltower": {
+      "icon": {
+        "frames": 1,
+        "fps": 1
+      }
+    },
+    "commandpost": {
+      "icon": {
+        "frames": 1,
+        "fps": 1
+      }
+    },
+    "repairbay": {
+      "icon": {
+        "frames": 1,
+        "fps": 1
+      }
     }
   },
   "bases": {

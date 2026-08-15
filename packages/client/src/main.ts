@@ -933,6 +933,16 @@ function unitTipHtml(id: string): string {
     if (u.kind === 'building' && u.lifetime > 0) {
       rows.push(`수명 ${Math.round(u.lifetime / TICK_RATE)}초`);
     }
+    if (u.aura) {
+      const label =
+        u.aura.kind === 'chill'
+          ? `적 이동 속도 -${u.aura.power}%`
+          : u.aura.kind === 'rally'
+            ? `아군 유닛 공격 +${u.aura.power}%`
+            : `아군 건물 초당 ${u.aura.power} 회복`;
+      rows.push(`<span class="tt-warn">◎ 오라 ${u.aura.radius / 1000}타일 — ${label}</span>`);
+      rows.push('공격하지 않는다 — 곁에 무엇을 두느냐가 값을 정한다');
+    }
     if (u.charges) {
       const sp = getUnit(u.charges);
       rows.push(
@@ -1217,6 +1227,8 @@ function updateMusic(s: GameState): void {
   music.set(phase, intensity);
   // 국면을 DOM에 남긴다 — 소리는 스크린샷에 안 찍히므로 이게 유일한 관측창이다
   document.body.dataset.musicPhase = phase;
+  // 곡사 궤적은 180ms만 사는 렌더 요소다 — 스크린샷으로 잡기 어려워 여기에 남긴다
+  if (renderer.arcCount > 0) document.body.dataset.arcSeen = '1';
 }
 
 /* ── 침공 드래프트 패널 ─────────────────────────────────────────────────── */

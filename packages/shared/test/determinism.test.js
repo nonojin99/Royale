@@ -55,6 +55,7 @@ import {
   createRng,
   INVASION_WALL_START,
   INVASION_WALL_PER_WAVE,
+  INVASION_BUILDINGS,
   applyCommand,
   pathExists,
   createState,
@@ -1448,4 +1449,77 @@ test('침공 방벽 설치권 — 다 쓰면 미네랄이 넘쳐도 못 세우�
   for (const e of s.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
   step(s, []);
   assert.equal(p.wallCharges, INVASION_WALL_PER_WAVE, '파도를 넘기면 설치권이 보충된다');
+});
+
+test('침공 지원 건물 — 감속·공격·수리 오라가 결정론적으로 작동한다', () => {
+  const mk = () => {
+    const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+    for (let i = 0; i < 30; i++) step(s, []);
+    const p = s.players[0];
+    p.minerals = 30000;
+    p.wallCharges = 9;
+    for (const id of INVASION_BUILDINGS) if (!p.unlocked.includes(id)) p.unlocked.push(id);
+    p.unlocked.sort();
+    return s;
+  };
+  const foe = (s, x, y, unit, hp) => {
+    const e = {
+      id: s.nextId++, team: 1, unit, kind: 'unit', x, y, hp, maxHp: hp, cd: 0, deploy: 0,
+      life: -1, target: -1, flying: false, charge: 0, orderX: -1, orderY: -1,
+      siteId: -1, isMain: false, reserve: 0,
+    };
+    s.entities.push(e);
+    s.entities.sort((a, b) => a.id - b.id);
+    return e;
+  };
+
+  // 냉각탑 — 오라 안에서 진군이 느려진다 (이동 명령으로 '표적 정지' 오염 제거)
+  const march = (tower) => {
+    const s = mk();
+    const m = s.entities.find((e) => e.kind === 'base' && e.team === 0);
+    if (tower) {
+      assert.equal(
+        applyCommand(s, { execTick: s.tick, team: 0, kind: 'unit', id: 'chilltower', x: m.x - 2000, y: m.y - 8000 }),
+        true,
+        '냉각탑 배치는 성공해야 한다 (실측 하네스 오염 방지)',
+      );
+      for (let i = 0; i < 30; i++) step(s, []);
+    }
+    const e = foe(s, m.x, m.y - 9000, 'gnawer', 95);
+    e.orderX = m.x;
+    e.orderY = m.y - 6000;
+    const y0 = e.y;
+    for (let i = 0; i < 40; i++) step(s, []);
+    return Math.abs(e.y - y0);
+  };
+  const free = march(false);
+  const chilled = march(true);
+  assert.ok(chilled < free * 0.8, `냉각탑이 진군을 늦춘다 (${free} → ${chilled})`);
+
+  // 정비고 — 아군 건물이 회복된다
+  const s = mk();
+  const m = s.entities.find((e) => e.kind === 'base' && e.team === 0);
+  assert.equal(
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'unit', id: 'repairbay', x: m.x + 2000, y: m.y - 2000 }),
+    true,
+  );
+  assert.equal(
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'unit', id: 'bulwark', x: m.x + 3200, y: m.y - 2000 }),
+    true,
+  );
+  for (let i = 0; i < 40; i++) step(s, []);
+  const wall = s.entities.find((e) => e.unit === 'bulwark');
+  wall.hp = 400;
+  for (let i = 0; i < 200; i++) step(s, []);
+  assert.ok(wall.hp > 500, `정비고가 건물을 수리한다 (400 → ${wall.hp})`);
+
+  // 지원 건물은 종족 트리에 없다 — 드래프트로만 온다
+  for (const id of INVASION_BUILDINGS) {
+    for (const f of FACTION_IDS) {
+      assert.ok(
+        !getFaction(f).tech.some((n) => n.unit === id),
+        `${id}가 종족 트리에 새어 들어갔다 — 대전에 나오면 안 된다`,
+      );
+    }
+  }
 });

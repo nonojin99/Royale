@@ -70,6 +70,7 @@ import {
   INVASION_MINE_PCT,
   INVASION_RICH_MINE_PCT,
   INVASION_BOUNTY_PCT,
+  TICK_RATE,
   RALLY_ARRIVE,
   INVASION_WALL_START,
   INVASION_WALL_PER_WAVE,
@@ -89,6 +90,7 @@ import {
   MAIN_BASE_STATS,
   TargetPref,
   UNIT_IDS,
+  INVASION_BUILDINGS,
   UnitDef,
   getUnit,
 } from './units.js';
@@ -852,6 +854,10 @@ function offerDraft(s: GameState): void {
     if (u.kind === 'spell') continue;
     if (!p.unlocked.includes(node.unit)) pool.push('unlock:' + node.unit);
   }
+  // 침공 전용 지원 건물 — 종족 트리에 없으므로 여기서만 들어온다
+  for (const id of INVASION_BUILDINGS) {
+    if (!p.unlocked.includes(id)) pool.push('unlock:' + id);
+  }
   if (pool.length === 0) return;
   const picks: string[] = [];
   let guard = 24;
@@ -1021,6 +1027,36 @@ function wouldSealOff(s: GameState, team: Team, extra: readonly number[]): boole
     if (!pathExists(sx, sy, gx, gy, extra)) return true;
   }
   return false;
+}
+
+/**
+ * 이 지점에 걸린 지원 오라의 세기 합 (라운드 31).
+ *
+ * 겹치면 더해진다 — 겹치는 자리를 만드는 것이 성 설계의 묘미다. 다만
+ * 감속은 90%에서 자른다: 완전 정지는 파도를 영구히 세워 게임을 멈춘다.
+ */
+/** 지휘탑 오라 — 유닛의 공격만 키운다 (건물·기지는 제외: 성이 성을 키우면 무한) */
+function withRally(s: GameState, attacker: Entity, dmg: number): number {
+  if (attacker.kind !== 'unit') return dmg;
+  const pct = auraPower(s, 'rally', attacker.team, attacker.x, attacker.y);
+  return pct > 0 ? Math.trunc((dmg * (100 + pct)) / 100) : dmg;
+}
+
+function auraPower(
+  s: GameState,
+  kind: 'chill' | 'rally' | 'mend',
+  team: Team,
+  x: number,
+  y: number,
+): number {
+  let sum = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'building' || e.team !== team || e.deploy > 0) continue;
+    const a = getUnit(e.unit).aura;
+    if (!a || a.kind !== kind) continue;
+    if (dist2(e.x, e.y, x, y) <= a.radius * a.radius) sum += a.power;
+  }
+  return kind === 'chill' ? (sum > 90 ? 90 : sum) : sum;
 }
 
 /* ── 침공 파도 타입·유물 ───────────────────────────────────────────────── */
@@ -1258,10 +1294,12 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         const o = s.entities[j];
         if (o.team === e.team) continue;
         if (!canAttack(e, o)) continue;
-        if (dist2(o.x, o.y, t.x, t.y) <= sp2) dmg[j] += damageTo(e, st, o, effUpgrade(s.players[e.team]));
+        if (dist2(o.x, o.y, t.x, t.y) <= sp2) {
+          dmg[j] += withRally(s, e, damageTo(e, st, o, effUpgrade(s.players[e.team])));
+        }
       }
     } else {
-      dmg[ti] += damageTo(e, st, t, effUpgrade(s.players[e.team]));
+      dmg[ti] += withRally(s, e, damageTo(e, st, t, effUpgrade(s.players[e.team])));
     }
   }
 
@@ -1276,6 +1314,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
 
     const u = getUnit(e.unit);
     if (u.speed <= 0) continue;
+    // 냉각탑 — 적 진영의 감속 오라. 킬존에 가두는 장치다
+    const chill = auraPower(s, 'chill', e.team === 0 ? 1 : 0, e.x, e.y);
+    const speed = chill > 0 ? Math.trunc((u.speed * (100 - chill)) / 100) : u.speed;
+    if (speed <= 0) continue;
 
     let gx: number;
     let gy: number;
@@ -1313,7 +1355,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     const dy = gy - e.y;
     const d = isqrt(dx * dx + dy * dy);
     if (d === 0) continue;
-    const stepLen = u.speed < d ? u.speed : d;
+    const stepLen = speed < d ? speed : d;
     nx[i] = e.x + Math.trunc((dx * stepLen) / d);
     ny[i] = e.y + Math.trunc((dy * stepLen) / d);
 
@@ -1351,6 +1393,18 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     e.hp -= dmg[i];
   }
   resolveDeaths(s);
+
+  // 9.4) 정비고 — 주변 아군 건물·기지를 되살린다. 초당 power를 틱으로 나눠
+  // 정수로 흘린다(부동소수점 금지): tick % TICK_RATE 로 분배
+  for (const e of s.entities) {
+    if (e.kind === 'unit' || e.hp >= e.maxHp || e.hp <= 0) continue;
+    const heal = auraPower(s, 'mend', e.team, e.x, e.y);
+    if (heal <= 0) continue;
+    const per = Math.trunc(heal / TICK_RATE);
+    const rem = heal - per * TICK_RATE;
+    const give = per + (s.tick % TICK_RATE < rem ? 1 : 0);
+    e.hp = Math.min(e.maxHp, e.hp + give);
+  }
 
   // 9.5) 침공: 파도 소탕 → 보상 지급 + 드래프트 제안
   if (s.invasion && s.waveAlive) {

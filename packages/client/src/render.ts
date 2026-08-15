@@ -767,7 +767,37 @@ export class Renderer {
         // 걸음 바운스 — 걷기 프레임이 밋밋한 시트(광전사 등)도 발걸음
         // 리듬이 생긴다. 그림자·링은 지면에 남아 발이 땅을 딛는 것으로 읽힌다
         const bob = moved && !e.flying ? (Math.floor(this.nowMs / 125) + e.id) % 2 : 0;
-        const sp2 = this.place(tex, sx, by - bob, UNIT_SPRITE_H, 0.88, this.facingOf(e, p, myTeam));
+        // 등장 연출 — 배치 경직 동안 종족마다 다르게 온다 (라운드 31).
+        // 기갑단은 하늘에서 내려오고, 군체는 땅에서 솟고, 신념단은 번쩍인다
+        const dep = e.deploy > 0 ? e.deploy / DEPLOY_TICKS : 0;
+        const fac = state.players[e.team].faction;
+        let entryDy = 0;
+        let entryAlpha = 1;
+        let entryScale = 1;
+        if (dep > 0) {
+          if (fac === 'swarmhive') {
+            entryDy = PX_PER_TILE * 0.9 * dep; // 땅에서 솟는다
+            entryScale = 1 - 0.15 * dep;
+          } else if (fac === 'covenant') {
+            entryAlpha = 1 - dep * 0.85; // 워프 — 점점 실체가 된다
+            entryScale = 1 + 0.35 * dep;
+          } else {
+            entryDy = -PX_PER_TILE * 3.2 * dep * dep; // 낙하 — 마지막에 빨라진다
+          }
+        }
+        const sp2 = this.place(
+          tex,
+          sx,
+          by - bob + entryDy,
+          UNIT_SPRITE_H,
+          0.88,
+          this.facingOf(e, p, myTeam),
+        );
+        if (dep > 0) {
+          sp2.alpha = entryAlpha;
+          sp2.scale.x *= entryScale;
+          sp2.scale.y *= entryScale;
+        }
         // squash & stretch — 딛는 프레임엔 낮고 넓게, 뜨는 프레임엔 높고 좁게.
         // 진폭 3%면 의식은 못 해도 접지감으로 읽힌다
         if (moved && !e.flying) {
@@ -1071,6 +1101,11 @@ export class Renderer {
     this.lastHitstopWall = now;
   }
 
+  /** 진행 중인 곡사 궤적 수 — 소리처럼 스크린샷에 안 남는 것의 관측창 */
+  get arcCount(): number {
+    return this.arcs.length;
+  }
+
   /** 프레임 루프가 매 프레임 묻는다 — true면 이번 프레임은 그리지 않는다 */
   get inHitstop(): boolean {
     return performance.now() < this.hitstopUntilWall;
@@ -1178,6 +1213,21 @@ export class Renderer {
   }> = [];
   /** 죽음 데칼 — 지상 유닛이 쓰러진 자리의 그을음. 8초에 걸쳐 스며 사라진다 */
   private readonly decals: Array<{ sx: number; sy: number; startMs: number }> = [];
+  /**
+   * 곡사 궤적 — 공성 계열의 포탄이 포물선을 그린다 (라운드 31).
+   *
+   * 시뮬은 데미지를 즉시 준다. 그래서 궤적은 **짧게**(180ms) 그리고 착탄
+   * 이펙트는 예전처럼 즉시 띄운다 — 포탄이 "날아가는 동안 안 맞은 것처럼"
+   * 보이면 거짓말이 되기 때문이다. 궤적은 사실이 아니라 **발사의 잔상**이다.
+   */
+  private readonly arcs: Array<{
+    ax: number;
+    ay: number;
+    bx: number;
+    by: number;
+    color: number;
+    startMs: number;
+  }> = [];
   /** 죽음 파편 — 종족색 사각 파티클, 450ms 수명 */
   private readonly particles: Array<{
     x: number;
@@ -1205,6 +1255,7 @@ export class Renderer {
       this.fxSeen.clear();
       this.fxList.length = 0;
       this.tracers.length = 0;
+      this.arcs.length = 0;
       this.decals.length = 0;
       this.particles.length = 0;
       this.lastHp.clear();
@@ -1250,13 +1301,28 @@ export class Renderer {
       this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
       this.onFx?.('impact', faction, sx);
 
+      // 곡사 — 광역이 크거나 사거리가 긴 지상 유닛은 포물선으로 던진다
+      const shooter = e.kind === 'unit' ? getUnit(e.unit) : null;
+      const lobs = !!shooter && !shooter.flying && (shooter.splash > 0 || shooter.range >= 4500);
+      if (lobs) {
+        const [ax2, ay2] = this.toScreen(e.x, e.y, myTeam);
+        if (this.arcs.length >= 30) this.arcs.shift();
+        this.arcs.push({
+          ax: ax2,
+          ay: ay2 - PX_PER_TILE * 0.35,
+          bx: sx,
+          by: sy - lift,
+          color: FX_COLOR[faction] ?? 0xffffff,
+          startMs: this.nowMs,
+        });
+      }
       // 원거리 사격은 히트스캔 트레이서 한 줄 — 데미지가 즉시 들어가는
       // 시뮬과 어긋나지 않는 유일한 '투사체'다 (비행 투사체는 거짓말이 된다)
       const [ax, ay0] = this.toScreen(e.x, e.y, myTeam);
       const ay = ay0 - (e.flying ? PX_PER_TILE * 0.55 : 0) - PX_PER_TILE * 0.3;
       const ddx = sx - ax;
       const ddy = sy - lift - ay;
-      if (ddx * ddx + ddy * ddy > PX_PER_TILE * 1.8 * (PX_PER_TILE * 1.8)) {
+      if (!lobs && ddx * ddx + ddy * ddy > PX_PER_TILE * 1.8 * (PX_PER_TILE * 1.8)) {
         if (this.tracers.length >= 40) this.tracers.shift();
         this.tracers.push({
           ax,
@@ -1369,6 +1435,30 @@ export class Renderer {
   }
 
   private drawFx(d: Graphics): void {
+    // 곡사 궤적 — 포물선을 따라 나아가는 포탄과 옅은 잔상
+    for (let i = this.arcs.length - 1; i >= 0; i--) {
+      const a = this.arcs[i];
+      const t = (this.nowMs - a.startMs) / 180;
+      if (t >= 1) {
+        this.arcs.splice(i, 1);
+        continue;
+      }
+      const lift = PX_PER_TILE * 2.2;
+      const at = (k: number): [number, number] => [
+        a.ax + (a.bx - a.ax) * k,
+        a.ay + (a.by - a.ay) * k - lift * 4 * k * (1 - k), // 포물선
+      ];
+      const [hx, hy] = at(t);
+      // 잔상 — 지나온 자리를 점으로 남긴다
+      for (let k = 1; k <= 3; k++) {
+        const [tx2, ty2] = at(Math.max(0, t - k * 0.12));
+        d.circle(tx2, ty2, 1.2);
+        d.fill({ color: a.color, alpha: 0.25 * (1 - t) });
+      }
+      d.circle(hx, hy, 2.6);
+      d.fill({ color: a.color, alpha: 0.95 });
+    }
+
     // 죽음 파편 — 위로 튀었다 살짝 가라앉으며 사라진다
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const pt = this.particles[i];

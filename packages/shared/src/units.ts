@@ -69,6 +69,16 @@ export interface UnitDef {
   flying: boolean;
   /** 건물 수명 (틱). -1이면 무한 */
   lifetime: number;
+  /**
+   * 지원 오라 (침공 전용 건물, 라운드 31 "건물 계보").
+   *
+   * 공격 타워만 있으면 성 설계가 "포탑을 몇 개 놓나"로 납작해진다. 스스로는
+   * 쏘지 않지만 **주변을 바꾸는** 건물이 있어야 배치에 층이 생긴다:
+   *   chill  적 이동 속도 -값%      (킬존에 가둔다)
+   *   rally  아군 유닛 공격 +값%    (화력을 겹친다)
+   *   mend   아군 건물 초당 값 회복 (성을 오래 버티게 한다)
+   */
+  aura?: { kind: 'chill' | 'rally' | 'mend'; radius: number; power: number };
   /** UI 색상 */
   color: number;
 }
@@ -250,7 +260,32 @@ const defs: UnitDef[] = [
     hp: 0, damage: 260, hitSpeed: 0, range: 0, speed: 0,
     splash: tiles(2.6), color: 0x7e22ce,
   }),
+
+  /* ── 침공 전용 지원 건물 (라운드 31) ────────────────────────────────
+     종족에 속하지 않는 중립 구조물이다. 드래프트로만 해금되고 대전에는
+     나오지 않는다 — 대전 밸런스를 건드리지 않고 침공만 깊게 만든다. */
+  unit({
+    id: 'chilltower', name: '냉각탑', cost: 3, kind: 'building',
+    hp: 900, damage: 0, hitSpeed: 0, range: 0, speed: 0,
+    lifetime: BUILDING_LIFE, color: 0x22d3ee,
+    aura: { kind: 'chill', radius: tiles(4.5), power: 40 },
+  }),
+  unit({
+    id: 'commandpost', name: '지휘탑', cost: 3, kind: 'building',
+    hp: 900, damage: 0, hitSpeed: 0, range: 0, speed: 0,
+    lifetime: BUILDING_LIFE, color: 0xfacc15,
+    aura: { kind: 'rally', radius: tiles(5.0), power: 15 },
+  }),
+  unit({
+    id: 'repairbay', name: '정비고', cost: 3, kind: 'building',
+    hp: 1100, damage: 0, hitSpeed: 0, range: 0, speed: 0,
+    lifetime: BUILDING_LIFE, color: 0x4ade80,
+    aura: { kind: 'mend', radius: tiles(4.0), power: 25 },
+  }),
 ];
+
+/** 침공 전용 지원 건물 — 드래프트 해금 풀. 종족 트리에는 없다 */
+export const INVASION_BUILDINGS: readonly string[] = ['chilltower', 'commandpost', 'repairbay'];
 
 export const UNITS: ReadonlyMap<string, UnitDef> = new Map(defs.map((d) => [d.id, d]));
 
