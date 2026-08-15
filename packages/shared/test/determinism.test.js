@@ -56,6 +56,7 @@ import {
   INVASION_WALL_START,
   INVASION_WALL_PER_WAVE,
   INVASION_BUILDINGS,
+  RELIC_BY_ID,
   applyCommand,
   pathExists,
   createState,
@@ -1521,5 +1522,81 @@ test('침공 지원 건물 — 감속·공격·수리 오라가 결정론적으�
         `${id}가 종족 트리에 새어 들어갔다 — 대전에 나오면 안 된다`,
       );
     }
+  }
+});
+
+test('3축 특성 유물 — 유닛 하나의 성격을 바꾸고, 미해금 유닛 특성은 제안되지 않는다', () => {
+  const arena = (relics) => {
+    const s = createState(7, ['steel', 'covenant'], 'coast', true); // 실험장: 전 유닛 해금
+    s.players[0].relics = relics.slice();
+    return s;
+  };
+  const foe = (s, x, y, hp) => {
+    const e = {
+      id: s.nextId++, team: 1, unit: 'devourer', kind: 'unit', x, y, hp, maxHp: hp,
+      cd: 0, deploy: 0, life: -1, target: -1, flying: false, charge: 0,
+      orderX: -1, orderY: -1, siteId: -1, isMain: false, reserve: 0,
+    };
+    s.entities.push(e);
+    s.entities.sort((a, b) => a.id - b.id);
+    return e;
+  };
+
+  // 광신 — 공격 +35% (중립 평지: 본진 사거리 오염을 피한다)
+  const zeal = (relics) => {
+    const s = arena(relics);
+    assert.equal(
+      applyCommand(s, { execTick: s.tick, team: 0, kind: 'unit', id: 'zealot', x: 17000, y: 8800 }),
+      true,
+    );
+    for (let i = 0; i < 25; i++) step(s, []);
+    const t = foe(s, 17600, 8800, 99999);
+    const h0 = t.hp;
+    for (let i = 0; i < 200; i++) {
+      t.x = 17600;
+      t.y = 8800;
+      step(s, []);
+    }
+    return h0 - t.hp;
+  };
+  const plain = zeal([]);
+  const zealed = zeal(['zeal']);
+  assert.ok(zealed > plain * 1.25, `광신이 광전사 피해를 키운다 (${plain} → ${zealed})`);
+
+  // 불안정 노심 — 죽을 때 폭발. 수명·주문으로 죽어도 터져야 한다(reap 경로)
+  const s = arena(['volatile_core']);
+  assert.equal(
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'unit', id: 'ironwalker', x: 17000, y: 8800 }),
+    true,
+  );
+  for (let i = 0; i < 25; i++) step(s, []);
+  const w = s.entities.find((e) => e.unit === 'ironwalker');
+  const near = foe(s, w.x + 1500, w.y, 5000);
+  const far = foe(s, w.x + 6000, w.y, 5000);
+  w.hp = 0;
+  step(s, []);
+  assert.equal(5000 - near.hp, 240, '반경 안은 폭발 피해를 받는다');
+  assert.equal(far.hp, 5000, '반경 밖은 멀쩡하다');
+
+  // 겨냥한 유닛이 없으면 드래프트에 나오지 않는다
+  const inv = createState(3, ['steel', 'swarmhive'], 'siege', false, true);
+  while (inv.wave === 0) step(inv, []);
+  for (let round = 0; round < 12; round++) {
+    for (const e of inv.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
+    step(inv, []);
+    for (const card of inv.draft) {
+      if (card.startsWith('unlock:')) continue;
+      const r = RELIC_BY_ID.get(card);
+      if (r?.unit) {
+        assert.ok(
+          inv.players[0].unlocked.includes(r.unit),
+          `미해금 유닛(${r.unit}) 특성이 제안됐다 — 죽은 카드가 된다`,
+        );
+      }
+    }
+    if (inv.draft.length > 0) {
+      step(inv, [{ execTick: inv.tick, team: 0, kind: 'relic', id: inv.draft[0], x: 0, y: 0 }]);
+    }
+    while (inv.entities.every((e) => e.team !== 1 || e.kind !== 'unit')) step(inv, []);
   }
 });

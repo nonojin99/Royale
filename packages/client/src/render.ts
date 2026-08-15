@@ -424,11 +424,49 @@ export class Renderer {
       return ((h ^ (h >> 16)) >>> 0) % 1000 / 1000;
     };
 
+    /**
+     * 값 노이즈 + fBm — **공간적으로 이어지는** 변화 (라운드 32).
+     *
+     * 지금까지 타일 변형은 흰 노이즈로 골랐다. 이웃과 무관하게 튀니 바닥이
+     * TV 모래알처럼 보였다. 격자점 난수를 부드럽게 섞으면(smoothstep) 값이
+     * 서서히 흘러 **지역**이 생긴다 — 여기는 마른 땅, 저기는 이끼밭.
+     * 지형은 맵당 한 번만 굽기 때문에 비용은 사실상 공짜다(2304 타일).
+     */
+    const smooth = (a: number, b: number, t: number): number =>
+      a + (b - a) * t * t * (3 - 2 * t);
+    const valueNoise = (x: number, y: number): number => {
+      const xi = Math.floor(x);
+      const yi = Math.floor(y);
+      const fx = x - xi;
+      const fy = y - yi;
+      const n00 = noise(xi, yi);
+      const n10 = noise(xi + 1, yi);
+      const n01 = noise(xi, yi + 1);
+      const n11 = noise(xi + 1, yi + 1);
+      return smooth(smooth(n00, n10, fx), smooth(n01, n11, fx), fy);
+    };
+    /**
+     * 세 옥타브 — 큰 얼룩 위에 잔결. 격자 값 노이즈는 축에 정렬된 줄무늬가
+     * 생기므로 옥타브마다 **좌표를 어긋내고 살짝 회전**시켜 결을 깬다.
+     */
+    const fbm = (x: number, y: number): number => {
+      const rx = x * 0.92 + y * 0.39; // 23도쯤 돌린 좌표계
+      const ry = y * 0.92 - x * 0.39;
+      return (
+        valueNoise(x / 9 + 11.3, y / 9 - 7.1) * 0.55 +
+        valueNoise(rx / 3.7 - 3.9, ry / 3.7 + 5.2) * 0.3 +
+        valueNoise(y / 1.9 + 21.7, x / 1.9 - 13.4) * 0.15
+      );
+    };
+
     for (let sy = 0; sy < H; sy++) {
       for (let sx = 0; sx < W; sx++) {
         const [wx, wy] = worldTile(sx, sy);
         const high = elevTile(wx, wy) === 1;
+        // 장식·자갈처럼 '흩뿌려야' 하는 것은 흰 노이즈(n), 타일 변형처럼
+        // '이어져야' 하는 것은 fBm(nf)을 쓴다
         const n = noise(wx, wy);
+        const nf = fbm(wx, wy);
 
         // 절벽 가장자리 — 고지가 저지와 만나는 변. 화면 기준으로 판정해서
         // 어느 팀 시점이든 그림자가 화면 아래쪽으로 떨어진다
@@ -445,7 +483,7 @@ export class Renderer {
           // **모서리를 둥글려** 그리면 해안선이 곡선으로 읽힌다
           if (waterTile(wx, wy)) {
             // 1) 밑바닥 뭍 — 둥근 모서리 뒤로 비쳐 보이는 부분
-            const under = new Sprite(art.terrain(pickCell(T_LOW, n))!);
+            const under = new Sprite(art.terrain(pickCell(T_LOW, nf))!);
             under.position.set(sx * t, sy * t);
             under.width = t;
             under.height = t;
@@ -505,7 +543,7 @@ export class Renderer {
             if (openS) cell = pickCell(T_CLIFF_S, n);
             else if (openW) cell = T_CLIFF_W;
             else if (openE) cell = T_CLIFF_E;
-            else cell = pickCell(T_HIGH, n);
+            else cell = pickCell(T_HIGH, nf);
             const sp = new Sprite(art.terrain(cell)!);
             sp.position.set(sx * t, sy * t);
             sp.width = t;
@@ -518,11 +556,11 @@ export class Renderer {
             }
             continue;
           }
-          if (!high) cell = pickCell(T_LOW, n);
+          if (!high) cell = pickCell(T_LOW, nf);
           else if (edge(0, 1)) cell = pickCell(T_CLIFF_S, n);
           else if (edge(-1, 0)) cell = T_CLIFF_W;
           else if (edge(1, 0)) cell = T_CLIFF_E;
-          else cell = pickCell(T_HIGH, n);
+          else cell = pickCell(T_HIGH, nf);
 
           const sp = new Sprite(art.terrain(cell)!);
           sp.position.set(sx * t, sy * t);
@@ -550,8 +588,8 @@ export class Renderer {
 
         // ── 페인트 폴백 (시트가 없을 때) ──
         let c: number;
-        if (high) c = n < 0.15 ? 0x8a7a4a : n < 0.5 ? 0x7d8f4e : 0x74884a;
-        else c = n < 0.12 ? 0x145a30 : (sx + sy) % 2 === 0 ? COLORS.ground : COLORS.groundAlt;
+        if (high) c = nf < 0.4 ? 0x8a7a4a : nf < 0.55 ? 0x7d8f4e : 0x74884a;
+        else c = nf < 0.38 ? 0x145a30 : (sx + sy) % 2 === 0 ? COLORS.ground : COLORS.groundAlt;
         g.rect(sx * t, sy * t, t, t);
         g.fill(c);
 

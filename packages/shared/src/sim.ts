@@ -95,7 +95,7 @@ import {
   getUnit,
 } from './units.js';
 import { Rng, createRng, nextInt } from './rng.js';
-import { RELICS } from './relics.js';
+import { RELICS, RELIC_BY_ID } from './relics.js';
 import { clamp, dist2, isqrt, tiles } from './fixed.js';
 
 export type EntityKind = 'unit' | 'building' | 'base';
@@ -334,7 +334,10 @@ export function radiusOf(e: Entity): number {
   return e.kind === 'unit' ? UNIT_RADIUS : BUILDING_RADIUS;
 }
 
-function statsOf(e: Entity): {
+function statsOf(
+  s: GameState,
+  e: Entity,
+): {
   damage: number;
   hitSpeed: number;
   range: number;
@@ -346,10 +349,11 @@ function statsOf(e: Entity): {
     return { ...b, splash: 0, siege: 100 };
   }
   const u = getUnit(e.unit);
+  const t = traitMod(s.players[e.team], e.unit);
   return {
-    damage: u.damage,
+    damage: t.damagePct ? Math.trunc((u.damage * (100 + t.damagePct)) / 100) : u.damage,
     hitSpeed: u.hitSpeed,
-    range: u.range,
+    range: u.range + t.rangeAdd,
     splash: u.splash,
     siege: u.siege,
   };
@@ -541,7 +545,10 @@ function formationOffset(count: number, i: number): readonly [number, number] {
 function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): void {
   const owner = s.players[team];
   const isBld = u.kind === 'building';
-  const hpMul = isBld && hasRelic(owner, 'iron_heart') ? 130 : 100;
+  // 특성(체력)과 강철 심장은 곱이 아니라 합으로 얹는다 — 곱하면 후반에 폭주한다
+  const hpMul =
+    (isBld && hasRelic(owner, 'iron_heart') ? 130 : 100) +
+    (isBld ? 0 : traitMod(owner, u.id).hpPct);
   const lifeMul = isBld && hasRelic(owner, 'deep_roots') ? 2 : 1;
   const depTicks = hasRelic(owner, 'fast_deploy')
     ? Math.trunc(DEPLOY_TICKS / 2)
@@ -848,7 +855,12 @@ function spawnWave(s: GameState): void {
 function offerDraft(s: GameState): void {
   const p = s.players[0];
   const pool: string[] = [];
-  for (const r of RELICS) if (!hasRelic(p, r.id)) pool.push(r.id);
+  for (const r of RELICS) {
+    if (hasRelic(p, r.id)) continue;
+    // 겨냥한 유닛이 없으면 죽은 카드다 — 3택1이 2택1로 줄어든다
+    if (r.unit && !p.unlocked.includes(r.unit)) continue;
+    pool.push(r.id);
+  }
   for (const node of getFaction(p.faction).tech) {
     const u = getUnit(node.unit);
     if (u.kind === 'spell') continue;
@@ -1075,6 +1087,31 @@ export function hasRelic(p: PlayerState, id: string): boolean {
   return p.relics.includes(id);
 }
 
+/**
+ * 이 유닛에 걸린 특성 보정의 합 (3축, 라운드 32).
+ *
+ * 유물이 없을 때는 곧바로 빠져나온다 — statsOf는 매 틱 엔티티마다 불린다.
+ */
+function traitMod(p: PlayerState, unitId: string): {
+  damagePct: number;
+  rangeAdd: number;
+  hpPct: number;
+  speedPct: number;
+} {
+  const out = { damagePct: 0, rangeAdd: 0, hpPct: 0, speedPct: 0 };
+  if (p.relics.length === 0) return out;
+  for (const id of p.relics) {
+    const r = RELIC_BY_ID.get(id);
+    if (!r?.mod) continue;
+    if (r.unit && r.unit !== unitId) continue;
+    out.damagePct += r.mod.damagePct ?? 0;
+    out.rangeAdd += r.mod.rangeAdd ?? 0;
+    out.hpPct += r.mod.hpPct ?? 0;
+    out.speedPct += r.mod.speedPct ?? 0;
+  }
+  return out;
+}
+
 /** 사기 충천은 유효 강화 +1 — 같은 +10% 문법이라 damageTo를 재사용한다 */
 function effUpgrade(p: PlayerState): number {
   return p.upgrade + (hasRelic(p, 'war_drums') ? 1 : 0);
@@ -1111,7 +1148,7 @@ function canAttack(e: Entity, target: Entity): boolean {
  * 동률일 때는 **엔티티 id가 작은 쪽**을 고른다 — 결정론을 위해 필수.
  */
 function pickTarget(s: GameState, e: Entity): number {
-  const st = statsOf(e);
+  const st = statsOf(s, e);
   const aggro = aggroRange(st.range);
   const aggro2 = aggro * aggro;
 
@@ -1282,7 +1319,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     const ti = indexById.get(e.target);
     if (ti === undefined) continue;
     const t = s.entities[ti];
-    const st = statsOf(e);
+    const st = statsOf(s, e);
     const reach = st.range + radiusOf(t);
     if (dist2(e.x, e.y, t.x, t.y) > reach * reach) continue;
     if (e.cd > 0) continue;
@@ -1316,7 +1353,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (u.speed <= 0) continue;
     // 냉각탑 — 적 진영의 감속 오라. 킬존에 가두는 장치다
     const chill = auraPower(s, 'chill', e.team === 0 ? 1 : 0, e.x, e.y);
-    const speed = chill > 0 ? Math.trunc((u.speed * (100 - chill)) / 100) : u.speed;
+    const boost = traitMod(s.players[e.team], e.unit).speedPct;
+    const base = boost ? Math.trunc((u.speed * (100 + boost)) / 100) : u.speed;
+    const speed = chill > 0 ? Math.trunc((base * (100 - chill)) / 100) : base;
     if (speed <= 0) continue;
 
     let gx: number;
@@ -1332,7 +1371,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     } else if (e.target >= 0) {
       const t = findById(s, e.target);
       if (!t) continue;
-      const st = statsOf(e);
+      const st = statsOf(s, e);
       if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
     } else {
@@ -1495,6 +1534,45 @@ function separate(s: GameState): void {
   }
 }
 
+/**
+ * 죽는 유닛이 남길 폭발을 모은다 (3축 '불안정 노심').
+ *
+ * 시체를 걷어가는 길이 둘이라(reap·resolveDeaths) 양쪽에서 같은 함수를
+ * 부른다 — 한쪽만 처리했더니 수명·주문으로 죽은 유닛은 조용히 안 터졌다.
+ */
+function collectBlasts(s: GameState, dead: Entity): Blast[] {
+  if (dead.kind !== 'unit') return [];
+  const out: Blast[] = [];
+  for (const id of s.players[dead.team].relics) {
+    const r = RELIC_BY_ID.get(id);
+    if (r?.onDeath && r.unit === dead.unit) {
+      out.push({ x: dead.x, y: dead.y, team: dead.team, damage: r.onDeath.damage, radius: r.onDeath.radius });
+    }
+  }
+  return out;
+}
+
+interface Blast {
+  x: number;
+  y: number;
+  team: Team;
+  damage: number;
+  radius: number;
+}
+
+/** 모은 폭발을 터뜨린다. 연쇄는 다음 정리로 넘긴다(무한 연쇄 방지) */
+function detonate(s: GameState, blasts: readonly Blast[]): void {
+  if (blasts.length === 0) return;
+  for (const b of blasts) {
+    const r2 = b.radius * b.radius;
+    for (const o of s.entities) {
+      if (o.team === b.team || o.kind === 'base') continue;
+      if (dist2(o.x, o.y, b.x, b.y) <= r2) o.hp -= b.damage;
+    }
+  }
+  s.entities = s.entities.filter((e) => e.hp > 0 || e.kind === 'base');
+}
+
 /** hp<=0 인 비(非)기지 엔티티만 즉시 제거한다 (주문 등 즉발 피해 처리용) */
 function reap(s: GameState): void {
   let hasDead = false;
@@ -1505,18 +1583,27 @@ function reap(s: GameState): void {
     }
   }
   if (!hasDead) return;
+  const blasts: Blast[] = [];
+  for (const e of s.entities) {
+    if (e.hp <= 0 && e.kind !== 'base') blasts.push(...collectBlasts(s, e));
+  }
   s.entities = s.entities.filter((e) => e.hp > 0 || e.kind === 'base');
+  detonate(s, blasts);
 }
 
 /** 사망 처리 + 본진 파괴 판정 */
 function resolveDeaths(s: GameState): void {
   const survivors: Entity[] = [];
   let changed = false;
+  // 죽을 때 터지는 특성 — 시체가 남긴 폭발은 **이번 정리 중 확정된 것만**
+  // 대상으로 한다(연쇄가 무한히 이어지지 않게 다음 틱으로 넘긴다)
+  const blasts: Blast[] = [];
   for (const e of s.entities) {
     if (e.hp > 0) {
       survivors.push(e);
       continue;
     }
+    blasts.push(...collectBlasts(s, e));
     changed = true;
     if (e.kind === 'base' && e.isMain && !s.sandbox) {
       // 침공 모드: 침공자(팀1) 본진은 파괴돼도 파도가 계속 온다 — 끝은
@@ -1527,6 +1614,7 @@ function resolveDeaths(s: GameState): void {
     }
   }
   if (changed) s.entities = survivors;
+  detonate(s, blasts);
 }
 
 function checkEnd(s: GameState): void {
