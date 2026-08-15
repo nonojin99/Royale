@@ -659,37 +659,100 @@ export class Renderer {
       }
     }
 
-    // 램프 아트 (§8-4) — 고지 주머니로 오르는 길을 경사면으로 그린다.
+    // 램프 아트 (§8-4, 라운드 36 개정) — 스타1의 "언덕 입구".
     //
-    // 램프는 데이터에 없다. 지형에서 **읽어낸다**: 통행 가능한 저지 타일인데
-    // 북쪽이 고지이고 좌우가 막혀 있으면 그곳이 오르는 길이다. 맵을 바꿔도
-    // 자동으로 따라오므로 램프 목록을 손으로 관리하지 않아도 된다.
-    for (let sy = 1; sy < H; sy++) {
-      for (let sx = 0; sx < W; sx++) {
-        const [wx, wy] = worldTile(sx, sy);
-        if (blockedTile(wx, wy) || elevTile(wx, wy) === 1) continue;
-        const [nx, ny] = worldTile(sx, sy - 1);
-        if (elevTile(nx, ny) !== 1 || blockedTile(nx, ny)) continue;
+    // 언덕 입구가 입구로 읽히는 이유는 둘이다: **비탈**과, 비탈 양옆으로
+    // **꺾여 들어온 절벽면**. 라운드 34는 앞의 것만, 그것도 북쪽 오름목만
+    // 그렸다 — 동·서로 오르는 램프(대협곡의 1×4)는 맨땅이었고, 대각
+    // 계단의 모서리 한 칸까지 비탈로 칠해졌다.
+    //
+    // 램프는 여전히 데이터에 없다. 지형에서 읽어낸다: 통행 가능한 저지인데
+    // 네 이웃 중 하나가 통행 가능한 고지면 그쪽이 오르는 방향이다.
+    const DX4 = [0, 1, 0, -1];
+    const DY4 = [-1, 0, 1, 0];
+    const rampDir = (sx: number, sy: number): number => {
+      if (sx < 0 || sy < 0 || sx >= W || sy >= H) return -1;
+      const [wx, wy] = worldTile(sx, sy);
+      if (blockedTile(wx, wy) || elevTile(wx, wy) === 1) return -1;
+      for (let d = 0; d < 4; d++) {
+        const nx = sx + DX4[d];
+        const ny = sy + DY4[d];
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const [ax, ay] = worldTile(nx, ny);
+        if (elevTile(ax, ay) === 1 && !blockedTile(ax, ay)) return d;
+      }
+      return -1;
+    };
 
-        // 경사면 — 위(고지)는 밝고 아래로 갈수록 어두워진다
+    for (let sy = 0; sy < H; sy++) {
+      for (let sx = 0; sx < W; sx++) {
+        const dir = rampDir(sx, sy);
+        if (dir < 0) continue;
+        // 오름축에 수직인 방향 — 램프의 '폭'이 놓인 축이다
+        const px = DY4[dir];
+        const py = DX4[dir];
+        // 계단식 고지의 모서리 한 칸은 길이 아니다. 같은 방향으로 오르는
+        // 이웃이 옆에 있어야 비로소 '입구'다
+        if (rampDir(sx + px, sy + py) !== dir && rampDir(sx - px, sy - py) !== dir) continue;
+
         const x0 = sx * t;
         const y0 = sy * t;
+        const vertical = dir === 0 || dir === 2; // 위·아래로 오른다
+        const band = t / 5;
+        // 경사면 — 오르막 쪽이 밝고 내리막으로 갈수록 그늘진다
         for (let i = 0; i < 5; i++) {
-          const band = t / 5;
-          g.rect(x0, y0 + i * band, t, band);
-          g.fill({ color: 0xc2a878, alpha: 0.5 - i * 0.09 });
+          const k = dir === 0 || dir === 3 ? i : 4 - i; // 오름 쪽에서부터 센다
+          if (vertical) g.rect(x0, y0 + k * band, t, band);
+          else g.rect(x0 + k * band, y0, band, t);
+          g.fill({ color: 0xc2a878, alpha: 0.52 - i * 0.085 });
         }
-        // 발자국 결 — 경사를 가로지르는 짧은 선 두 줄
-        for (const fy of [0.35, 0.68]) {
-          g.rect(x0 + 2, y0 + t * fy, t - 4, 1);
+        // 발자국 결 — 경사를 **가로지르는** 짧은 선. 오름 방향이 읽힌다
+        for (const f of [0.32, 0.66]) {
+          if (vertical) g.rect(x0 + 2, y0 + t * f, t - 4, 1);
+          else g.rect(x0 + t * f, y0 + 2, 1, t - 4);
           g.fill({ color: 0x6b5a3e, alpha: 0.35 });
         }
-        // 양 옆 난간 — 램프 폭이 눈에 보여야 "여기로 오른다"가 읽힌다
-        for (const [dx, ex] of [[-1, 0], [1, t - 1.5]] as const) {
-          const [ax, ay] = worldTile(sx + dx, sy);
-          if (!blockedTile(ax, ay)) continue;
-          g.rect(x0 + ex, y0, 1.5, t);
-          g.fill({ color: 0xe8dcae, alpha: 0.4 });
+        // 마루 선 — 고지와 만나는 변. 여기가 밝아야 "올라섰다"가 보인다
+        if (vertical) g.rect(x0, dir === 0 ? y0 : y0 + t - 1.5, t, 1.5);
+        else g.rect(dir === 3 ? x0 : x0 + t - 1.5, y0, 1.5, t);
+        g.fill({ color: 0xe8dcae, alpha: 0.55 });
+
+        // 입구 양옆의 절벽면 — 이것이 라운드 36의 본체다.
+        // 램프 옆이 막혀 있으면 그 벽은 **입구 안쪽으로 꺾여** 보여야 한다.
+        // 두께 0.2칸의 어두운 면 + 위 밝은 림 + 아래 검은 심 (§8-2와 같은 문법)
+        for (const side of [-1, 1] as const) {
+          const nx = sx + px * side;
+          const ny = sy + py * side;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const [ax, ay] = worldTile(nx, ny);
+          if (!blockedTile(ax, ay) && elevTile(ax, ay) === 0) continue; // 트인 옆구리
+          const th = t * 0.2;
+          const wx0 = vertical ? (side < 0 ? x0 : x0 + t - th) : x0;
+          const wy0 = vertical ? y0 : side < 0 ? y0 : y0 + t - th;
+          const ww = vertical ? th : t;
+          const wh = vertical ? t : th;
+          g.rect(wx0, wy0, ww, wh);
+          g.fill({ color: 0x4a4036, alpha: 0.85 });
+          // 안쪽 모서리의 밝은 림 — 빛은 북서에서 온다
+          if (vertical) g.rect(side < 0 ? wx0 + ww - 1 : wx0, wy0, 1, wh);
+          else g.rect(wx0, side < 0 ? wy0 + wh - 1 : wy0, ww, 1);
+          g.fill({ color: 0xe8dcae, alpha: 0.35 });
+          // 벽면이 램프 바닥에 드리우는 그림자 — 입구가 깊어 보인다
+          if (vertical) g.rect(side < 0 ? wx0 + ww : wx0 - t * 0.12, wy0, t * 0.12, wh);
+          else g.rect(wx0, side < 0 ? wy0 + wh : wy0 - t * 0.12, ww, t * 0.12);
+          g.fill({ color: 0x000000, alpha: 0.22 });
+        }
+
+        // 진입로 — 램프 아래 한 칸에 옅은 흙자국. 오르막이 두 칸으로 읽혀
+        // "비탈을 밟고 올라간다"는 감각이 난다
+        const bx = sx - DX4[dir];
+        const by = sy - DY4[dir];
+        if (bx >= 0 && by >= 0 && bx < W && by < H) {
+          const [cx, cy] = worldTile(bx, by);
+          if (!blockedTile(cx, cy) && elevTile(cx, cy) === 0) {
+            g.rect(bx * t, by * t, t, t);
+            g.fill({ color: 0xc2a878, alpha: 0.16 });
+          }
         }
       }
     }
