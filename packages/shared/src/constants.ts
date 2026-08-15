@@ -125,6 +125,16 @@ export const INVASION_BUDGET_GROWTH = 126; // 라운드 24: 118 → 126 (전 확
 export const INVASION_MINE_PCT = 50;
 export const INVASION_RICH_MINE_PCT = 80;
 export const INVASION_BOUNTY_PCT = 70;
+/**
+ * 침공 방벽 설치 횟수 (라운드 30).
+ *
+ * 미네랄만으로는 방벽을 무한히 세울 수 있어 "성 설계"가 도배로 퇴화한다.
+ * 파도마다 몇 장 주어지는 **설치권**이 있어야 어디에 쓸지가 결정이 된다.
+ */
+export const INVASION_WALL_START = 3;
+export const INVASION_WALL_PER_WAVE = 1;
+export const INVASION_WALL_CAP = 6;
+
 /** 집결 깃발 도착 판정 반경 (밀리타일) — 이 안이면 주둔으로 친다 */
 export const RALLY_ARRIVE = 2000;
 /** 이동 명령 도착 판정 반경 — 뭉치가 서로 밀며 진동하지 않을 만큼 넉넉히 */

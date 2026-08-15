@@ -53,6 +53,8 @@ import {
   canDeployAt,
   canResearch,
   createRng,
+  INVASION_WALL_START,
+  INVASION_WALL_PER_WAVE,
   applyCommand,
   pathExists,
   createState,
@@ -1418,4 +1420,32 @@ test('방벽 = 지형 — 침공에서만 길을 막고, 완전 봉쇄는 거절
     true,
     '적이 올 길은 언제나 남는다',
   );
+});
+
+test('침공 방벽 설치권 — 다 쓰면 미네랄이 넘쳐도 못 세우고, 파도를 넘기면 보충된다', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  for (let i = 0; i < 30; i++) step(s, []);
+  const p = s.players[0];
+  p.minerals = 30000; // 자원은 넉넉히 — 제한이 설치권임을 분리해서 본다
+  assert.equal(p.wallCharges, INVASION_WALL_START);
+
+  const main = s.entities.find((e) => e.kind === 'base' && e.team === 0);
+  let placed = 0;
+  for (let i = 0; i < INVASION_WALL_START + 3; i++) {
+    const ang = (i / 10) * Math.PI * 2;
+    const ok = applyCommand(s, {
+      execTick: s.tick, team: 0, kind: 'unit', id: 'bulwark',
+      x: main.x + Math.cos(ang) * 4000, y: main.y + Math.sin(ang) * 4000,
+    });
+    if (ok) placed++;
+    step(s, []);
+  }
+  assert.equal(placed, INVASION_WALL_START, '설치권 수만큼만 지어진다');
+  assert.equal(p.wallCharges, 0);
+
+  // 파도를 소탕하면 한 장 보충
+  while (s.wave === 0) step(s, []);
+  for (const e of s.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
+  step(s, []);
+  assert.equal(p.wallCharges, INVASION_WALL_PER_WAVE, '파도를 넘기면 설치권이 보충된다');
 });

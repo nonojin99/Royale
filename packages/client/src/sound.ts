@@ -25,6 +25,8 @@ type Sfx =
   | 'lose'
   | 'draw';
 
+import { music } from './music.js';
+
 const MUTE_KEY = 'royale-muted';
 
 class SoundBank {
@@ -61,6 +63,11 @@ class SoundBank {
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+
+    // 어댑티브 뮤직도 같은 컨텍스트·마스터를 쓴다 — 리미터를 공유해야
+    // 대군 전투에서 음악이 효과음을 밀어내지 않는다
+    music.start(this.ctx, this.master, this.noiseBuf);
+    music.setMuted(this.muted);
   }
 
   toggleMute(): boolean {
@@ -69,6 +76,7 @@ class SoundBank {
     if (this.master && this.ctx) {
       this.master.gain.setTargetAtTime(this.muted ? 0 : 0.5, this.ctx.currentTime, 0.02);
     }
+    music.setMuted(this.muted);
     return this.muted;
   }
 

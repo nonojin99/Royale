@@ -48,6 +48,7 @@ import {
 import { art } from './art.js';
 import { NetClient } from './net.js';
 import { sound } from './sound.js';
+import { music, MusicPhase } from './music.js';
 import { Renderer, VIEW_H, VIEW_W } from './render.js';
 import { ReplayStatus, ReplayView, fetchReplay, fetchReplayList } from './replayview.js';
 
@@ -1057,6 +1058,11 @@ function onPointerDown(ev: PointerEvent): void {
   }
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 시뮬이 거절하므로,
   // 전송 전에 같은 판정을 미리 해 즉시 알린다 (라운드 29)
+  if (s.invasion && getUnit(selectedUnit).kind === 'building' && me.wallCharges <= 0) {
+    sound.play('error');
+    flash('방벽 설치권을 다 썼습니다 — 파도를 넘기면 한 장 보충됩니다');
+    return;
+  }
   if (s.invasion && getUnit(selectedUnit).kind === 'building' && wouldSeal(s, x, y)) {
     sound.play('error');
     flash('여기를 막으면 적이 올 길이 사라집니다 — 길은 하나 남겨야 합니다');
@@ -1181,8 +1187,36 @@ function frame(): void {
       dragBox,
     });
     updateHud(s);
+    updateMusic(s);
   }
   requestAnimationFrame(frame);
+}
+
+/* ── 어댑티브 뮤직 ──────────────────────────────────────────────────────── */
+
+/**
+ * 게임 상태를 음악 국면으로 옮긴다.
+ *
+ * 침공의 리듬(준비 → 임박 → 전투 → 보스 → 패배)이 그대로 음악의 층이 된다.
+ * 대전·실험장은 교전 여부만으로 준비/전투를 가른다 — 같은 곡의 다른 층이다.
+ */
+function updateMusic(s: GameState): void {
+  const foes = s.entities.filter((e) => e.kind === 'unit' && e.team !== net.myTeam).length;
+  const intensity = Math.min(1, foes / 14);
+  let phase: MusicPhase;
+  if (s.over) {
+    phase = 'defeat';
+  } else if (s.invasion) {
+    const untilWave = (s.nextWaveTick - s.tick) / TICK_RATE;
+    if (foes > 0) phase = waveTypeOf(s.wave) === 'boss' ? 'boss' : 'combat';
+    else if (untilWave <= 10) phase = 'incoming';
+    else phase = 'prep';
+  } else {
+    phase = foes > 0 ? 'combat' : 'prep';
+  }
+  music.set(phase, intensity);
+  // 국면을 DOM에 남긴다 — 소리는 스크린샷에 안 찍히므로 이게 유일한 관측창이다
+  document.body.dataset.musicPhase = phase;
 }
 
 /* ── 침공 드래프트 패널 ─────────────────────────────────────────────────── */
@@ -1255,7 +1289,8 @@ function updateHud(s: GameState): void {
     };
     const nextLabel = WAVE_LABEL[waveTypeOf(s.wave + 1)];
     $('timer').textContent =
-      `🌊 파도 ${s.wave} · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초`;
+      `🌊 파도 ${s.wave} · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초` +
+      ` · 🧱 ${me.wallCharges}`;
     updateDraft(s);
   } else if (s.sandbox) {
     const el = Math.floor(s.tick / TICK_RATE);

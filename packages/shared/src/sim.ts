@@ -71,6 +71,9 @@ import {
   INVASION_RICH_MINE_PCT,
   INVASION_BOUNTY_PCT,
   RALLY_ARRIVE,
+  INVASION_WALL_START,
+  INVASION_WALL_PER_WAVE,
+  INVASION_WALL_CAP,
   ORDER_ARRIVE,
   ORDER_MAX_UNITS,
 } from './constants.js';
@@ -152,6 +155,8 @@ export interface PlayerState {
   faction: string;
   /** 침공 드래프트에서 얻은 유물 id — 효과는 sim 곳곳의 훅에 산다 */
   relics: string[];
+  /** 남은 방벽 설치권 (침공 전용) — 파도를 넘길 때마다 조금씩 채워진다 */
+  wallCharges: number;
   /**
    * 집결 지점 (침공 전용). 표적 없는 유닛이 여기로 모여 주둔한다.
    * null이면 제자리 대기. 우클릭으로 옮긴다 — 수비 모드의 유일한 컨트롤.
@@ -233,6 +238,7 @@ function makePlayer(factionId: string): PlayerState {
     workers: START_WORKERS,
     faction: f.id,
     relics: [],
+    wallCharges: INVASION_WALL_START,
     rally: null,
     unlocked: startingUnlocks(f),
     research: null,
@@ -633,6 +639,8 @@ function produceUnit(s: GameState, cmd: Command): boolean {
 
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 거절한다 (라운드 29, 침공 전용)
   if (s.invasion && u.kind === 'building') {
+    // 설치권이 없으면 미네랄이 넘쳐도 못 세운다 (라운드 30)
+    if (p.wallCharges <= 0) return false;
     const probe: number[] = [];
     blockerTilesOf(
       { x: cmd.x, y: cmd.y } as Entity,
@@ -642,6 +650,7 @@ function produceUnit(s: GameState, cmd: Command): boolean {
   }
 
   p.minerals -= cost;
+  if (s.invasion && u.kind === 'building') p.wallCharges--;
   for (let i = 0; i < u.count; i++) {
     const [ox, oy] = formationOffset(u.count, i);
     spawnUnit(s, cmd.team, u, cmd.x + ox, cmd.y + oy);
@@ -1359,6 +1368,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       if (hasRelic(p, 'reserves')) reward = Math.trunc((reward * 130) / 100);
       p.minerals += reward;
       if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
+      // 파도를 넘겼으니 설치권 보충 — 성은 파도를 견딘 만큼 자란다
+      p.wallCharges = Math.min(INVASION_WALL_CAP, p.wallCharges + INVASION_WALL_PER_WAVE);
       // 드래프트 — 이전 제안을 아직 안 골랐으면 새로 만들지 않는다
       if (s.draft.length === 0) offerDraft(s);
     }
@@ -1594,6 +1605,7 @@ export function hashState(s: GameState): number {
     for (const u of p.unlocked) mixStr(u);
     mix(p.relics.length);
     for (const r of p.relics) mixStr(r);
+    mix(p.wallCharges);
     mix(p.rally ? p.rally.x : -1);
     mix(p.rally ? p.rally.y : -1);
     if (p.research) {
