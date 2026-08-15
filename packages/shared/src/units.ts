@@ -63,12 +63,14 @@ export interface UnitDef {
    *   siegemode  제자리에 charge 틱 머물면 고정 포대가 된다(사거리·공격 ↑, 이동 ✗)
    *   mine       게이지가 차면 둘레에 지뢰를 묻는다 (power기까지)
    *   sprint     게이지가 차면 반경 안 아군 지상 유닛이 ticks 틱 동안 빨라진다
+   *   spawn      게이지가 차면 새끼를 power마리 낳는다 (영웅, 라운드 37)
+   *   heal       게이지가 차면 반경 안 아군 유닛을 power만큼 회복시킨다 (영웅)
    *
    * 대전에는 켜지지 않는다 — 삼각(RUSH/TECH/ECON)이 이 값들을 모른 채
    * 실측된 것이라, 침공에서 먼저 익힌 뒤 별도 라운드로 옮긴다.
    */
   ability?: {
-    kind: 'cloak' | 'detect' | 'siegemode' | 'mine' | 'sprint';
+    kind: 'cloak' | 'detect' | 'siegemode' | 'mine' | 'sprint' | 'spawn' | 'heal';
     /** 게이지 충전 틱 (siegemode는 '정지 유지' 틱) */
     charge?: number;
     /** 효과 반경 (밀리타일) */
@@ -85,6 +87,14 @@ export interface UnitDef {
    * 길찾기 장애물에서도 빠진다: 1축의 벽은 '지은 것'이지 '묻은 것'이 아니다.
    */
   mine?: boolean;
+  /**
+   * 영웅인가 (5축, 라운드 37) — **침공 전용**.
+   *
+   * 런 시작에 셋 중 하나를 고르고, 파도를 넘길 때마다 자란다. 죽어도 런이
+   * 끝나지 않고 본진에서 다시 일어선다(레벨 하나를 잃는다). 대전에는
+   * 없다 — 라운드 11에서 영웅을 대전에서 격리하기로 한 결정 그대로다.
+   */
+  hero?: boolean;
   /**
    * 구조물(기지·건물) 상대 데미지 배율 — **백분율 정수** (100 = 그대로).
    *
@@ -338,6 +348,42 @@ const defs: UnitDef[] = [
     lifetime: BUILDING_LIFE, color: 0x4ade80,
     aura: { kind: 'mend', radius: tiles(4.0), power: 25 },
   }),
+  /* ── 영웅 (5축, 라운드 37) — 침공 전용 ─────────────────────────────
+     런 시작 3택1. 종족과 무관하게 셋 다 후보다 — 영웅이 종족에 묶이면
+     "이 종족은 이 영웅"이 되어 런마다 다른 선택이라는 목적이 사라진다.
+     각자 능동기가 하나씩 다르다: 포격 / 산란 / 치유. */
+  unit({
+    id: 'hero_commander', name: '강철 사령관', cost: 0, kind: 'unit', hero: true,
+    hp: 1600, damage: 190, hitSpeed: seconds(1.2, TICK_RATE),
+    range: tiles(5.5), speed: spd(0.85), splash: tiles(1.2), siege: 150,
+    color: 0x2563eb, charges: 'heroshell',
+  }),
+  unit({
+    id: 'heroshell', name: '궤도 포격', cost: 0, kind: 'spell', count: 0,
+    hp: 0, damage: 300, hitSpeed: 0, range: 0, speed: 0,
+    splash: tiles(2.8), color: 0x93c5fd,
+  }),
+  unit({
+    id: 'hero_queen', name: '군체 여왕', cost: 0, kind: 'unit', hero: true,
+    hp: 1900, damage: 150, hitSpeed: seconds(1.1, TICK_RATE),
+    range: tiles(1.0), speed: spd(1.0), splash: tiles(1.0),
+    targets: 'ground', siege: 120, color: 0x9a3412,
+    // 산란 — 10초마다 새끼 둘. 벽을 세우는 대신 몸으로 벽을 만든다
+    ability: { kind: 'spawn', charge: seconds(10, TICK_RATE), power: 3, radius: tiles(1.5) },
+  }),
+  unit({
+    id: 'broodling', name: '새끼', cost: 0, kind: 'unit',
+    hp: 130, damage: 60, hitSpeed: seconds(0.8, TICK_RATE),
+    range: tiles(0.7), speed: spd(1.5), targets: 'ground', siege: 30,
+    lifetime: seconds(40, TICK_RATE), color: 0xd97706,
+  }),
+  unit({
+    id: 'hero_prophet', name: '빛의 예언자', cost: 0, kind: 'unit', hero: true,
+    hp: 1400, damage: 130, hitSpeed: seconds(1.4, TICK_RATE),
+    range: tiles(6.0), speed: spd(0.9), siege: 90, color: 0xa855f7,
+    // 치유의 빛 — 8초마다 둘레 아군을 일으킨다. 물량을 오래 살린다
+    ability: { kind: 'heal', charge: seconds(8, TICK_RATE), radius: tiles(5.0), power: 220 },
+  }),
   unit({
     // 방벽의 능동기가 심는다 — 카드도 테크트리도 없다. 밟히면 터지고 사라진다.
     // 수명은 무한이지만 상한(방벽당 3기)이 있어 지뢰밭이 무한히 자라지 않는다
@@ -355,7 +401,17 @@ export const INVASION_BUILDINGS: readonly string[] = ['chilltower', 'commandpost
  * 카드로 존재하지 않는 유닛 — 능동기가 낳는 것들.
  * 해금 목록(실험장의 전체 해금 포함)에서 빠진다.
  */
-export const SPAWNED_ONLY: readonly string[] = ['landmine'];
+export const SPAWNED_ONLY: readonly string[] = [
+  'landmine',
+  'broodling',
+  'hero_commander',
+  'hero_queen',
+  'hero_prophet',
+  'heroshell',
+];
+
+/** 영웅 후보 — 런 시작 3택1 (침공 전용). 순서가 곧 제안 순서다 */
+export const HERO_IDS: readonly string[] = ['hero_commander', 'hero_queen', 'hero_prophet'];
 
 export const UNITS: ReadonlyMap<string, UnitDef> = new Map(defs.map((d) => [d.id, d]));
 

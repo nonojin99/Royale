@@ -60,6 +60,10 @@ import {
   WORKER_LOSS_DAMAGE,
   EXPAND_RANGE,
   HASTE_SPEED_PCT,
+  HERO_DAMAGE_PER_LEVEL,
+  HERO_HP_PER_LEVEL,
+  HERO_LEVEL_MAX,
+  HERO_RESPAWN_TICKS,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
   INVASION_FIRST_WAVE_TICKS,
@@ -92,6 +96,7 @@ import {
   TargetPref,
   UNIT_IDS,
   INVASION_BUILDINGS,
+  HERO_IDS,
   SPAWNED_ONLY,
   UnitDef,
   getUnit,
@@ -170,6 +175,17 @@ export interface PlayerState {
   /** 남은 방벽 설치권 (침공 전용) — 파도를 넘길 때마다 조금씩 채워진다 */
   wallCharges: number;
   /**
+   * 고른 영웅 id (5축, 침공 전용). 빈 문자열이면 아직 안 골랐다.
+   *
+   * 영웅은 **런의 서명**이다 — 시작에 셋 중 하나를 고르고, 파도를 넘길
+   * 때마다 자라며, 죽어도 런이 끝나지 않고 본진에서 다시 일어선다.
+   */
+  hero: string;
+  /** 영웅 레벨 (0부터). 파도를 넘길 때마다 +1, 상한 HERO_LEVEL_MAX */
+  heroLevel: number;
+  /** 재소환까지 남은 틱. 0이면 살아 있거나 아직 안 골랐다 */
+  heroRespawn: number;
+  /**
    * 집결 지점 (침공 전용). 표적 없는 유닛이 여기로 모여 주둔한다.
    * null이면 제자리 대기. 우클릭으로 옮긴다 — 수비 모드의 유일한 컨트롤.
    */
@@ -221,6 +237,14 @@ export interface GameState {
   waveReward: number;
   /** 드래프트 제안 (유물 id 또는 'unlock:<unit>'). 비어 있으면 없음 */
   draft: string[];
+  /**
+   * 영웅 3택1 제안 ('hero:<id>'). 런 시작에 한 번만 찬다 (5축).
+   *
+   * 파도 보상 드래프트와 **채널을 나눈다** — 한 통에 담았더니 영웅을 안 고른
+   * 동안 파도 보상 드래프트가 오지 않았다(테스트가 잡았다). 성격이 다른
+   * 선택은 줄도 따로 서야 한다.
+   */
+  heroDraft: string[];
 }
 
 /** 커맨드 종류 */
@@ -251,6 +275,9 @@ function makePlayer(factionId: string): PlayerState {
     faction: f.id,
     relics: [],
     wallCharges: INVASION_WALL_START,
+    hero: '',
+    heroLevel: 0,
+    heroRespawn: 0,
     rally: null,
     unlocked: startingUnlocks(f),
     research: null,
@@ -315,6 +342,7 @@ export function createState(
     waveAlive: false,
     waveReward: 0,
     draft: [],
+    heroDraft: [],
   };
   if (sandbox) {
     // **전 종족** 전 유닛 해금 + 미네랄 만땅 — 실험장의 존재 이유는 종족을
@@ -328,6 +356,10 @@ export function createState(
       p.minerals = MINERAL_MAX;
     }
   }
+
+  // 런 시작 3택1 — 영웅부터 고른다 (5축). 파도 보상 드래프트와 같은 통로를
+  // 쓰므로 UI도 커맨드도 새로 만들 것이 없다
+  if (invasion) s.heroDraft = HERO_IDS.map((id) => 'hero:' + id);
 
   // 본진은 BASE_SITES 순서대로 생성 → id가 결정론적으로 고정된다.
   // 침공 모드의 팀 1은 기지가 없다 — 파도는 모서리에서 온다. 기지를 남기면
@@ -365,7 +397,9 @@ function statsOf(
   const t = traitMod(s.players[e.team], e.unit);
   // 시즈모드 — 자리를 잡은 대가로 사거리와 화력을 받는다 (4축, 침공 전용)
   const sm = inSiegeMode(s, e) ? u.ability! : null;
-  const pct = t.damagePct + (sm?.power ?? 0);
+  // 영웅 성장 — 레벨당 공격 +8%. 체력은 소환 시점에 한 번 얹는다(summonHero)
+  const lv = u.hero ? s.players[e.team].heroLevel * HERO_DAMAGE_PER_LEVEL : 0;
+  const pct = t.damagePct + (sm?.power ?? 0) + lv;
   return {
     damage: pct ? Math.trunc((u.damage * (100 + pct)) / 100) : u.damage,
     hitSpeed: u.hitSpeed,
@@ -944,8 +978,15 @@ function setRally(s: GameState, cmd: Command): boolean {
 /** 드래프트 선택 — 제안에 있는 카드만 유효하다 */
 function pickRelic(s: GameState, cmd: Command): boolean {
   if (!s.invasion || cmd.team !== 0) return false;
-  if (!s.draft.includes(cmd.id)) return false;
   const p = s.players[0];
+  if (cmd.id.startsWith('hero:')) {
+    if (!s.heroDraft.includes(cmd.id) || p.hero) return false;
+    p.hero = cmd.id.slice(5);
+    summonHero(s, 0);
+    s.heroDraft = [];
+    return true;
+  }
+  if (!s.draft.includes(cmd.id)) return false;
   if (cmd.id.startsWith('unlock:')) {
     unlock(p, cmd.id.slice(7));
   } else {
@@ -1196,6 +1237,83 @@ export function inSiegeMode(s: GameState, e: Entity): boolean {
   return e.mode >= (a.charge ?? SKILL_CHARGE_TICKS);
 }
 
+/* ── 영웅 (5축, 라운드 37) ─────────────────────────────────────────────── */
+
+/** 지금 살아 있는 내 영웅 엔티티 (없으면 undefined) */
+function heroEntity(s: GameState, team: Team): Entity | undefined {
+  const id = s.players[team].hero;
+  if (!id) return undefined;
+  for (const e of s.entities) if (e.team === team && e.unit === id) return e;
+  return undefined;
+}
+
+/** 영웅을 본진 곁에 세운다 — 레벨만큼 체력을 얹어서 */
+function summonHero(s: GameState, team: Team): void {
+  const p = s.players[team];
+  if (!p.hero) return;
+  const main = s.entities.find((e) => e.kind === 'base' && e.team === team && e.isMain)
+    ?? s.entities.find((e) => e.kind === 'base' && e.team === team);
+  if (!main) return;
+  const u = getUnit(p.hero);
+  // 본진 위 3타일 — 기지 스프라이트(2.5타일)에 가리지 않는 거리다.
+  // 통행 가능한 자리는 고정 나선으로 찾는다(결정론)
+  let hx = main.x;
+  let hy = main.y - 3000;
+  if (blockedAt(hx, hy)) {
+    outer: for (let r = 1; r < 6; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) < 2 && Math.abs(dy) < 2) continue; // 기지에 겹치지 않게
+          const cx = main.x + dx * 1000;
+          const cy = main.y + dy * 1000;
+          if (cx < 0 || cy < 0 || cx >= ARENA_W || cy >= ARENA_H) continue;
+          if (!blockedAt(cx, cy)) {
+            hx = cx;
+            hy = cy;
+            break outer;
+          }
+        }
+      }
+    }
+  }
+  const before = s.entities.length;
+  spawnUnit(s, team, u, hx, hy);
+  // 성장 — 레벨당 체력 +10%. 공격력은 statsOf가 매 틱 얹는다
+  for (let i = before; i < s.entities.length; i++) {
+    const h = s.entities[i];
+    const mul = 100 + p.heroLevel * HERO_HP_PER_LEVEL;
+    h.hp = Math.trunc((h.hp * mul) / 100);
+    h.maxHp = Math.trunc((h.maxHp * mul) / 100);
+  }
+}
+
+/**
+ * 영웅의 생사를 지킨다 — 매 틱 한 번.
+ *
+ * 죽음을 이벤트로 잡지 않고 **존재 여부로 유도한다**: 시체를 걷어가는 길이
+ * 둘(reap·resolveDeaths)이라 한쪽에 훅을 달면 반드시 빠뜨린다 (라운드 32에서
+ * 불안정 노심이 그랬다).
+ */
+function tickHero(s: GameState): void {
+  const p = s.players[0];
+  if (!p.hero) return;
+  if (heroEntity(s, 0)) {
+    p.heroRespawn = 0;
+    return;
+  }
+  if (p.heroRespawn === 0) {
+    // 방금 쓰러졌다 — 레벨 하나를 잃고 시계를 건다
+    p.heroLevel = p.heroLevel > 0 ? p.heroLevel - 1 : 0;
+    p.heroRespawn = HERO_RESPAWN_TICKS;
+    return;
+  }
+  p.heroRespawn--;
+  if (p.heroRespawn <= 0) {
+    p.heroRespawn = 0;
+    summonHero(s, 0);
+  }
+}
+
 /* ── 침공 파도 타입·유물 ───────────────────────────────────────────────── */
 
 export type WaveType = 'normal' | 'air' | 'siege' | 'rush' | 'boss';
@@ -1430,6 +1548,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 주문 패스와 나란히 두되 섞지 않는다: 저쪽은 피해를 쏘고 이쪽은 판을 바꾼다
   if (s.invasion) {
     const plants: Array<{ team: Team; x: number; y: number }> = [];
+    const births: Array<{ team: Team; x: number; y: number; n: number; r: number }> = [];
     const sprints: Array<{ team: Team; x: number; y: number; r2: number; ticks: number }> = [];
     for (const e of s.entities) {
       if (e.haste > 0) e.haste--;
@@ -1441,9 +1560,30 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (e.charge < full) e.charge++;
         continue;
       }
-      if (a.kind !== 'mine' && a.kind !== 'sprint') continue; // detect·siegemode는 게이지가 없다
+      // detect·siegemode는 게이지가 없다
+      if (a.kind !== 'mine' && a.kind !== 'sprint' && a.kind !== 'spawn' && a.kind !== 'heal') {
+        continue;
+      }
       if (e.charge < full) {
         e.charge++;
+        continue;
+      }
+      if (a.kind === 'spawn') {
+        // 산란 — 새끼를 낳는다. 수명이 짧아 무한히 쌓이지 않는다
+        e.charge = 0;
+        births.push({ team: e.team, x: e.x, y: e.y, n: a.power ?? 1, r: a.radius ?? 1000 });
+        continue;
+      }
+      if (a.kind === 'heal') {
+        // 치유의 빛 — 둘레 아군 유닛을 일으킨다. 건물·기지는 정비고의 몫이다
+        e.charge = 0;
+        const hr = a.radius ?? 0;
+        const amount = a.power ?? 0;
+        for (const o of s.entities) {
+          if (o.kind !== 'unit' || o.team !== e.team || o.hp <= 0) continue;
+          if (dist2(o.x, o.y, e.x, e.y) > hr * hr) continue;
+          o.hp = o.hp + amount > o.maxHp ? o.maxHp : o.hp + amount;
+        }
         continue;
       }
       if (a.kind === 'sprint') {
@@ -1477,6 +1617,13 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     }
     // 생성·부여는 순회가 끝난 뒤에 (배열을 순회 중에 늘리지 않는다)
     for (const pl of plants) spawnUnit(s, pl.team, getUnit('landmine'), pl.x, pl.y);
+    const brood = getUnit('broodling');
+    for (const b of births) {
+      for (let i = 0; i < b.n; i++) {
+        const [ox, oy] = formationOffset(b.n, i);
+        spawnUnit(s, b.team, brood, b.x + ox, b.y + oy + b.r / 2);
+      }
+    }
     for (const sp of sprints) {
       for (const o of s.entities) {
         if (o.kind !== 'unit' || o.team !== sp.team || o.flying) continue;
@@ -1648,6 +1795,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     e.hp = Math.min(e.maxHp, e.hp + give);
   }
 
+  // 9.45) 영웅 — 쓰러졌으면 시계를 걸고, 시계가 다 되면 다시 세운다 (5축)
+  if (s.invasion) tickHero(s);
+
   // 9.5) 침공: 파도 소탕 → 보상 지급 + 드래프트 제안
   if (s.invasion && s.waveAlive) {
     let alive = false;
@@ -1666,6 +1816,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
       // 파도를 넘겼으니 설치권 보충 — 성은 파도를 견딘 만큼 자란다
       p.wallCharges = Math.min(INVASION_WALL_CAP, p.wallCharges + INVASION_WALL_PER_WAVE);
+      // 영웅은 파도를 넘길 때마다 자란다 — 런이 길어질수록 손맛이 커진다
+      if (p.hero && p.heroLevel < HERO_LEVEL_MAX) p.heroLevel++;
       // 드래프트 — 이전 제안을 아직 안 골랐으면 새로 만들지 않는다
       if (s.draft.length === 0) offerDraft(s);
     }
@@ -1921,6 +2073,8 @@ export function hashState(s: GameState): number {
   mix(s.waveReward);
   mix(s.draft.length);
   for (const d of s.draft) mixStr(d);
+  mix(s.heroDraft.length);
+  for (const d of s.heroDraft) mixStr(d);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);
@@ -1953,6 +2107,9 @@ export function hashState(s: GameState): number {
     mix(p.relics.length);
     for (const r of p.relics) mixStr(r);
     mix(p.wallCharges);
+    mixStr(p.hero);
+    mix(p.heroLevel);
+    mix(p.heroRespawn);
     mix(p.rally ? p.rally.x : -1);
     mix(p.rally ? p.rally.y : -1);
     if (p.research) {

@@ -1093,6 +1093,14 @@ export class Renderer {
         d.circle(sx, by, ring);
         d.stroke({ width: 1.5, color: tex ? teamColor : 0xffffff, alpha: tex ? 0.9 : 0.55 });
       }
+      // 영웅 표식 — 발밑 금빛 이중 링. 전장에 하나뿐인 유닛이라 한눈에
+      // 찾을 수 있어야 한다 (5축, 라운드 37)
+      if (u.hero) {
+        d.ellipse(sx, sy, r * 1.5, r * 0.68);
+        d.stroke({ width: 2.5, color: 0xfacc15, alpha: 0.9 });
+        d.ellipse(sx, sy, r * 1.15, r * 0.52);
+        d.stroke({ width: 1.5, color: 0xfde68a, alpha: 0.6 });
+      }
       // 시즈 자세 — 발밑 각괄호. "지금 이 포는 뿌리내렸다"가 한눈에 읽혀야
       // 플레이어가 이동 명령의 대가(포를 접는다)를 이해한다
       if (inSiegeMode(state, e)) {

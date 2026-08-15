@@ -56,6 +56,8 @@ import {
   INVASION_WALL_START,
   INVASION_WALL_PER_WAVE,
   INVASION_BUILDINGS,
+  HERO_IDS,
+  HERO_RESPAWN_TICKS,
   RELIC_BY_ID,
   applyCommand,
   pathExists,
@@ -1766,4 +1768,127 @@ test('4축 능동 스킬 — 은신·디텍팅·시즈모드·지뢰·가속이 
   }
   const sb = createState(3, ['steel', 'swarmhive'], 'coast', true);
   assert.ok(!sb.players[0].unlocked.includes('landmine'), '실험장 해금에 지뢰가 섞였다');
+});
+
+/* ── 5축 영웅 (라운드 37) ──────────────────────────────────────────────── */
+
+test('5축 영웅 — 런 시작 3택1·성장·재기, 대전에는 없다', () => {
+  const FY = 9000;
+  const inv = (seed = 11) => {
+    const s = createState(seed, ['steel', 'swarmhive'], 'coast', false, true);
+    s.nextWaveTick = 1 << 28;
+    return s;
+  };
+  const pick = (s, id) =>
+    applyCommand(s, { execTick: s.tick, team: 0, kind: 'relic', id, x: 0, y: 0 });
+  const heroOf = (s) => s.entities.find((e) => e.kind !== 'base' && getUnit(e.unit).hero);
+  /** 영웅을 중립 평지로 — 본진 곁에서 재면 기지가 대신 때린다 */
+  const relocate = (s, e, x = 20000, y = FY) => {
+    assert.ok(!blockedAt(x, y), '이전 자리가 막혀 있다');
+    for (const b of s.entities) {
+      if (b.kind !== 'base') continue;
+      assert.ok((b.x - x) ** 2 + (b.y - y) ** 2 >= 12000 ** 2, '이전 자리가 기지 코앞');
+    }
+    e.x = x;
+    e.y = y;
+    e.deploy = 0;
+    return e;
+  };
+
+  // 런 시작 3택1 — 보상 드래프트와 채널이 다르다
+  {
+    const s = inv();
+    assert.equal(s.heroDraft.length, 3, '시작하자마자 영웅 3장');
+    assert.equal(s.draft.length, 0, '보상 드래프트는 비어 있다');
+    assert.ok(pick(s, 'hero:hero_queen'), '픽이 먹는다');
+    assert.equal(s.players[0].hero, 'hero_queen');
+    assert.ok(heroOf(s), '영웅이 전장에 선다');
+    assert.equal(s.heroDraft.length, 0, '제안이 닫힌다');
+    assert.equal(pick(s, 'hero:hero_prophet'), false, '두 번은 못 고른다');
+  }
+
+  // 대전·실험장 불가침
+  {
+    const v = createState(3, ['covenant', 'swarmhive'], 'coast');
+    assert.equal(v.heroDraft.length, 0, '대전에는 제안이 없다');
+    assert.equal(
+      applyCommand(v, { execTick: 0, team: 0, kind: 'relic', id: 'hero:hero_queen', x: 0, y: 0 }),
+      false,
+      '대전에서 영웅 픽이 거절된다',
+    );
+    const sb = createState(3, ['steel', 'swarmhive'], 'coast', true);
+    for (const id of HERO_IDS) {
+      assert.ok(!sb.players[0].unlocked.includes(id), `실험장 해금에 ${id}가 섞였다`);
+      for (const f of FACTION_IDS) {
+        assert.ok(
+          !getFaction(f).tech.some((n) => n.unit === id),
+          `${id}가 종족 트리에 새어 들어갔다`,
+        );
+      }
+    }
+  }
+
+  // 성장 — 레벨당 공격 +8%
+  {
+    const dealt = (level) => {
+      const s = inv();
+      pick(s, 'hero:hero_commander');
+      s.players[0].heroLevel = level;
+      const h = relocate(s, heroOf(s));
+      const foe = {
+        id: s.nextId++, team: 1, unit: 'devourer', kind: 'unit',
+        x: h.x + 4000, y: h.y, hp: 999999, maxHp: 999999, cd: 0, deploy: 0,
+        life: -1, target: -1, flying: false, charge: 0, mode: 0, haste: 0,
+        orderX: -1, orderY: -1, siteId: -1, isMain: false, reserve: 0,
+      };
+      s.entities.push(foe);
+      for (let i = 0; i < 200; i++) {
+        foe.orderX = foe.x;
+        foe.orderY = foe.y;
+        h.orderX = h.x;
+        h.orderY = h.y;
+        step(s, []);
+      }
+      return 999999 - foe.hp;
+    };
+    const lv0 = dealt(0);
+    const lv5 = dealt(5);
+    assert.ok(lv5 > lv0 * 130 / 100, `레벨이 화력을 올린다 (${lv0} → ${lv5})`);
+  }
+
+  // 전사 → 레벨 하나를 잃고 다시 일어선다
+  {
+    const s = inv();
+    pick(s, 'hero:hero_commander');
+    s.players[0].heroLevel = 4;
+    heroOf(s).hp = 0;
+    step(s, []);
+    assert.ok(!heroOf(s), '시체가 걷힌다');
+    assert.equal(s.players[0].heroLevel, 3, '레벨 하나를 잃는다');
+    assert.ok(s.players[0].heroRespawn > 0, '재기 시계가 걸린다');
+    for (let i = 0; i < HERO_RESPAWN_TICKS + 2; i++) step(s, []);
+    const back = heroOf(s);
+    assert.ok(back, '다시 일어선다');
+    assert.ok(back.maxHp > getUnit('hero_commander').hp, '체력에 성장이 얹힌다');
+  }
+
+  // 산란 — 새끼는 수명이 있어 무한히 쌓이지 않는다
+  {
+    const s = inv();
+    pick(s, 'hero:hero_queen');
+    const h = relocate(s, heroOf(s));
+    const brood = () => s.entities.filter((e) => e.unit === 'broodling').length;
+    for (let i = 0; i < 205; i++) {
+      h.orderX = h.x;
+      h.orderY = h.y;
+      step(s, []);
+    }
+    assert.equal(brood(), 3, '10초마다 셋');
+    for (let i = 0; i < 1100; i++) {
+      h.orderX = h.x;
+      h.orderY = h.y;
+      step(s, []);
+    }
+    assert.ok(brood() < 16, `새끼가 무한 증식하지 않는다 (${brood()}마리)`);
+  }
 });

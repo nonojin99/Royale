@@ -1235,22 +1235,40 @@ function updateMusic(s: GameState): void {
 
 let draftShownKey = '';
 
+/** 영웅 능동기 한 줄 설명 — 데이터가 아니라 표시라 여기 산다 */
+const HERO_BLURB: Record<string, string> = {
+  hero_commander: '궤도 포격 — 게이지가 차면 사거리 안에 포탄이 떨어진다',
+  hero_queen: '산란 — 10초마다 새끼 둘을 낳는다 (수명 40초)',
+  hero_prophet: '치유의 빛 — 8초마다 둘레 5타일 아군을 220 회복',
+};
+
 function updateDraft(s: GameState): void {
   const panel = $('draft');
-  if (!s.invasion || s.draft.length === 0) {
+  // 영웅 픽이 먼저다 — 런의 서명을 고르기 전에는 보상 드래프트가 없다
+  const offers = s.invasion && s.heroDraft.length > 0 ? s.heroDraft : s.draft;
+  if (!s.invasion || offers.length === 0) {
     panel.classList.add('hidden');
     draftShownKey = '';
     return;
   }
-  const key = s.draft.join('|');
+  const key = offers.join('|');
   if (key !== draftShownKey) {
     draftShownKey = key;
+    $('draft-title').textContent =
+      offers === s.heroDraft ? '영웅을 고른다 — 이 런의 서명' : '파도 소탕 — 전리품을 골라라';
     const cards = $('draft-cards');
     cards.replaceChildren();
-    for (const id of s.draft) {
+    for (const id of offers) {
       const b = document.createElement('button');
       b.className = 'draft-card';
-      if (id.startsWith('unlock:')) {
+      if (id.startsWith('hero:')) {
+        const u = getUnit(id.slice(5));
+        b.classList.add('hero');
+        b.innerHTML =
+          `<span class="dname">${u.name}</span>` +
+          `<span class="ddesc">${HERO_BLURB[id.slice(5)] ?? ''}<br>` +
+          `체력 ${u.hp} · 공격 ${u.damage} · 사거리 ${(u.range / 1000).toFixed(1)}타일</span>`;
+      } else if (id.startsWith('unlock:')) {
         const u = getUnit(id.slice(7));
         b.classList.add('unlock');
         b.innerHTML =
@@ -1300,9 +1318,16 @@ function updateHud(s: GameState): void {
       normal: '', air: '공중✈', siege: '공성💥', rush: '물량🐜', boss: '보스💀',
     };
     const nextLabel = WAVE_LABEL[waveTypeOf(s.wave + 1)];
+    // 영웅 상태 — 레벨, 쓰러졌으면 재기까지 남은 초
+    let heroTag = '';
+    if (me.hero) {
+      heroTag = me.heroRespawn > 0
+        ? ` · ⚔ 재기 ${Math.ceil(me.heroRespawn / TICK_RATE)}초`
+        : ` · ⚔ Lv${me.heroLevel}`;
+    }
     $('timer').textContent =
       `🌊 파도 ${s.wave} · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초` +
-      ` · 🧱 ${me.wallCharges}`;
+      ` · 🧱 ${me.wallCharges}${heroTag}`;
     updateDraft(s);
   } else if (s.sandbox) {
     const el = Math.floor(s.tick / TICK_RATE);

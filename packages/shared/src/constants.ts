@@ -228,3 +228,20 @@ export const UNIT_RADIUS = 400;
 export const BUILDING_RADIUS = 900;
 /** 기지 반경 (밀리타일) */
 export const BASE_RADIUS = 1300;
+
+/* ── 영웅 (5축, 라운드 37 — 침공 전용) ─────────────────────────────────── */
+
+/** 레벨 상한 — 파도마다 하나씩 오른다. 10이면 20파도쯤에 천장에 닿는다 */
+export const HERO_LEVEL_MAX = 10;
+/** 레벨당 공격력 (백분율 정수) */
+export const HERO_DAMAGE_PER_LEVEL = 8;
+/** 레벨당 체력 (백분율 정수) — 소환 시점에 얹는다 */
+export const HERO_HP_PER_LEVEL = 10;
+/**
+ * 전사 후 재소환까지 (틱).
+ *
+ * 영웅이 영영 죽으면 런이 사실상 끝난다 — 성장을 얹은 것이 오히려 실패를
+ * 되돌릴 수 없게 만드는 셈이다. 대신 **레벨 하나를 잃고** 25초 뒤 본진에서
+ * 다시 일어선다: 죽음이 아프되 치명적이지는 않다.
+ */
+export const HERO_RESPAWN_TICKS = 25 * TICK_RATE;
