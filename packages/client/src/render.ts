@@ -965,7 +965,12 @@ export class Renderer {
 
       const u = getUnit(e.unit);
       const moved = !!p && (p[0] !== e.x || p[1] !== e.y);
-      const tex = this.frameFor(e, moved, this.vfacingOf(e, p, myTeam) < 0);
+      const tex = this.frameFor(
+        e,
+        moved,
+        this.vfacingOf(e, p, myTeam) < 0,
+        this.lateralOf(e, p),
+      );
       const hit = this.flashOf(e);
 
       if (e.kind === 'building' && u.mine) {
@@ -1149,16 +1154,21 @@ export class Renderer {
    * - 걷기: 직전 틱 대비 좌표가 변했다
    * - 그 외: 대기 (없으면 걷기 0프레임에서 멈춘다)
    */
-  private frameFor(e: Entity, moved: boolean, back: boolean): Texture | null {
+  private frameFor(e: Entity, moved: boolean, back: boolean, side = false): Texture | null {
     const prevCd = this.prevCd.get(e.id);
     const fired = prevCd !== undefined && e.cd > prevCd;
     this.prevCd.set(e.id, e.cd);
 
-    // 4방향: 화면 위쪽을 향해 움직이면 등 시트(…back)를 쓴다.
-    // 등 시트가 없는 유닛은 조용히 정면으로 떨어진다 — 시트가 도착하는
-    // 순서대로 유닛이 하나씩 4방향이 된다
-    const pick = (base: string): string =>
-      back && art.clip(e.unit, base + 'back') ? base + 'back' : base;
+    // 시선 우선순위: 옆(…side) → 등(…back) → 정면.
+    //
+    // 측면 시트는 **화면 왼쪽을 향해** 그린다 — 오른쪽 이동은 거울상이
+    // 공짜다(facingOf). 시트가 없는 유닛은 조용히 아래 단계로 떨어지므로,
+    // 아트가 도착하는 순서대로 유닛이 하나씩 좋아진다
+    const pick = (base: string): string => {
+      if (side && art.clip(e.unit, base + 'side')) return base + 'side';
+      if (back && art.clip(e.unit, base + 'back')) return base + 'back';
+      return base;
+    };
 
     let st = this.animState.get(e.id);
     const attackName = pick('attack');
@@ -1439,6 +1449,24 @@ export class Renderer {
     const v = this.facing.get(e.id) ?? 1;
     // 오른쪽으로 기운 아트는 거울 방향이 반대다
     return Renderer.ART_LEANS_RIGHT.has(e.unit) ? -v : v;
+  }
+
+  /**
+   * 옆으로 가고 있는가 — 측면 시트를 쓸지의 판정.
+   *
+   * vfacingOf와 같은 문턱(8밀리타일)을 쓰되 **가로가 세로보다 우세할 때만**
+   * 참이다. 마지막 판정을 유지하는 이유도 같다: 매 프레임 뒤집히면 유닛이
+   * 파닥거린다 (라운드 19).
+   */
+  private readonly lateral = new Map<number, boolean>();
+
+  private lateralOf(e: Entity, prev: [number, number] | undefined): boolean {
+    if (prev) {
+      const dx = Math.abs(e.x - prev[0]);
+      const dy = Math.abs(e.y - prev[1]);
+      if (dx > 8 || dy > 8) this.lateral.set(e.id, dx > dy);
+    }
+    return this.lateral.get(e.id) ?? false;
   }
 
   /** 상하 시선 — 화면 위로 움직이면 -1(등), 아래로 움직이면 1(정면) */
