@@ -43,6 +43,7 @@ import {
   WORKER_CAP_PER_BASE,
   WORKER_COST,
   WORKER_MINE_PER_TICK,
+  WORKER_LOSS_DAMAGE,
   activeWorkers,
   DEFAULT_MAP_ID,
   MAPS,
@@ -1963,4 +1964,33 @@ test('런 체인 — 무대를 넘기면 전장만 바뀌고 성장은 따라온
   for (let i = 0; i < 200; i++) step(v, []);
   assert.equal(v.stage, 0);
   assert.ok(!v.entities.some((e) => e.unit === 'nest'), '대전에 둥지가 없다');
+});
+
+test('침공에서는 기지 포격이 일꾼을 갈아내지 않는다 (대전에서는 그대로)', () => {
+  const hit = (invasion) => {
+    const s = createState(7, ['steel', 'swarmhive'], invasion ? 'siege' : 'coast', false, invasion);
+    const p = s.players[0];
+    const before = p.workers;
+    const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+    // 문턱(WORKER_LOSS_DAMAGE)을 훌쩍 넘는 피해를 한 번에 먹인다
+    const foe = {
+      id: s.nextId++, team: 1, unit: 'devourer', kind: 'unit',
+      x: base.x + 800, y: base.y, hp: 99999, maxHp: 99999, cd: 0, deploy: 0,
+      life: -1, target: -1, flying: false, charge: 0, mode: 0, haste: 0,
+      orderX: -1, orderY: -1, siteId: -1, isMain: false, reserve: 0,
+    };
+    s.entities.push(foe);
+    for (let i = 0; i < 200; i++) {
+      foe.x = base.x + 800;
+      foe.y = base.y;
+      step(s, []);
+    }
+    return { before, after: p.workers, dealt: base.maxHp - base.hp };
+  };
+  const inv = hit(true);
+  const pvp = hit(false);
+  assert.ok(inv.dealt > WORKER_LOSS_DAMAGE * 2, `침공 기지가 충분히 맞았다 (${inv.dealt})`);
+  assert.equal(inv.after, inv.before, '침공에서는 일꾼이 죽지 않는다');
+  assert.ok(pvp.dealt > WORKER_LOSS_DAMAGE, `대전 기지가 충분히 맞았다 (${pvp.dealt})`);
+  assert.ok(pvp.after < pvp.before, '대전에서는 일꾼이 갈려 나간다 (라운드 4 규칙 유지)');
 });

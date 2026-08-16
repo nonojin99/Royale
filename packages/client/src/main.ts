@@ -110,7 +110,9 @@ const net = new NetClient(serverUrl(), {
       flash('실험장 — 클릭: 아군 배치 · Alt+클릭: 적군 배치 · 어디든 놓입니다');
     } else if (net.state?.invasion) {
       stopOnboarding();
-      flash('침공 — 파도가 밀려온다 · 우클릭으로 집결 깃발(수비 위치) 지정');
+      // 침공은 채굴이 절반이라 일꾼이 대전보다 더 중요하다 — 첫 화면에서
+      // 이걸 말해 주지 않으면 "유닛이 안 나온다"로 끝난다 (라운드 44)
+      flash('침공 — 채굴이 절반이다 · 일꾼(W)부터 늘려라 · 우클릭= 집결 깃발');
     } else {
       startOnboarding();
     }

@@ -1873,7 +1873,14 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     const e = s.entities[i];
     // 기지 포격은 일꾼도 갈아낸다 — 누적 피해가 문턱을 넘을 때마다 1기.
     // (maxHp - hp) 문턱에서 유도하므로 상태 추가 없이 결정적이다
-    if (e.kind === 'base') {
+    //
+    // **침공에서는 끈다.** 이 규칙은 대전에서 "조기 공세가 경제에 흔적을
+    // 남겨야 한다"는 문제를 풀려고 넣었다(라운드 4). 그런데 침공은 파도가
+    // 본진을 때리는 것이 기본값이라, 같은 규칙이 경제 전멸이 된다 —
+    // 6파도쯤에 일꾼 둘이 한꺼번에 죽어 수입이 0이 되고, 병력이 없으니
+    // 소탕 보상도 못 받아 죽음의 나선에 빠진다 (오너 보고 "첫 유닛 외
+    // 생산이 안 됨", 라운드 44 실측: 153초에 2→0)
+    if (e.kind === 'base' && !s.invasion) {
       const before = Math.trunc((e.maxHp - e.hp) / WORKER_LOSS_DAMAGE);
       const after = Math.trunc((e.maxHp - (e.hp - dmg[i])) / WORKER_LOSS_DAMAGE);
       const p = s.players[e.team];
