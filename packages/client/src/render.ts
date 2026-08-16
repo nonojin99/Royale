@@ -992,12 +992,15 @@ export class Renderer {
       }
 
       if (e.kind === 'building') {
-        const size = PX_PER_TILE * 1.5;
+        // 둥지는 런의 결말이다 — 본진(2.4타일)보다 커야 "저걸 부순다"가
+        // 목표로 읽힌다. 다른 건물은 그대로 (라운드 46)
+        const boss = e.unit === 'nest';
+        const size = PX_PER_TILE * (boss ? 2.6 : 1.5);
         if (tex) {
           g.ellipse(sx, sy + size * 0.12, size * 0.52, size * 0.22);
           g.fill({ color: 0x000000, alpha: 0.22 });
           this.groundRing(g, sx, sy, size * 0.5, teamColor);
-          this.applyHit(this.place(tex, sx, sy, PX_PER_TILE * 2.0, 0.85), hit);
+          this.applyHit(this.place(tex, sx, sy, PX_PER_TILE * (boss ? 4.0 : 2.0), 0.85), hit);
         } else {
           g.rect(sx - size / 2, sy - size / 2, size, size);
           g.fill(u.color);

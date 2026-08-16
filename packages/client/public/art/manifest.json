@@ -460,6 +460,12 @@
         "frames": 5,
         "fps": 12
       }
+    },
+    "nest": {
+      "idle": {
+        "frames": 1,
+        "fps": 1
+      }
     }
   },
   "bases": {
