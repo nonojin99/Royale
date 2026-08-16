@@ -83,6 +83,8 @@ import {
   summarizeReplay,
   verifyReplay,
   waveAnchorOf,
+  STAGE_REFUND_PCT,
+  STAGE_REFUND_MAX,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -2044,4 +2046,110 @@ test('waveAnchorOf는 상태를 건드리지 않는다 (해시 불변 — 렌더
   const before = hashState(s);
   for (let w = 1; w <= 20; w++) waveAnchorOf(s, w);
   assert.equal(hashState(s), before, '예고를 물어도 시뮬 상태는 그대로다');
+});
+
+/* ── 라운드 48: 철수 정산 ──────────────────────────────────────────────── */
+
+/** 무대 하나를 넘긴다 — 목표 파도까지 밀고 전장을 비운다 */
+function pushStage(s) {
+  let guard = 0;
+  const from = s.stage;
+  while (s.stage === from && guard++ < 60) {
+    s.nextWaveTick = s.tick;
+    step(s, []);
+    for (const e of s.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
+    step(s, []);
+    if (s.draft.length > 0) {
+      applyCommand(s, { execTick: s.tick, team: 0, kind: 'relic', id: s.draft[0], x: 0, y: 0 });
+    }
+  }
+  return s.stage !== from;
+}
+
+test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된다', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  const p = s.players[0];
+  // 병력을 세운다 (정산 대상). 시뮬이 직접 만들게 하지 않고 배치 명령을 쓴다
+  p.minerals = MINERAL_MAX;
+  const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+  let placed = 0;
+  for (let i = 0; i < 6; i++) {
+    const okCmd = applyCommand(s, {
+      execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
+      x: base.x + (i - 3) * 900, y: base.y - 2600,
+    });
+    if (okCmd) placed++;
+    p.minerals = MINERAL_MAX; // 배치 성공을 단언하기 위해 돈 걱정을 지운다
+  }
+  assert.ok(placed >= 4, `병력이 실제로 섰다 (${placed}기)`);
+  for (let i = 0; i < 40; i++) step(s, []);
+
+  const army = s.entities.filter((e) => e.team === 0 && e.kind === 'unit'
+    && !getUnit(e.unit).hero).length;
+  assert.ok(army >= 4, `정산 대상 병력이 있다 (${army}기)`);
+  const before = p.minerals;
+
+  assert.ok(pushStage(s), '무대를 넘겼다');
+  assert.equal(s.stage, 1, '2무대');
+  assert.ok(s.salvage > 0, `정산이 있었다 (+${s.salvage})`);
+  assert.ok(p.minerals > before - MINERAL_MAX, '정산이 미네랄로 들어왔다');
+
+  // 정산액은 판 것의 STAGE_REFUND_PCT — 소총병 코스트로 하한을 확인한다
+  const floor = Math.trunc((army * getUnit('rifleman').cost * MINERAL_SCALE * STAGE_REFUND_PCT) / 100);
+  assert.ok(s.salvage >= Math.min(floor, STAGE_REFUND_MAX) * 0.9,
+    `정산이 병력 값어치에 비례한다 (정산 ${s.salvage} vs 병력분 ${floor})`);
+});
+
+test('정산에는 상한이 있다 (스노볼 차단)', () => {
+  const s = createState(9, ['steel', 'swarmhive'], 'siege', false, true);
+  const p = s.players[0];
+  const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+  // 상한을 확실히 넘길 만큼 세운다
+  for (let i = 0; i < 40; i++) {
+    p.minerals = MINERAL_MAX;
+    applyCommand(s, {
+      execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
+      x: base.x + ((i % 7) - 3) * 700, y: base.y - 2200 - Math.trunc(i / 7) * 700,
+    });
+  }
+  for (let i = 0; i < 40; i++) step(s, []);
+  const army = s.entities.filter((e) => e.team === 0 && e.kind === 'unit').length;
+  assert.ok(army >= 20, `대군이 섰다 (${army}기)`);
+  assert.ok(pushStage(s), '무대를 넘겼다');
+  assert.equal(s.salvage, STAGE_REFUND_MAX, `정산이 상한에서 잘린다 (${s.salvage})`);
+});
+
+test('영웅과 소환물은 정산 대상이 아니다 (영웅은 따라오고, 소환물은 산 적 없다)', () => {
+  const s = createState(15, ['steel', 'swarmhive'], 'siege', false, true);
+  applyCommand(s, { execTick: s.tick, team: 0, kind: 'relic', id: 'hero:hero_commander', x: 0, y: 0 });
+  for (let i = 0; i < 30; i++) step(s, []);
+  const hero = s.entities.find((e) => e.team === 0 && e.kind === 'unit' && getUnit(e.unit).hero);
+  assert.ok(hero, '영웅이 섰다');
+  // 병력은 영웅 하나뿐 — 정산은 0이어야 한다
+  const others = s.entities.filter((e) => e.team === 0 && e.kind === 'unit'
+    && !getUnit(e.unit).hero).length;
+  assert.equal(others, 0, '영웅 외 병력이 없다');
+  assert.ok(pushStage(s), '무대를 넘겼다');
+  assert.equal(s.salvage, 0, `영웅만 있으면 정산이 없다 (${s.salvage})`);
+  // 그리고 영웅은 새 전장에 따라와 있다
+  assert.ok(s.entities.some((e) => e.team === 0 && e.kind === 'unit' && getUnit(e.unit).hero),
+    '영웅은 무대를 따라온다');
+});
+
+test('보유 상한을 넘긴 정산금을 채굴이 깎지 않는다', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  const p = s.players[0];
+  p.minerals = MINERAL_MAX + 20 * MINERAL_SCALE; // 정산으로 넘겨받은 상태를 흉내
+  const before = p.minerals;
+  for (let i = 0; i < 200; i++) step(s, []);
+  assert.equal(p.minerals, before, `채굴이 넘친 몫을 깎지 않는다 (${before} → ${p.minerals})`);
+});
+
+test('대전·실험장에는 정산이 없다 (침공 전용)', () => {
+  const v = createState(5, ['covenant', 'swarmhive'], 'coast');
+  for (let i = 0; i < 400; i++) step(v, []);
+  assert.equal(v.salvage, 0, '대전은 정산을 모른다');
+  assert.equal(v.stage, 0, '대전은 무대를 모른다');
+  // 그리고 대전의 보유 상한은 그대로다
+  assert.ok(v.players[0].minerals <= MINERAL_MAX, `대전 미네랄은 상한 안 (${v.players[0].minerals})`);
 });

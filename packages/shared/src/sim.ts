@@ -65,6 +65,9 @@ import {
   HERO_LEVEL_MAX,
   HERO_RESPAWN_TICKS,
   RUN_STAGES,
+  STAGE_BUDGET_ROLLBACK_PCT,
+  STAGE_REFUND_MAX,
+  STAGE_REFUND_PCT,
   STAGE_WALL_GRANT,
   StageDef,
   SKILL_CHARGE_TICKS,
@@ -257,6 +260,14 @@ export interface GameState {
   stage: number;
   /** 3무대의 둥지가 살아 있는가 — 부서지는 순간이 런의 끝(승리)이다 */
   nestAlive: boolean;
+  /**
+   * 직전 무대 전환의 철수 정산액 (라운드 48).
+   *
+   * HUD가 "철수 정산 +37"을 띄우기 위한 값이다. 정산이 조용히 들어오면
+   * 플레이어는 1무대를 잘 버틴 것이 2무대의 밑천이 됐다는 사실을 모른다 —
+   * 성장은 보여야 성장이다.
+   */
+  salvage: number;
 }
 
 /** 커맨드 종류 */
@@ -357,6 +368,7 @@ export function createState(
     heroDraft: [],
     stage: 0,
     nestAlive: false,
+    salvage: 0,
   };
   if (sandbox) {
     // **전 종족** 전 유닛 해금 + 미네랄 만땅 — 실험장의 존재 이유는 종족을
@@ -525,8 +537,14 @@ function mine(s: GameState): void {
       const take = e.reserve < want ? e.reserve : want;
       e.reserve -= take;
       p.mined += take;
-      p.minerals += take;
-      if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
+      // 상한은 **채굴로 도달할 수 있는 천장**이지 절대 상한이 아니다.
+      // 철수 정산(라운드 48)은 이 천장을 넘겨 들어오는데, 매 틱 깎아 버리면
+      // 정산금이 다음 틱에 증발한다. 이미 천장 위에 있으면 채굴이 손대지
+      // 않는다 — 천장 아래일 때의 동작은 예전과 완전히 같다
+      if (p.minerals < MINERAL_MAX) {
+        p.minerals += take;
+        if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
+      }
     }
   }
 }
@@ -1326,6 +1344,38 @@ function advanceStage(s: GameState): void {
   // 성은 두고 왔다 — 새 전장에서 다시 짓는다
   p.wallCharges = STAGE_WALL_GRANT;
   if (p.workers > WORKER_CAP_PER_BASE) p.workers = WORKER_CAP_PER_BASE;
+
+  // 철수 정산 — 두고 가는 것을 판다 (라운드 48).
+  //
+  // **`s.entities`를 비우기 전에** 세어야 한다. 살아 있는 병력·건물·확장
+  // 기지의 값어치를 STAGE_REFUND_PCT만큼 미네랄로 돌려받는다 — 새 전장에서
+  // 다시 사되, 무엇을 살지는 다시 고른다.
+  //
+  // 제외: 본진(두고 가는 게 아니라 새로 선다) · 영웅(그대로 따라온다) ·
+  // 능동기가 낳은 것들(지뢰·브루들링 — 산 적이 없다)
+  let salvage = 0;
+  for (const e of s.entities) {
+    if (e.team !== 0 || e.hp <= 0) continue;
+    if (e.kind === 'base') {
+      if (!e.isMain) salvage += BASE_BUILD_COST; // 확장에 든 돈
+      continue; // 기지에 getUnit을 부르면 터진다 (라운드 42)
+    }
+    const u = getUnit(e.unit);
+    if (u.hero || SPAWNED_ONLY.includes(e.unit)) continue;
+    salvage += u.cost * MINERAL_SCALE;
+  }
+  let refund = Math.trunc((salvage * STAGE_REFUND_PCT) / 100);
+  if (refund > STAGE_REFUND_MAX) refund = STAGE_REFUND_MAX;
+  // 보유 상한을 넘겨 들어온다 — 채굴이 이 몫을 깎지 않도록 mineTick도 고쳤다
+  p.minerals += refund;
+  s.salvage = refund;
+
+  // 파도 예산 되감기 — 새 전장은 병력 0에서 시작하므로 파도도 물러선다.
+  // 번호는 건드리지 않는다(조성 예고·보스 주기·HUD는 그대로 이어진다)
+  if (STAGE_BUDGET_ROLLBACK_PCT < 100) {
+    s.waveBudget = Math.trunc((s.waveBudget * STAGE_BUDGET_ROLLBACK_PCT) / 100);
+    if (s.waveBudget < INVASION_BUDGET_START) s.waveBudget = INVASION_BUDGET_START;
+  }
 
   s.entities = [];
   syncBlockers(s);
@@ -2198,6 +2248,7 @@ export function hashState(s: GameState): number {
   for (const d of s.heroDraft) mixStr(d);
   mix(s.stage);
   mix(s.nestAlive ? 1 : 0);
+  mix(s.salvage);
   mix(s.tick);
   mix(s.rng.s);
   mix(s.nextId);

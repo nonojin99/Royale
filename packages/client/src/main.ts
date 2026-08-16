@@ -1539,6 +1539,13 @@ function updateHud(s: GameState): void {
       if (s.stage > 0) {
         hint(`${s.stage + 1}무대 — ${st.name}: ${st.tagline}`);
         sound.play('build');
+        // 철수 정산 — 조용히 들어오면 "1무대를 잘 버틴 것이 밑천이 됐다"를
+        // 아무도 모른다. 성장은 보여야 성장이다 (라운드 48)
+        if (s.salvage > 0) {
+          // 값을 지금 뽑아 둔다 — s는 매 틱 갈리는 상태 객체다
+          const paid = Math.floor(s.salvage / MINERAL_SCALE);
+          setTimeout(() => flash(`철수 정산 +${paid} — 두고 온 병력·확장을 팔았다`), 2600);
+        }
       }
     }
     let goal = 0;
