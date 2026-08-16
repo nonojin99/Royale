@@ -56,6 +56,13 @@ export interface NetEvents {
   onReject?: (reason: string) => void;
   /** 시뮬이 한 틱 진행되기 직전에 호출 (보간용 이전 위치 스냅샷) */
   onBeforeStep?: (s: GameState) => void;
+  /**
+   * 소켓이 끊겼다 (경기 종료로 인한 정상 종료 제외).
+   *
+   * 이걸 알리지 않으면 화면이 그대로 얼어붙고 **모든 조작이 조용히
+   * 사라진다** — 유닛 생산부터 안 되니 게임 버그처럼 보인다 (라운드 42).
+   */
+  onDisconnected?: () => void;
 }
 
 export class NetClient {
@@ -73,6 +80,9 @@ export class NetClient {
   private offsetSamples: number[] = [];
   private scheduled = new Map<number, Command[]>();
   private lastHashSent = -1;
+  /** 경기가 정상 종료됐는가 — 그 뒤의 소켓 종료는 사고가 아니다 */
+  private finished = false;
+  connected = false;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   lastStepWallMs = 0;
 
@@ -93,6 +103,7 @@ export class NetClient {
     this.ws = ws;
 
     ws.onopen = () => {
+      this.connected = true;
       this.send({ t: 'hello', name, factionId, mapId, botLevel: opts?.botLevel, sandbox: opts?.sandbox, invasion: opts?.invasion });
       this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
       this.ping();
@@ -112,6 +123,10 @@ export class NetClient {
     ws.onclose = () => {
       if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = null;
+      this.connected = false;
+      // 경기 중에 끊긴 것이라면 반드시 알린다 — 조용히 얼어붙으면
+      // 플레이어는 "생산이 막혔다"고 읽는다
+      if (!this.finished) this.events.onDisconnected?.();
     };
   }
 
@@ -203,6 +218,7 @@ export class NetClient {
         return;
 
       case 'over':
+        this.finished = true;
         this.events.onOver?.(msg.winner, msg.bases, msg.mined, msg.replayId);
         return;
 
@@ -239,6 +255,11 @@ export class NetClient {
 
   startRoom(): void {
     this.send({ t: 'start-room' });
+  }
+
+  /** 지금 서버에 말이 닿는가 — 닿지 않으면 커맨드는 허공으로 간다 */
+  get live(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
   act(kind: CommandKind, id: string, x = 0, y = 0, foe = false): void {

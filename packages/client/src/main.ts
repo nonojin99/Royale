@@ -138,6 +138,16 @@ const net = new NetClient(serverUrl(), {
     showOverlay('상대가 나갔습니다', '');
     showOverActions();
   },
+  // 경기 중 소켓이 끊기면 시뮬이 그 자리에 얼어붙고 모든 명령이 허공으로
+  // 간다 — 아무 말도 안 하면 "유닛 생산이 막혔다"로 읽힌다 (라운드 42)
+  onDisconnected: () => {
+    stopOnboarding();
+    showOverlay(
+      '서버 연결이 끊겼습니다',
+      '화면이 멈추고 명령이 전달되지 않습니다 — 다시 하기를 눌러 재접속하세요',
+    );
+    showOverActions();
+  },
   onRoomState: (st) => renderRoom(st),
   onRoomError: (reason) => {
     setStatus(roomErrorText(reason));
@@ -1081,6 +1091,11 @@ function onPointerDown(ev: PointerEvent): void {
   if (s.invasion && getUnit(selectedUnit).kind === 'building' && wouldSeal(s, x, y)) {
     sound.play('error');
     flash('여기를 막으면 적이 올 길이 사라집니다 — 길은 하나 남겨야 합니다');
+    return;
+  }
+  if (!net.live) {
+    sound.play('error');
+    flash('서버와 연결이 끊겼습니다 — 명령이 전달되지 않습니다');
     return;
   }
   // 실험장: Alt+클릭이면 상대 팀으로 배치 — 상성을 부딪혀 보는 손잡이
