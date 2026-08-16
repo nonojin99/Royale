@@ -1132,12 +1132,21 @@ export class Renderer {
         d.ellipse(sx, sy, r * 1.35, r * 0.6);
         d.stroke({ width: 2, color: 0xffffff, alpha: 0.9 });
       }
-      this.hpBar(d, sx, by - r - 6, PX_PER_TILE * 1.1, e);
+      // 바는 **머리 위**에 둔다.
+      //
+      // 옛 기준(발밑에서 r+6)은 스프라이트 높이를 몰라서 몸통 한복판에
+      // 걸렸다 — 영웅(1.3배)에서 가슴에 게이지가 얹혀 오너가 잡았다
+      // (라운드 41). 이제 **그린 스프라이트의 실제 윗변**에서 잰다:
+      // 앵커가 0.88이므로 윗변은 발밑에서 높이×0.88 위다
+      const spriteH = tex ? UNIT_SPRITE_H * (u.hero ? 1.3 : 1) : r * 2;
+      const barY = by - spriteH * 0.88 - 3;
+      this.hpBar(d, sx, barY, PX_PER_TILE * 1.1, e);
       // 충전 스킬 게이지 — 청록 바. 만땅이면 밝게 빛나 "곧 쏜다"를 알린다
       if ((u.charges || u.ability?.charge) && e.charge > 0) {
         const w = PX_PER_TILE * 1.1;
         const frac = Math.min(1, e.charge / chargeTicksOf(u));
-        const gy = by - r - (e.hp < e.maxHp ? 11 : 6);
+        // 체력 바가 떠 있으면 그 위에 한 칸 더 쌓는다
+        const gy = barY - (e.hp < e.maxHp ? 5 : 0);
         d.rect(sx - w / 2, gy, w, 2.5);
         d.fill({ color: 0x0f172a, alpha: 0.7 });
         d.rect(sx - w / 2, gy, w * frac, 2.5);
