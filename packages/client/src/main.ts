@@ -809,7 +809,11 @@ function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
 function selectUnit(unit: string): void {
   sound.play('ui');
   baseMode = false;
-  selectedUnit = selectedUnit === unit ? '' : unit;
+  // 같은 카드를 다시 누르면 해제된다(토글). **조용히** 풀리면 그다음
+  // 맵 클릭이 아무 일도 안 해서 "생산이 막혔다"로 읽힌다 — 말해 준다
+  const off = selectedUnit === unit;
+  selectedUnit = off ? '' : unit;
+  if (off) flash(`${getUnit(unit).name} 선택 해제 — 다시 누르면 배치`);
   refreshActionButtons();
 }
 
@@ -1369,8 +1373,11 @@ function updateHud(s: GameState): void {
     const node = f.tech.find((n) => n.unit === unit);
     const unlocked = isUnlocked(me, unit);
     const researching = me.research?.unit === unit;
+    // 침공은 연구가 봉인이다 — 해금은 파도 전리품(드래프트)뿐. 그런데도
+    // 연구 가능(🔬 점선)으로 보여 주면 "눌러도 안 되는 카드"가 되어
+    // 생산이 막힌 것처럼 읽힌다 (오너 보고, 라운드 42)
     const researchable =
-      !unlocked && !researching && canResearch(me, unit);
+      !s.invasion && !unlocked && !researching && canResearch(me, unit);
 
     el.classList.toggle('selected', selectedUnit === unit);
     el.classList.toggle(
@@ -1382,11 +1389,16 @@ function updateHud(s: GameState): void {
     el.classList.toggle('researching', researching);
 
     const lock = el.querySelector<HTMLElement>('.nlock')!;
-    lock.textContent = unlocked || researching ? '' : researchable ? '🔬' : '🔒';
+    lock.textContent = unlocked || researching
+      ? ''
+      : s.invasion ? '🎁' : researchable ? '🔬' : '🔒';
 
     const cost = el.querySelector<HTMLElement>('.ncost')!;
-    // 잠긴 카드의 숫자는 생산비가 아니라 연구비다 — 🔬로 구분한다
-    cost.textContent = unlocked ? String(u.cost) : `🔬${node?.cost ?? '?'}`;
+    // 잠긴 카드의 숫자는 생산비가 아니라 해금 경로다 — 대전은 연구비(🔬),
+    // 침공은 전리품(🎁)이라 숫자가 없다
+    cost.textContent = unlocked
+      ? String(u.cost)
+      : s.invasion ? '전리품' : `🔬${node?.cost ?? '?'}`;
 
     if (researching && me.research && node) {
       const frac = 1 - me.research.ticks / node.researchTicks;
