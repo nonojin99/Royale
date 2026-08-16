@@ -420,6 +420,46 @@
         "frames": 5,
         "fps": 12
       }
+    },
+    "hero_queen": {
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkside": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attack": {
+        "frames": 5,
+        "fps": 12
+      },
+      "attackside": {
+        "frames": 5,
+        "fps": 12
+      }
+    },
+    "hero_prophet": {
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attack": {
+        "frames": 5,
+        "fps": 12
+      },
+      "attackback": {
+        "frames": 5,
+        "fps": 12
+      }
     }
   },
   "bases": {
