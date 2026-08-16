@@ -85,6 +85,9 @@ import {
   waveAnchorOf,
   STAGE_REFUND_PCT,
   STAGE_REFUND_MAX,
+  STAGE_BUDGET_ROLLBACK_PCT,
+  INVASION_BUDGET_START,
+  waveTypeOf,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -2152,4 +2155,42 @@ test('대전·실험장에는 정산이 없다 (침공 전용)', () => {
   assert.equal(v.stage, 0, '대전은 무대를 모른다');
   // 그리고 대전의 보유 상한은 그대로다
   assert.ok(v.players[0].minerals <= MINERAL_MAX, `대전 미네랄은 상한 안 (${v.players[0].minerals})`);
+});
+
+test('무대를 넘기면 파도 예산이 되감긴다 (번호·조성 예고는 그대로)', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  assert.ok(pushStage(s), '무대를 넘겼다');
+  const waveAtBoundary = s.wave;
+  const budgetAfter = s.waveBudget;
+
+  // 같은 파도 번호까지 **한 무대에서** 밀었을 때의 예산과 비교한다
+  const flat = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  flat.stage = 2; // 목표 파도 게이트가 없는 무대 — 계속 스폰된다
+  while (flat.wave < waveAtBoundary) {
+    flat.nextWaveTick = flat.tick;
+    step(flat, []);
+    for (const e of flat.entities) if (e.team === 1 && e.kind === 'unit') e.hp = 0;
+    step(flat, []);
+  }
+
+  if (STAGE_BUDGET_ROLLBACK_PCT < 100) {
+    assert.ok(budgetAfter < flat.waveBudget,
+      `되감기가 예산을 물렸다 (무대 전환 후 ${budgetAfter} < 그냥 진행 ${flat.waveBudget})`);
+  }
+  // 번호는 이어진다 — 되감기가 번호를 건드리면 조성 예고와 보스 주기가
+  // 통째로 어긋난다. 크기만 물리고 리듬은 그대로여야 한다
+  assert.ok(s.wave >= RUN_STAGES[0].waves, `파도 번호는 이어진다 (${s.wave})`);
+  assert.equal(s.wave, flat.wave, '무대를 넘긴 쪽과 그냥 진행한 쪽의 파도 번호가 같다');
+  assert.equal(waveTypeOf(s.wave + 1), waveTypeOf(flat.wave + 1),
+    '다음 파도 조성 예고도 같다 (보스 주기 유지)');
+});
+
+test('되감기에도 예산은 시작값 아래로 내려가지 않는다', () => {
+  const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
+  assert.ok(pushStage(s), '2무대');
+  assert.ok(s.waveBudget >= INVASION_BUDGET_START,
+    `예산 하한 (${s.waveBudget} >= ${INVASION_BUDGET_START})`);
+  assert.ok(pushStage(s), '3무대');
+  assert.ok(s.waveBudget >= INVASION_BUDGET_START,
+    `두 번 되감아도 하한 (${s.waveBudget})`);
 });

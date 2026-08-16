@@ -328,6 +328,6 @@ export const STAGE_REFUND_MAX = 60 * MINERAL_SCALE;
  * 주기, HUD의 파도 표시는 그대로 이어지고 **크기만** 줄어든다. "새 전장에서
  * 다시 쌓는다"는 리셋 감각을 지키면서 벽만 낮추는 자리다.
  */
-export const STAGE_BUDGET_ROLLBACK_PCT = 100;
+export const STAGE_BUDGET_ROLLBACK_PCT = 55;
 /** 둥지 체력 — 파도를 헤치고 도달해야 하므로 넉넉히 */
 export const NEST_HP = 7000;
