@@ -82,6 +82,7 @@ import {
   step,
   summarizeReplay,
   verifyReplay,
+  waveAnchorOf,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -1993,4 +1994,54 @@ test('침공에서는 기지 포격이 일꾼을 갈아내지 않는다 (대전�
   assert.equal(inv.after, inv.before, '침공에서는 일꾼이 죽지 않는다');
   assert.ok(pvp.dealt > WORKER_LOSS_DAMAGE, `대전 기지가 충분히 맞았다 (${pvp.dealt})`);
   assert.ok(pvp.after < pvp.before, '대전에서는 일꾼이 갈려 나간다 (라운드 4 규칙 유지)');
+});
+
+/* ── 라운드 47: 파도 진입로 예고 ───────────────────────────────────────── */
+
+test('waveAnchorOf가 실제 스폰 위치와 일치한다 (예고가 거짓말하지 않는다)', () => {
+  const s = createState(13, ['steel', 'swarmhive'], 'siege', false, true);
+  // 다음 파도가 어디서 나올지 **미리** 묻는다
+  const predicted = waveAnchorOf(s, s.wave + 1);
+  const before = new Set(s.entities.filter((e) => e.team === 1).map((e) => e.id));
+
+  // 그 파도를 실제로 부른다
+  s.nextWaveTick = s.tick;
+  step(s, []);
+  const born = s.entities.filter((e) => e.team === 1 && !before.has(e.id));
+  assert.ok(born.length > 0, '파도가 실제로 나왔다');
+
+  // 새로 태어난 것들은 전부 예고 지점 둘레에 있어야 한다
+  for (const e of born) {
+    const d = Math.hypot(e.x - predicted[0], e.y - predicted[1]);
+    assert.ok(d < 8000, `예고(${predicted}) 둘레에서 태어났다 — ${e.unit} @${e.x},${e.y} d=${d}`);
+  }
+});
+
+test('파도 진입로는 세 모서리를 돌아간다 (한 방향에 몰리지 않는다)', () => {
+  const s = createState(13, ['steel', 'swarmhive'], 'siege', false, true);
+  const seen = [];
+  for (let w = 1; w <= 6; w++) seen.push(waveAnchorOf(s, w).join(','));
+  const uniq = new Set(seen);
+  assert.equal(uniq.size, 3, `세 모서리를 쓴다 — ${[...uniq].join(' / ')}`);
+  // 로테이션이므로 3파도 뒤에는 같은 자리로 돌아온다
+  assert.equal(seen[0], seen[3], '3파도 주기');
+  assert.equal(seen[1], seen[4], '3파도 주기');
+
+  // 내 본진 코앞 모서리는 쓰지 않는다
+  const main = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+  for (const a of uniq) {
+    const [ax, ay] = a.split(',').map(Number);
+    assert.ok(
+      Math.hypot(ax - main.x, ay - main.y) > 10000,
+      `진입로가 본진 코앞이 아니다 — ${a}`,
+    );
+  }
+});
+
+test('waveAnchorOf는 상태를 건드리지 않는다 (해시 불변 — 렌더러가 매 프레임 부른다)', () => {
+  const s = createState(21, ['steel', 'swarmhive'], 'siege', false, true);
+  for (let i = 0; i < 60; i++) step(s, []);
+  const before = hashState(s);
+  for (let w = 1; w <= 20; w++) waveAnchorOf(s, w);
+  assert.equal(hashState(s), before, '예고를 물어도 시뮬 상태는 그대로다');
 });

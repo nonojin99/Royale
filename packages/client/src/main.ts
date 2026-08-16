@@ -112,7 +112,18 @@ const net = new NetClient(serverUrl(), {
       stopOnboarding();
       // 침공은 채굴이 절반이라 일꾼이 대전보다 더 중요하다 — 첫 화면에서
       // 이걸 말해 주지 않으면 "유닛이 안 나온다"로 끝난다 (라운드 44)
-      flash('침공 — 채굴이 절반이다 · 일꾼(W)부터 늘려라 · 우클릭= 집결 깃발');
+      flash('침공 — 채굴이 절반이다 · 일꾼(W)부터 늘려라');
+      // 컨트롤은 따로 한 번 더. 붉은 화살표가 다음 파도 진입로이고, 병력을
+      // 그쪽으로 돌리는 손잡이가 전군 선택이다 — 둘을 한 문장에 묶는다 (라운드 47)
+      setTimeout(() => {
+        if (net.state?.invasion && !net.state.over) {
+          flash(
+            coarsePointer()
+              ? '붉은 화살표 = 다음 파도 진입로 · ▣ 전군 → 빈 땅 탭으로 보낸다 (길게 누르기 = 집결 깃발)'
+              : '붉은 화살표 = 다음 파도 진입로 · Ctrl+A(▣ 전군) → 우클릭으로 그쪽에 돌려라',
+          );
+        }
+      }, 5200);
     } else {
       startOnboarding();
     }
@@ -226,18 +237,24 @@ async function boot(): Promise<void> {
     ev.preventDefault();
     const st = net.state;
     if (!st) return;
+    // 안드로이드 크롬은 길게 누르기에서 contextmenu도 쏜다 — 우리 타이머가
+    // 400ms로 먼저 발화하므로, 이미 처리한 제스처를 두 번 세지 않는다
+    if (longPressFired || longPressTimer !== null) return;
     const [x, y] = pointerToArena(ev as unknown as PointerEvent);
     if (selectedIds.size > 0) {
-      // 죽은 유닛은 이미 걸러졌으므로 목록을 그대로 보낸다 (id 오름차순 — 결정론)
-      const ids = [...selectedIds].sort((a, b) => a - b).join(',');
-      net.act('move', ids, x, y);
-      sound.play('deploy');
+      // 죽은 유닛은 이미 걸러졌으므로 목록을 그대로 보낸다
+      commandMove(x, y);
       return;
     }
     if (st.invasion) {
       net.act('rally', '', x, y);
       sound.play('ui');
     }
+  });
+  // 손가락에서 길게 누르기가 브라우저 기본 동작(선택·확대)에 먹히지 않게 한다
+  canvas.addEventListener('pointercancel', () => {
+    clearLongPress();
+    dragBox = null;
   });
 
   buildFactionPicker();
@@ -247,16 +264,16 @@ async function boot(): Promise<void> {
 
   // 봇전 — 설정 화면(종족·맵)을 거쳐 시작한다 (라운드 11.5)
   $('start').addEventListener('click', () => showSetup('solo'));
-  $('btn-solo-start').addEventListener('click', () => {
-    net.connect(playerName(), selectedFaction, selectedMap, {
-      solo: true,
-      sandbox: selectedMode === 'sandbox',
-      invasion: selectedMode === 'invasion',
-      botLevel: selectedMode === 'versus' ? selectedLevel : undefined,
-    });
-    setStatus('접속 중…');
-    ($('btn-solo-start') as HTMLButtonElement).disabled = true;
-  });
+  $('btn-solo-start').addEventListener('click', startSolo);
+
+  // "다시 하기"가 리로드로 돌아온 자리 — 로비를 건너뛰고 바로 새 판을 연다
+  if (new URLSearchParams(location.search).get('again') === '1') {
+    // 주소는 지운다. 새로고침을 눌렀을 때 또 자동으로 시작되면 놀란다
+    const clean = new URL(location.href);
+    clean.searchParams.delete('again');
+    history.replaceState(null, '', clean.toString());
+    startSolo();
+  }
 
   // 방 만들기 → 코드 공유 → 상대 준비 → 방장 시작 (라운드 11 ③)
   $('btn-create').addEventListener('click', () => {
@@ -292,6 +309,7 @@ async function boot(): Promise<void> {
 
   $('btn-base').addEventListener('click', toggleBaseMode);
   $('btn-upgrade').addEventListener('click', requestUpgrade);
+  $('btn-selectall').addEventListener('click', selectAllUnits);
   attachTipHtml(
     $('btn-upgrade'),
     () =>
@@ -326,6 +344,12 @@ async function boot(): Promise<void> {
       selectedIds.clear();
       refreshActionButtons();
     }
+    // Ctrl+A = 전군 선택. 브라우저의 "문서 전체 선택"을 막고 가져온다
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A' || e.key === 'ㅁ')) {
+      e.preventDefault();
+      selectAllUnits();
+      return;
+    }
     // 숫자 = 생산 선택, Shift+숫자 = 그 칸 연구 시작 (라운드 9 피드백 #4).
     // Shift+숫자는 e.key가 '!','@' 등으로 변하므로 e.code로 읽는다
     const digit = e.code.startsWith('Digit') ? Number(e.code.slice(5)) : Number(e.key);
@@ -339,7 +363,55 @@ async function boot(): Promise<void> {
     }
   });
 
+  installTestHooks();
   requestAnimationFrame(frame);
+}
+
+/**
+ * E2E 하네스용 훅 (라운드 47).
+ *
+ * Playwright가 **빌드본**을 검사할 수 있어야 한다 — dev 서버는 HMR이 페이지를
+ * 리로드해 "다시 하기" 같은 판정을 오염시킨다(라운드 41에 한 번 당했다).
+ * 그런데 캔버스 안의 유닛 위치나 종료 화면은 DOM으로 읽을 수가 없다.
+ *
+ * 그래서 **읽기 전용 창문 두 개**만 낸다. 시뮬을 건드리지 않고, 서버 권위를
+ * 침범하지 않는다 — 상태를 바꾸는 건 종료 화면 미리보기 하나뿐이고 그것도
+ * 화면 표시일 뿐이다. 치팅 손잡이가 되지 않도록 명령을 내보내는 훅은 없다.
+ */
+function installTestHooks(): void {
+  const w = window as unknown as Record<string, unknown>;
+  // 내 유닛 좌표 — "명령을 내렸더니 정말 움직였나"를 확인하는 유일한 방법
+  w.__royalePos = (): Array<{ id: number; x: number; y: number }> => {
+    const s = net.state;
+    if (!s) return [];
+    return s.entities
+      .filter((e) => e.kind === 'unit' && e.team === net.myTeam)
+      .map((e) => ({ id: e.id, x: e.x, y: e.y }));
+  };
+  // 종료 화면 미리보기 — 다시 하기 버튼을 검사하려면 판을 져야 하는데,
+  // 실제로 지는 데 몇 분이 걸린다. 화면만 띄운다
+  w.__royaleShowOver = (): void => {
+    showOverlay('테스트', '종료 화면 미리보기');
+    showOverActions();
+  };
+  // 지금 어떤 판이 돌고 있나 — "다시 하기가 같은 모드로 이어지나"의 판정 근거
+  w.__royaleMode = (): { invasion: boolean; sandbox: boolean; tick: number; wave: number } | null => {
+    const s = net.state;
+    if (!s) return null;
+    return { invasion: s.invasion, sandbox: s.sandbox, tick: s.tick, wave: s.wave };
+  };
+}
+
+/** 지금 로비에 잡힌 설정으로 봇전을 연다 (시작 버튼 · 다시 하기 공용) */
+function startSolo(): void {
+  net.connect(playerName(), selectedFaction, selectedMap, {
+    solo: true,
+    sandbox: selectedMode === 'sandbox',
+    invasion: selectedMode === 'invasion',
+    botLevel: selectedMode === 'versus' ? selectedLevel : undefined,
+  });
+  setStatus('접속 중…');
+  ($('btn-solo-start') as HTMLButtonElement).disabled = true;
 }
 
 function playerName(): string {
@@ -470,9 +542,17 @@ let selectedMap =
 
 /** 맵 선택 — 종족 픽커와 같은 문법의 카드 줄 */
 /** 솔로 봇 난이도 (대전 전용) */
-let selectedLevel = 'normal';
-/** 게임 모드 — 모드가 맵 목록과 난이도 줄 표시를 결정한다 (라운드 26 분리) */
-let selectedMode: 'versus' | 'sandbox' | 'invasion' = 'versus';
+let selectedLevel = new URLSearchParams(location.search).get('level') ?? 'normal';
+/**
+ * 게임 모드 — 모드가 맵 목록과 난이도 줄 표시를 결정한다 (라운드 26 분리).
+ *
+ * 주소에서 읽는 이유는 "다시 하기"다 — 리로드로 판을 갈아엎으므로, 직전 판의
+ * 모드가 주소에 실려 있지 않으면 침공을 하다가 대전으로 떨어진다 (라운드 47)
+ */
+let selectedMode: 'versus' | 'sandbox' | 'invasion' = (() => {
+  const m = new URLSearchParams(location.search).get('mode');
+  return m === 'sandbox' || m === 'invasion' || m === 'versus' ? m : 'versus';
+})();
 
 function wireLevelPicker(): void {
   const root = document.getElementById('level-picker');
@@ -482,6 +562,8 @@ function wireLevelPicker(): void {
       selectedLevel = b.dataset.level ?? 'normal';
       root.querySelectorAll('.lvl').forEach((x) => x.classList.toggle('selected', x === b));
     });
+    // 주소에서 복원된 난이도를 버튼에도 반영한다 ("로비로"로 돌아온 자리)
+    b.classList.toggle('selected', b.dataset.level === selectedLevel);
   });
 }
 
@@ -494,7 +576,9 @@ function wireModePicker(): void {
       root.querySelectorAll('.mode').forEach((x) => x.classList.toggle('selected', x === b));
       applyModeToSetup();
     });
+    b.classList.toggle('selected', b.dataset.mode === selectedMode);
   });
+  applyModeToSetup(); // 복원된 모드에 맞춰 맵 목록·난이도 줄을 맞춘다
 }
 
 /** 모드에 맞춰 설정 화면을 재구성 — 전용 맵만 뜨고, 난이도는 대전에서만 */
@@ -1029,6 +1113,8 @@ function onPointerMove(ev: PointerEvent): void {
     const [dx, dy] = pointerToArena(ev);
     dragBox.x1 = dx;
     dragBox.y1 = dy;
+    // 손가락이 반 타일 넘게 움직였다 = 드래그다. 길게 누르기는 취소
+    if (Math.abs(dx - dragBox.x0) > 500 || Math.abs(dy - dragBox.y0) > 500) clearLongPress();
   }
   cursor = pointerToArena(ev);
 }
@@ -1043,6 +1129,7 @@ function onPointerDown(ev: PointerEvent): void {
   // 카드도 기지 모드도 아니면 좌클릭은 **선택**이다 — 드래그 박스를 연다
   if (!baseMode && !selectedUnit) {
     dragBox = { x0: x, y0: y, x1: x, y1: y };
+    if (isTouch(ev)) armLongPress(x, y);
     return;
   }
 
@@ -1115,29 +1202,39 @@ function onPointerUp(ev: PointerEvent): void {
   const s = net.state;
   const box = dragBox;
   dragBox = null;
+  clearLongPress();
   if (!s) return;
+  if (longPressFired) {
+    longPressFired = false;
+    return; // 길게 눌러 깃발을 꽂았다 — 떼는 동작까지 명령으로 세지 않는다
+  }
 
   const [x, y] = pointerToArena(ev);
   box.x1 = x;
   box.y1 = y;
-  if (!ev.shiftKey) selectedIds.clear();
 
   const lo = (a: number, b: number): number => (a < b ? a : b);
   const hi = (a: number, b: number): number => (a > b ? a : b);
   const w = Math.abs(box.x1 - box.x0);
   const h = Math.abs(box.y1 - box.y0);
+  const tap = w < 400 && h < 400;
+
+  // 터치 탭은 **선택이자 명령**이다 (라운드 47).
+  //
+  // 마우스는 우클릭이 명령이지만 손가락에는 우클릭이 없다 — 그래서 모바일에서
+  // 유닛을 고르고도 아무 데도 못 보냈다(오너 제보). 손가락에서는 빈 땅 탭을
+  // 이동 명령으로 읽는다. 내 유닛을 짚은 탭은 그대로 재선택이라, "고르고 →
+  // 빈 곳을 짚어 보낸다"가 한 손가락으로 이어진다.
+  if (tap && isTouch(ev) && selectedIds.size > 0 && nearestOwnUnit(s, x, y) < 0) {
+    commandMove(x, y);
+    return;
+  }
+
+  if (!ev.shiftKey) selectedIds.clear();
+
   // 사실상 점 클릭 — 커서에 가장 가까운 내 유닛 하나
-  if (w < 400 && h < 400) {
-    let best = -1;
-    let bestD = 1800 * 1800;
-    for (const e of s.entities) {
-      if (e.kind !== 'unit' || e.team !== net.myTeam) continue;
-      const d = (e.x - x) ** 2 + (e.y - y) ** 2;
-      if (d < bestD) {
-        bestD = d;
-        best = e.id;
-      }
-    }
+  if (tap) {
+    const best = nearestOwnUnit(s, x, y);
     if (best >= 0) selectedIds.add(best);
   } else {
     for (const e of s.entities) {
@@ -1148,6 +1245,96 @@ function onPointerUp(ev: PointerEvent): void {
     }
   }
   if (selectedIds.size > 0) sound.play('ui');
+}
+
+/* ── 부대 명령 (마우스 우클릭 · 손가락 탭 공용) ────────────────────────── */
+
+/** 손가락·펜인가. 마우스는 기존 우클릭 문법을 그대로 쓴다 */
+function isTouch(ev: PointerEvent): boolean {
+  return ev.pointerType === 'touch' || ev.pointerType === 'pen';
+}
+
+/** 이 기기의 주 포인터가 손가락인가 — 안내 문구를 고르는 데만 쓴다 */
+function coarsePointer(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+}
+
+/** 이 지점에서 1.8타일 안의 내 유닛 중 가장 가까운 것. 없으면 -1 */
+function nearestOwnUnit(s: GameState, x: number, y: number): number {
+  let best = -1;
+  let bestD = 1800 * 1800;
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== net.myTeam) continue;
+    const d = (e.x - x) ** 2 + (e.y - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = e.id;
+    }
+  }
+  return best;
+}
+
+/**
+ * 전군 선택 (Ctrl+A · HUD ▣ 전군, 라운드 47).
+ *
+ * 침공의 파도는 모서리를 돌아가며 온다. 그런데 병력을 한 방향에 세워 두면
+ * 다음 파도가 반대편으로 들어오고, 그 병력은 그 판 내내 아무것도 안 한다 —
+ * 오너가 "버려진 비용"이라 부른 상황이다. 화살표(진입로 예고)가 *어디로*
+ * 오는지를 알려주고, 이 버튼이 *전부 다* 그쪽으로 돌릴 손잡이가 된다.
+ * 드래그로 일일이 훑는 것보다 한 번이 빠르다.
+ */
+function selectAllUnits(): void {
+  const s = net.state;
+  if (!s) return;
+  selectedIds.clear();
+  for (const e of s.entities) {
+    if (e.kind === 'unit' && e.team === net.myTeam) selectedIds.add(e.id);
+  }
+  if (selectedIds.size === 0) {
+    flash('움직일 유닛이 없습니다');
+    return;
+  }
+  sound.play('ui');
+  flash(`전군 ${selectedIds.size}기 선택 — 우클릭(모바일은 탭)으로 보냅니다`);
+}
+
+/** 선택된 유닛을 그 자리로 보낸다 (id 오름차순 — 결정론) */
+function commandMove(x: number, y: number): void {
+  if (selectedIds.size === 0) return;
+  net.act('move', [...selectedIds].sort((a, b) => a - b).join(','), x, y);
+  sound.play('deploy');
+}
+
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressFired = false;
+
+/**
+ * 길게 누르기 = 집결 깃발 (터치 전용, 라운드 47).
+ *
+ * 우클릭의 나머지 절반이다 — 선택이 없을 때의 우클릭은 깃발이었는데, 손가락
+ * 에는 그 문법이 없었다. 400ms 동안 손가락이 반 타일 넘게 움직이지 않으면
+ * 깃발로 읽는다. 움직이면 드래그 선택이므로 취소된다(`onPointerMove`).
+ */
+function armLongPress(x: number, y: number): void {
+  clearLongPress();
+  longPressFired = false;
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    const s = net.state;
+    if (!s || !s.invasion) return;
+    longPressFired = true;
+    dragBox = null;
+    net.act('rally', '', x, y);
+    sound.play('ui');
+    flash('집결 깃발 — 같은 자리를 길게 누르면 해제');
+  }, 400);
+}
+
+function clearLongPress(): void {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
 }
 
 /** 시뮬의 봉쇄 금지 판정과 같은 검사 — 클릭 즉시 피드백을 주기 위한 미리보기 */
@@ -1557,27 +1744,56 @@ function showOverlay(title: string, sub: string): void {
 }
 
 /**
- * 종료 화면 액션 — 다시 하기 + 리플레이 보기.
+ * 종료 화면 액션 — 다시 하기 + 로비로 + 리플레이 보기.
  *
- * "다시 하기"는 새로고침이다. 세션·매치·리플레이 상태를 전부 처음부터 다시
- * 만드는 것이 부분 초기화를 유지보수하는 것보다 훨씬 안전하다. 종족 선택은
- * URL 쿼리에 실려 있어 그대로 살아남는다.
+ * 새로고침으로 판을 갈아엎는 방식은 그대로다. 세션·매치·리플레이 상태를
+ * 전부 처음부터 다시 만드는 것이 부분 초기화를 유지보수하는 것보다 훨씬
+ * 안전하다.
+ *
+ * **바뀐 것은 착지점이다** (오너 제보, 라운드 47). 지금까지 "다시 하기"는
+ * 리로드만 하고 **로비에 내려놓았다.** 그래서 한 판 더 하려면 시작 →
+ * 모드 → 맵 → 시작을 다시 클릭해야 했고, 오너에게는 버튼이 아무것도 안 한
+ * 것으로 보였다("첫 화면 돌아간 뒤 후속 게임 해야함"). 로그라이트에서 런을
+ * 반복하는 것이 기본 동작인데 그 길이 네 번의 클릭이면 안 된다.
+ *
+ * 이제 직전 판의 **설정 전부**(종족·모드·맵·봇 난이도)를 주소에 실어 리로드
+ * 하고, 부팅 때 `again=1`을 보면 로비를 건너뛰고 바로 시작한다. 설정을 바꾸고
+ * 싶은 사람을 위해 "로비로"를 옆에 둔다.
+ *
+ * 주소 대입(`location.href = url`) 대신 `replaceState` + `reload()`를 쓴다 —
+ * 같은 문자열을 대입하면 리로드를 생략하는 브라우저가 있어서, 두 번째 판부터
+ * 조용히 죽는 길을 아예 만들지 않는다.
  */
 function showOverActions(replayId?: string): void {
   const root = $('over-actions');
   root.replaceChildren();
   root.classList.remove('hidden');
 
+  /** 직전 판의 설정을 주소에 실어 리로드한다. `again`이면 착지하자마자 시작 */
+  const reboot = (again: boolean): void => {
+    const url = new URL(location.href);
+    url.searchParams.set('faction', selectedFaction);
+    url.searchParams.set('map', selectedMap);
+    url.searchParams.set('mode', selectedMode);
+    url.searchParams.set('level', selectedLevel);
+    url.searchParams.delete('replay');
+    if (again) url.searchParams.set('again', '1');
+    else url.searchParams.delete('again');
+    history.replaceState(null, '', url.toString());
+    location.reload();
+  };
+
   const again = document.createElement('button');
   again.id = 'btn-again';
   again.textContent = '다시 하기';
-  again.addEventListener('click', () => {
-    const url = new URL(location.href);
-    url.searchParams.set('faction', selectedFaction);
-    url.searchParams.delete('replay');
-    location.href = url.toString();
-  });
+  again.addEventListener('click', () => reboot(true));
   root.appendChild(again);
+
+  const lobby = document.createElement('button');
+  lobby.id = 'btn-lobby';
+  lobby.textContent = '로비로';
+  lobby.addEventListener('click', () => reboot(false));
+  root.appendChild(lobby);
 
   if (replayId) {
     const view = document.createElement('a');

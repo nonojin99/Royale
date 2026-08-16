@@ -803,43 +803,7 @@ function spawnWave(s: GameState): void {
   );
   s.nextWaveTick = s.tick + Math.trunc(interval);
 
-  // 스폰 모서리 로테이션 — 파도마다 다른 방향에서 온다 ("사방에서 쏟아진다").
-  // 내 본진에서 가장 먼 세 모서리를 돌아가며 쓴다
-  const myMain = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
-  const M = 5000;
-  const corners: Array<[number, number]> = [
-    [M, M],
-    [ARENA_W - M, M],
-    [M, ARENA_H - M],
-    [ARENA_W - M, ARENA_H - M],
-  ];
-  if (myMain) {
-    corners.sort(
-      (a, b) =>
-        dist2(b[0], b[1], myMain.x, myMain.y) - dist2(a[0], a[1], myMain.x, myMain.y),
-    );
-    corners.length = 3; // 내 본진 코앞 모서리는 제외
-  }
-  const anchor = corners[(s.wave - 1) % corners.length];
-  // 모서리가 물·벽이면 곁의 통행 타일로 (고정 나선 — 결정론)
-  let [cx, cy] = anchor;
-  {
-    const tx0 = Math.trunc(cx / 1000);
-    const ty0 = Math.trunc(cy / 1000);
-    outer: for (let r = 0; r < 12; r++) {
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const cheb = Math.abs(dx) > Math.abs(dy) ? Math.abs(dx) : Math.abs(dy);
-          if (cheb !== r) continue;
-          if (!blockedAt((tx0 + dx) * 1000 + 500, (ty0 + dy) * 1000 + 500)) {
-            cx = (tx0 + dx) * 1000 + 500;
-            cy = (ty0 + dy) * 1000 + 500;
-            break outer;
-          }
-        }
-      }
-    }
-  }
+  const [cx, cy] = waveAnchorOf(s, s.wave);
 
   // 파도 타입 — 5파도마다 특수(공중/공성/러시), 10파도마다 보스.
   // 예고(waveTypeOf)와 같은 함수를 쓰므로 HUD가 거짓말하지 않는다
@@ -1420,6 +1384,53 @@ export function waveTypeOf(n: number): WaveType {
   if (n % 10 === 0) return 'boss';
   if (n % 5 === 0) return (['air', 'siege', 'rush'] as const)[Math.trunc(n / 5) % 3];
   return 'normal';
+}
+
+/**
+ * 이 파도가 **어느 모서리에서 쏟아지는가** (침공 전용).
+ *
+ * `spawnWave`가 쓰는 바로 그 함수다 — 그래서 클라이언트가 다음 파도(`wave+1`)를
+ * 넣고 부르면 **아직 오지 않은 파도의 방향**을 정확히 안다. 예고 화살표가
+ * 거짓말을 하지 않는 유일한 방법이 이것이다 (`waveTypeOf`와 같은 원칙).
+ *
+ * 모서리 로테이션: 내 본진에서 가장 먼 세 모서리를 파도마다 돌아가며 쓴다
+ * ("사방에서 쏟아진다"). 모서리가 물·벽이면 곁의 통행 타일로 밀어낸다 —
+ * 고정 나선이라 결정론이 유지된다.
+ */
+export function waveAnchorOf(s: GameState, wave: number): [number, number] {
+  const myMain = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+  const M = 5000;
+  const corners: Array<[number, number]> = [
+    [M, M],
+    [ARENA_W - M, M],
+    [M, ARENA_H - M],
+    [ARENA_W - M, ARENA_H - M],
+  ];
+  if (myMain) {
+    corners.sort(
+      (a, b) =>
+        dist2(b[0], b[1], myMain.x, myMain.y) - dist2(a[0], a[1], myMain.x, myMain.y),
+    );
+    corners.length = 3; // 내 본진 코앞 모서리는 제외
+  }
+  const n = wave > 0 ? wave : 1;
+  let [cx, cy] = corners[(n - 1) % corners.length];
+  const tx0 = Math.trunc(cx / 1000);
+  const ty0 = Math.trunc(cy / 1000);
+  outer: for (let r = 0; r < 12; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const cheb = Math.abs(dx) > Math.abs(dy) ? Math.abs(dx) : Math.abs(dy);
+        if (cheb !== r) continue;
+        if (!blockedAt((tx0 + dx) * 1000 + 500, (ty0 + dy) * 1000 + 500)) {
+          cx = (tx0 + dx) * 1000 + 500;
+          cy = (ty0 + dy) * 1000 + 500;
+          break outer;
+        }
+      }
+    }
+  }
+  return [cx, cy];
 }
 
 export function hasRelic(p: PlayerState, id: string): boolean {

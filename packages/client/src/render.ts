@@ -28,6 +28,7 @@ import {
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
   RALLY_ARRIVE,
+  TICK_RATE,
   WALLS,
   blockedTile,
   elevTile,
@@ -44,6 +45,8 @@ import {
   isCloakedNow,
   isHiddenFrom,
   siteReachable,
+  waveAnchorOf,
+  waveTypeOf,
   workersAtBase,
 } from '@royale/shared';
 
@@ -1905,6 +1908,8 @@ export class Renderer {
     const g = this.gOverlay;
     g.clear();
 
+    this.drawWaveArrows(g, input);
+
     // 드래그 선택 박스
     if (input.dragBox) {
       const [ax, ay] = this.toScreen(input.dragBox.x0, input.dragBox.y0, input.myTeam);
@@ -1954,6 +1959,98 @@ export class Renderer {
       color: input.cursorValid ? 0x4ade80 : 0xef4444,
       alpha: 0.95,
     });
+  }
+
+  /**
+   * 파도 진입로 화살표 (침공 전용, 라운드 47).
+   *
+   * 침공은 **파도마다 다른 모서리에서 온다.** 그런데 그 사실이 화면에 없었다.
+   * HUD가 "다음: 5파도 · 공중"이라고 말해도 *어디로* 오는지는 안 알려주니,
+   * 사방에 병력을 흩어 놓고 매번 절반이 놀게 된다 — 오너가 "버려진 비용"이라
+   * 부른 것이 이것이다.
+   *
+   * 두 개를 그린다:
+   * - **붉은 화살표**: 다음 파도의 진입로. 스폰 앵커에서 내 본진 쪽을 가리킨다.
+   *   남은 시간이 줄수록 굵고 진해지고 맥동이 빨라진다 — 준비 시간이 곧 굵기다
+   * - **주황 화살표(옅게)**: 지금 살아 있는 파도가 들어온 길. 화면 밖에서
+   *   벌어지는 싸움의 방향을 잃지 않게 한다
+   *
+   * 좌표는 `waveAnchorOf` — 시뮬이 실제로 쓰는 그 함수다. 예고가 거짓말할 수
+   * 없는 구조(`waveTypeOf`와 같은 원칙).
+   */
+  private drawWaveArrows(g: Graphics, input: RenderInput): void {
+    const s = input.state;
+    if (!s.invasion || s.over) return;
+    const home = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
+    if (!home) return;
+
+    // 지금 오고 있는 파도 — 이미 들어온 길이라 옅게 남긴다
+    if (s.waveAlive && s.wave > 0) {
+      this.waveArrow(g, input, waveAnchorOf(s, s.wave), home, 0xfb923c, 0.3, 1);
+    }
+
+    // 다음 파도 — 임박할수록 강해진다
+    const left = (s.nextWaveTick - s.tick) / TICK_RATE;
+    if (left > 30) return; // 30초 넘게 남았으면 아직 소음이다
+    const urgency = left <= 0 ? 1 : 1 - left / 30;
+    const pulse = 1 + 0.14 * Math.sin(this.nowMs / (420 - 260 * urgency));
+    this.waveArrow(
+      g,
+      input,
+      waveAnchorOf(s, s.wave + 1),
+      home,
+      waveTypeOf(s.wave + 1) === 'boss' ? 0xa855f7 : 0xef4444,
+      (0.35 + 0.5 * urgency) * pulse,
+      0.9 + 1.5 * urgency,
+    );
+  }
+
+  /** 앵커에서 본진 쪽으로 굵은 화살표 하나. `weight`는 굵기 배율 */
+  private waveArrow(
+    g: Graphics,
+    input: RenderInput,
+    anchor: [number, number],
+    home: Entity,
+    color: number,
+    alpha: number,
+    weight: number,
+  ): void {
+    const [ax, ay] = this.toScreen(anchor[0], anchor[1], input.myTeam);
+    const [hx, hy] = this.toScreen(home.x, home.y, input.myTeam);
+    const dx = hx - ax;
+    const dy = hy - ay;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1) return;
+    const ux = dx / d;
+    const uy = dy / d;
+    // 앵커 바로 위에서 시작해 본진 쪽으로 5.5타일 — 전장을 가로지르지 않는다
+    const x0 = ax + ux * PX_PER_TILE * 0.9;
+    const y0 = ay + uy * PX_PER_TILE * 0.9;
+    const len = Math.min(PX_PER_TILE * 5.5, d - PX_PER_TILE * 2);
+    if (len < PX_PER_TILE) return;
+    const headLen = PX_PER_TILE * 2.0;
+    const halfW = PX_PER_TILE * 0.42 * weight;
+    const headHalf = PX_PER_TILE * 1.05 * weight;
+    // 꼬리 끝(머리 밑동)
+    const bx = x0 + ux * (len - headLen);
+    const by = y0 + uy * (len - headLen);
+    const px = -uy;
+    const py = ux;
+
+    g.moveTo(x0 + px * halfW, y0 + py * halfW);
+    g.lineTo(bx + px * halfW, by + py * halfW);
+    g.lineTo(bx + px * headHalf, by + py * headHalf);
+    g.lineTo(x0 + ux * len, y0 + uy * len);
+    g.lineTo(bx - px * headHalf, by - py * headHalf);
+    g.lineTo(bx - px * halfW, by - py * halfW);
+    g.lineTo(x0 - px * halfW, y0 - py * halfW);
+    g.closePath();
+    g.fill({ color, alpha: alpha * 0.55 });
+    g.stroke({ width: 2, color, alpha });
+
+    // 앵커 자리에 고리 하나 — "여기서 나온다"
+    g.circle(ax, ay, PX_PER_TILE * 1.1 * weight);
+    g.stroke({ width: 2, color, alpha: alpha * 0.8 });
   }
 
   /* ── 텍스트 풀 ───────────────────────────────────────────────────────── */

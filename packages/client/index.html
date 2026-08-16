@@ -136,6 +136,18 @@
       margin-top: 6px;
     }
     #over-actions.hidden { display: none; }
+    #btn-lobby {
+      padding: 11px 20px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      clip-path: var(--cut-sm);
+      background: #10192c;
+      color: var(--muted);
+      font-family: var(--font-pixel);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #btn-lobby:hover { color: var(--text); border-color: #334155; }
     #btn-again {
       padding: 11px 28px;
       border: none;
@@ -239,6 +251,8 @@
     #btn-upgrade { border-color: var(--tech); color: var(--tech); }
     #btn-upgrade.working { background: #2b2145; }
     #btn-tech.open { background: #2b2145; border-color: var(--tech); color: var(--tech); }
+    #btn-selectall { border-color: #4ade80; color: #4ade80; }
+    #btn-selectall.active { background: #4ade80; color: #10231a; }
     #actions button:disabled { opacity: .4; cursor: default; }
 
     /* 유닛 팔레트 */
@@ -704,6 +718,7 @@
     <div id="actions">
       <button id="btn-base" type="button">기지 건설 (12)</button>
       <button id="btn-upgrade" type="button">⚔ 강화</button>
+      <button id="btn-selectall" type="button">▣ 전군</button>
     </div>
 
     <div id="palette"></div>
