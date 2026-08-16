@@ -1055,11 +1055,16 @@ export class Renderer {
             entryDy = -PX_PER_TILE * 3.2 * dep * dep; // 낙하 — 마지막에 빨라진다
           }
         }
+        // 영웅만 코드가 덩치를 준다 (라운드 41).
+        //
+        // 원칙은 "크기는 그림 안의 비율로"지만(§ART_ORDERS 4), 영웅은 예외다:
+        // 모든 유닛이 같은 높이로 정규화되므로 아무리 크게 그려도 소총병과
+        // 같은 키가 된다. 전장에 하나뿐인 유닛은 실루엣만으로 구분돼야 한다
         const sp2 = this.place(
           tex,
           sx,
           by - bob + entryDy,
-          UNIT_SPRITE_H,
+          UNIT_SPRITE_H * (u.hero ? 1.3 : 1),
           0.88,
           this.facingOf(e, p, myTeam),
         );

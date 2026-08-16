@@ -394,6 +394,32 @@
         "frames": 1,
         "fps": 1
       }
+    },
+    "hero_commander": {
+      "walk": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkback": {
+        "frames": 5,
+        "fps": 10
+      },
+      "walkside": {
+        "frames": 5,
+        "fps": 10
+      },
+      "attack": {
+        "frames": 4,
+        "fps": 12
+      },
+      "attackback": {
+        "frames": 3,
+        "fps": 12
+      },
+      "attackside": {
+        "frames": 5,
+        "fps": 12
+      }
     }
   },
   "bases": {
