@@ -1069,33 +1069,35 @@ function onPointerDown(ev: PointerEvent): void {
   if (!selectedUnit) return;
   const me = s.players[net.myTeam];
   if (!isUnlocked(me, selectedUnit)) {
-    flash('해금되지 않은 유닛');
+    warn(`${getUnit(selectedUnit).name}은(는) 아직 해금되지 않았습니다`);
     return;
   }
-  if (me.minerals < getUnit(selectedUnit).cost * MINERAL_SCALE) {
-    flash('미네랄 부족');
+  const need = getUnit(selectedUnit).cost * MINERAL_SCALE;
+  if (me.minerals < need) {
+    // 얼마가 모자란지까지 말한다 — "부족"만으로는 얼마나 기다릴지 모른다
+    warn(
+      `미네랄 부족 — ${getUnit(selectedUnit).name} ${need / MINERAL_SCALE} 필요` +
+        ` · 보유 ${(me.minerals / MINERAL_SCALE).toFixed(1)}`,
+    );
     return;
   }
   // 주문은 전장 어디든 떨어진다 — 반경 검사는 유닛·건물에만
   if (getUnit(selectedUnit).kind !== 'spell' && !deployable(s, x, y)) {
-    flash('내 기지 반경 안에만 배치할 수 있습니다');
+    warn('기지 반경(초록 원) 안에만 배치할 수 있습니다');
     return;
   }
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 시뮬이 거절하므로,
   // 전송 전에 같은 판정을 미리 해 즉시 알린다 (라운드 29)
   if (s.invasion && getUnit(selectedUnit).kind === 'building' && me.wallCharges <= 0) {
-    sound.play('error');
-    flash('방벽 설치권을 다 썼습니다 — 파도를 넘기면 한 장 보충됩니다');
+    warn('방벽 설치권을 다 썼습니다 — 파도를 넘기면 한 장 보충됩니다');
     return;
   }
   if (s.invasion && getUnit(selectedUnit).kind === 'building' && wouldSeal(s, x, y)) {
-    sound.play('error');
-    flash('여기를 막으면 적이 올 길이 사라집니다 — 길은 하나 남겨야 합니다');
+    warn('여기를 막으면 적이 올 길이 사라집니다 — 길은 하나 남겨야 합니다');
     return;
   }
   if (!net.live) {
-    sound.play('error');
-    flash('서버와 연결이 끊겼습니다 — 명령이 전달되지 않습니다');
+    warn('서버와 연결이 끊겼습니다 — 명령이 전달되지 않습니다');
     return;
   }
   // 실험장: Alt+클릭이면 상대 팀으로 배치 — 상성을 부딪혀 보는 손잡이
@@ -1631,9 +1633,26 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null;
 function flash(text: string): void {
   const el = $('toast');
   el.textContent = text;
+  el.classList.remove('warn');
   el.classList.add('show');
   if (flashTimer) clearTimeout(flashTimer);
   flashTimer = setTimeout(() => el.classList.remove('show'), 1400);
+}
+
+/**
+ * 거절 알림 — 붉고 오래 남고 소리가 난다.
+ *
+ * 오너 신고: "선택은 되는데 맵을 클릭해도 아무 일이 없다". 실제로는 거절
+ * 메시지가 뜨고 있었지만, 파도 한복판에서 1.4초짜리 회색 토스트는 보이지
+ * 않는다. **거절은 사건이다** — 사건답게 알린다 (라운드 42)
+ */
+function warn(text: string): void {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.add('show', 'warn');
+  sound.play('error');
+  if (flashTimer) clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
 boot().catch((err) => {

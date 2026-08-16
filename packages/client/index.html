@@ -663,12 +663,22 @@
     #tooltip .tt-warn { color: #fbbf24; }
 
     #toast {
-      position: fixed; bottom: 240px;
+      /* 가로 가운데 정렬 — 없으면 화면 **왼쪽 끝**에 붙어서, 본진을 보고
+         있는 플레이어의 시야 밖에 뜬다 (라운드 42에 스크린샷으로 확인) */
+      position: fixed; bottom: 240px; left: 50%; transform: translateX(-50%);
+      max-width: min(560px, 86vw); text-align: center;
       background: rgba(15,23,42,.95); border: 1px solid var(--line);
       padding: 8px 16px; border-radius: 999px; font-size: 13px;
       opacity: 0; transition: opacity 150ms ease; pointer-events: none; z-index: 20;
     }
     #toast.show { opacity: 1; }
+    /* 거절은 눈에 띄어야 한다 — 파도 한복판에서 1.4초 회색 토스트는
+       그냥 안 보인다. 붉게, 크게, 조금 더 오래 (라운드 42) */
+    #toast.warn {
+      background: rgba(80, 12, 20, .96); border-color: #f87171; color: #fee2e2;
+      font-weight: 700; font-size: 14px; padding: 10px 20px;
+      box-shadow: 0 0 22px rgba(248, 113, 113, .35);
+    }
   </style>
 </head>
 <body>
