@@ -189,18 +189,24 @@ const HIGH_RECTS: readonly (readonly [number, number, number, number])[] = [
 
 const COAST_SITES: readonly BaseSite[] = [
   { id: 0, x: tiles(5), y: tiles(5), startFor: 1, label: '위 본진' },
-  { id: 1, x: tiles(19), y: tiles(5), startFor: -1, label: '위 우측' },
+  { id: 1, x: tiles(27), y: tiles(11), startFor: -1, label: '위 측면' },
   { id: 2, x: tiles(5), y: tiles(15), startFor: -1, label: '위 앞마당' },
   { id: 3, x: tiles(21), y: tiles(22), startFor: -1, label: '중앙 위' },
   { id: 4, x: tiles(26), y: tiles(25), startFor: -1, label: '중앙 아래' },
   { id: 5, x: tiles(42), y: tiles(32), startFor: -1, label: '아래 앞마당' },
-  { id: 6, x: tiles(28), y: tiles(42), startFor: -1, label: '아래 좌측' },
+  { id: 6, x: tiles(20), y: tiles(36), startFor: -1, label: '아래 측면' },
   { id: 7, x: tiles(42), y: tiles(42), startFor: 0, label: '아래 본진' },
   { id: 8, x: tiles(2), y: tiles(21), startFor: -1, label: '서쪽 섬' },
   { id: 9, x: tiles(45), y: tiles(26), startFor: -1, label: '동쪽 섬' },
-  // 앞마당과 중앙 사이의 디딤돌 — 중앙 사슬이 여기서 열린다
-  { id: 10, x: tiles(13), y: tiles(19), startFor: -1, label: '위 어귀' },
-  { id: 11, x: tiles(34), y: tiles(28), startFor: -1, label: '아래 어귀' },
+  // 앞마당과 중앙 사이의 디딤돌 — 중앙 사슬이 여기서 열린다.
+  //
+  // 라운드 50에 바깥으로 밀었다. 예전 자리(13,19)/(34,28)는 어귀라는
+  // 이름과 달리 양쪽 다 자기 뒤뜰이었다 — 본진에서 16타일, 적 본진에서
+  // 37타일. 측면(1·6)까지 합쳐 **뒤뜰이 넷**이라 4기지를 전부 안전하게
+  // 깔 수 있었고, 군대 하나가 그 넷을 다 지켰다. 확장을 벌줄 방법이 없으니
+  // 경제 전략에 카운터가 생기지 않았다 (실측: GREED가 TECH에 100%)
+  { id: 10, x: tiles(13), y: tiles(26), startFor: -1, label: '위 어귀' },
+  { id: 11, x: tiles(34), y: tiles(21), startFor: -1, label: '아래 어귀' },
 ];
 
 const COAST: MapDef = {

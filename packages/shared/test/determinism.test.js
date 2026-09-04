@@ -2304,7 +2304,9 @@ test('시야 안에 들어온 적은 보이고 타겟이 된다', () => {
 test('안개는 본진도 가린다 — 시야 밖이면 무엇이든 안 보인다', () => {
   const s = createState(5, MIRROR);
   s.players[1].minerals = BASE_BUILD_COST;
-  const site = BASE_SITES.find((b) => b.id === 1);
+  // 자리 id를 박아 두면 지도를 손질할 때마다 깨진다 — 닿는 자리를 찾아 쓴다
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 1, b));
+  assert.ok(site, '팀1이 닿는 확장 자리가 없다');
   assert.ok(applyCommand(s, cmd(0, 1, 'base', '', site.x, site.y)), '확장이 세워지지 않았다');
   const expansion = s.entities.find((e) => e.kind === 'base' && e.team === 1 && !e.isMain);
   const foeMain = mainBase(s, 1);
