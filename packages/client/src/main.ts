@@ -1657,8 +1657,22 @@ function updateHud(s: GameState): void {
   } else {
     const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
     const left = Math.max(0, Math.ceil((limit - s.tick) / TICK_RATE));
+    // 생산이 예약제가 된 이상(라운드 50) 예약이 화면에 보여야 한다 — 안 그러면
+    // 카드를 눌러도 아무 일이 없는 것처럼 읽힌다. 가장 급한 하나의 남은 시간과
+    // 전체 예약 수를 함께 보인다
+    let queued = 0;
+    let soonest = Infinity;
+    for (const q of s.queue) {
+      if (q.team !== net.myTeam) continue;
+      queued++;
+      if (q.left < soonest) soonest = q.left;
+    }
+    const queueTag = queued
+      ? ` · 🏭 ${queued}${soonest < Infinity ? ` (${Math.ceil(soonest / TICK_RATE)}초)` : ''}`
+      : '';
     $('timer').textContent =
-      `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` +
+      queueTag;
   }
 
   // 통합 트리 — 해금 노드는 생산 카드, 잠긴 노드는 연구 카드로 갱신한다

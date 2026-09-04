@@ -226,7 +226,7 @@ const defs: UnitDef[] = [
     // 첫 뭉치를 못 버티면 웅크림 전략 자체가 성립하지 않는다. 다만 전량
     // 상향은 과했다 — RUSH vs TECH 55%→35%로 뒤집혔다. 절반만 준다
     id: 'bulwark', name: '방벽', cost: 2, kind: 'building',
-    hp: 1000, damage: 182, hitSpeed: seconds(0.8, TICK_RATE),
+    hp: 1000, damage: 196, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0x78716c,
     // 지뢰 부설 — 9초마다 둘레에 한 기, 셋까지. 벽이 스스로 지뢰밭을 기른다
     ability: { kind: 'mine', charge: seconds(9, TICK_RATE), radius: tiles(3.0), power: 3 },
@@ -273,7 +273,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'spinetentacle', name: '가시촉수', cost: 2, kind: 'building',
-    hp: 950, damage: 225, hitSpeed: seconds(1.0, TICK_RATE),
+    hp: 950, damage: 242, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: 0, targets: 'ground',
     lifetime: BUILDING_LIFE, color: 0x9f1239,
   }),
@@ -346,7 +346,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'lightpylon', name: '빛기둥', cost: 2, kind: 'building',
-    hp: 900, damage: 192, hitSpeed: seconds(0.9, TICK_RATE),
+    hp: 900, damage: 206, hitSpeed: seconds(0.9, TICK_RATE),
     // 하늘색(0x38bdf8)은 렌더러의 아군 팀 색과 겹쳐서, 적 빛기둥이 아군 건물처럼
     // 보인다. 카드 색은 팀 색과 반드시 구분되어야 한다.
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0xfcd34d,

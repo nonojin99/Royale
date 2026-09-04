@@ -97,6 +97,7 @@ import {
   UNIT_RADIUS_SMALL,
   HIGH_GROUND_SIGHT_PCT,
   reachOf,
+  PRODUCE_QUEUE_MAX,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -106,6 +107,20 @@ const MIRROR = ['steel', 'steel'];
 
 /** 자원이 문제가 아님을 분명히 하는 넉넉한 보유량 (상한은 없다) */
 const RICH = 100 * MINERAL_SCALE;
+
+/**
+ * 생산을 명령하고 **유닛이 나올 때까지** 돌린다 (라운드 50: 대전은 예약제).
+ * 반환값은 새로 나온 엔티티들. 명령이 거절되면 null.
+ */
+function produceAndWait(s, team, unitId, x, y, maxTicks = 400) {
+  const before = s.entities.length;
+  if (!applyCommand(s, cmd(s.tick, team, 'unit', unitId, x, y))) return null;
+  for (let i = 0; i < maxTicks; i++) {
+    step(s, []);
+    if (s.entities.length > before) return s.entities.slice(before);
+  }
+  return [];
+}
 
 const cmd = (execTick, team, kind, id, x = 0, y = 0) => ({ execTick, team, kind, id, x, y });
 
@@ -499,14 +514,12 @@ test('기지 반경 안에만 유닛을 배치할 수 있다', () => {
   for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   const unitId = getFaction('steel').tech.find((n) => n.cost === 0).unit;
 
-  const before = s.entities.length;
   // 본진에서 아주 먼 곳 (강 건너)
-  step(s, [cmd(s.tick, 0, 'unit', unitId, 9000, 3000)]);
-  assert.equal(s.entities.length, before, '기지에서 먼 곳에 배치되었다');
+  assert.equal(produceAndWait(s, 0, unitId, 9000, 3000), null, '기지에서 먼 곳에 배치되었다');
 
   const [x, y] = nearOwnBase(s, 0, 0, -2000);
-  step(s, [cmd(s.tick, 0, 'unit', unitId, x, y)]);
-  assert.ok(s.entities.length > before, '기지 근처인데 배치되지 않았다');
+  const made = produceAndWait(s, 0, unitId, x, y);
+  assert.ok(made && made.length > 0, '기지 근처인데 배치되지 않았다');
 });
 
 test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다', () => {
@@ -1392,12 +1405,9 @@ test('침공 집결 깃발 — 수비군이 모이고, 재지정은 해제, 지�
 test('이동 명령 — 전진 본능을 이기고 도착하면 스스로 해제, 남의 유닛은 못 움직인다', () => {
   const s = createState(9, ['steel', 'swarmhive'], 'coast');
   const main = s.entities.find((e) => e.kind === 'base' && e.team === 0);
-  for (let i = 0; i < 3; i++) {
-    applyCommand(s, {
-      execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
-      x: main.x + (i - 1) * 900, y: main.y - 1200,
-    });
-  }
+  s.players[0].minerals = RICH;
+  // 대전은 예약제라 굽는 시간이 필요하다 (라운드 50)
+  produceAndWait(s, 0, 'rifleman', main.x, main.y - 1200);
   for (let i = 0; i < 25; i++) step(s, []);
   const mine = () => s.entities.filter((e) => e.kind === 'unit' && e.team === 0);
   const ids = mine().map((e) => e.id);
@@ -2414,10 +2424,8 @@ test('집결지(Y)는 대전에서 갓 생산된 유닛을 그리로 보낸다',
   const ry = home.y - 4000;
   assert.ok(applyCommand(s, cmd(0, 0, 'rally', '', rx, ry)), '대전에서 집결지가 거절됐다');
 
-  const before = s.entities.length;
-  assert.ok(applyCommand(s, cmd(0, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
-  const made = s.entities.slice(before);
-  assert.ok(made.length > 0, '유닛이 생산되지 않았다');
+  const made = produceAndWait(s, 0, 'rifleman', home.x, home.y - 1000);
+  assert.ok(made && made.length > 0, '유닛이 생산되지 않았다');
   for (const e of made) {
     assert.equal(e.orderX, rx, '갓 나온 유닛이 집결지로 가지 않는다');
     assert.equal(e.orderY, ry);
@@ -2706,10 +2714,11 @@ test('충전 스킬은 유닛마다 다른 시간을 쓰고, 술사는 게이지
   s.players[0].minerals = RICH;
   s.players[0].unlocked = [...s.players[0].unlocked, 'mystic'].sort();
   const home = mainBase(s, 0);
-  const before = s.entities.length;
-  assert.ok(applyCommand(s, cmd(0, 0, 'unit', 'mystic', home.x, home.y - 1000)));
-  const made = s.entities.slice(before);
-  assert.ok(made.length > 0 && made[0].charge === mystic.chargeStart, '생산된 술사의 게이지가 비었다');
+  const made = produceAndWait(s, 0, 'mystic', home.x, home.y - 1000);
+  assert.ok(
+    made && made.length > 0 && made[0].charge === mystic.chargeStart,
+    '생산된 술사의 게이지가 비었다',
+  );
 });
 
 test('지상 전용 시전자의 주문도 지상만 때린다', () => {
@@ -2717,4 +2726,123 @@ test('지상 전용 시전자의 주문도 지상만 때린다', () => {
   // "못 때리는 유닛이 때린다"가 된다
   assert.equal(getUnit('mystic').targets, 'ground');
   assert.equal(getUnit('mindbreak').targets, 'ground');
+});
+
+/* ── 생산 예약 (라운드 50 — 보유 상한 제거의 짝) ───────────────────────── */
+
+test('대전 생산은 코스트만큼 시간이 걸린다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  const u = getUnit('rifleman');
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.equal(s.queue.length, 1, '예약이 잡히지 않았다');
+
+  const before = s.entities.length;
+  for (let i = 0; i < u.cost * TICK_RATE - 1; i++) step(s, []);
+  assert.equal(s.entities.length, before, '시간이 되기 전에 나왔다');
+  step(s, []);
+  assert.ok(s.entities.length > before, '시간이 지나도 안 나왔다');
+  assert.equal(s.queue.length, 0, '예약이 안 걷혔다');
+});
+
+test('전진 배치는 살아 있다 — 찍은 자리에 그대로 나온다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  // 배치 구역 앞쪽 끝 — 기지가 아니라 여기서 나와야 한 박자 빠르다
+  const fx = home.x;
+  const fy = home.y - 7000;
+  const made = produceAndWait(s, 0, 'rifleman', fx, fy);
+  assert.ok(made && made.length > 0, '생산되지 않았다');
+  for (const e of made) {
+    assert.ok(
+      Math.hypot(e.x - fx, e.y - fy) < 3000,
+      `찍은 자리가 아니라 기지에서 나왔다 (${e.x},${e.y} vs ${fx},${fy})`,
+    );
+    assert.ok(Math.hypot(e.x - home.x, e.y - home.y) > 5000, '기지 옆에서 나왔다');
+  }
+});
+
+test('기지마다 큐가 따로 돈다 — 확장이 곧 생산력이다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.id === 5);
+  assert.ok(siteReachable(s, 0, site));
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'base', '', site.x, site.y)));
+  for (let i = 0; i < BASE_BUILD_TICKS + 2; i++) step(s, []);
+
+  const bases = s.entities.filter((e) => e.kind === 'base' && e.team === 0);
+  assert.equal(bases.length, 2, '확장이 가동하지 않았다');
+  s.players[0].minerals = RICH;
+  for (const b of bases) {
+    assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', b.x, b.y - 1000)));
+  }
+  assert.equal(s.queue.length, 2);
+
+  // 둘 다 동시에 굽는다 — 한 기지였다면 뒤엣것이 두 배 걸린다
+  const u = getUnit('rifleman');
+  for (let i = 0; i < u.cost * TICK_RATE; i++) step(s, []);
+  assert.equal(s.queue.length, 0, '기지 둘이 순차로 구웠다 — 병렬이어야 한다');
+});
+
+test('한 기지에 쌓을 수 있는 예약에는 상한이 있다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH * 10;
+  const home = mainBase(s, 0);
+  let ok = 0;
+  for (let i = 0; i < PRODUCE_QUEUE_MAX + 3; i++) {
+    if (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000))) ok++;
+  }
+  assert.equal(ok, PRODUCE_QUEUE_MAX, `상한(${PRODUCE_QUEUE_MAX})을 넘겨 예약됐다 (${ok})`);
+});
+
+test('굽던 기지를 잃으면 예약도 사라진다', () => {
+  // 본진이 아니라 확장으로 검사한다 — 본진이 부서지면 경기가 끝나 버려
+  // 그다음 틱이 돌지 않는다
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.id === 5);
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'base', '', site.x, site.y)));
+  for (let i = 0; i < BASE_BUILD_TICKS + 2; i++) step(s, []);
+  const exp = s.entities.find((e) => e.kind === 'base' && e.team === 0 && !e.isMain);
+  assert.ok(exp, '확장이 가동하지 않았다');
+
+  s.players[0].minerals = RICH;
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', exp.x, exp.y - 1000)));
+  const queued = s.queue.filter((q) => q.base === exp.id).length;
+  assert.equal(queued, 1, '확장에 예약이 안 걸렸다');
+  exp.hp = 0;
+  step(s, []);
+  assert.equal(s.queue.filter((q) => q.base === exp.id).length, 0, '기지가 사라졌는데 예약이 남았다');
+});
+
+test('침공과 실험장은 예약 없이 즉시 생산한다', () => {
+  for (const [sandbox, invasion] of [[true, false], [false, true]]) {
+    const s = createState(5, MIRROR, DEFAULT_MAP_ID, sandbox, invasion);
+    s.players[0].minerals = RICH;
+    s.players[0].unlocked = [...new Set([...s.players[0].unlocked, 'rifleman'])].sort();
+    const home = mainBase(s, 0);
+    const before = s.entities.length;
+    assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+    assert.ok(s.entities.length > before, `${sandbox ? '실험장' : '침공'}이 예약제가 됐다`);
+    assert.equal(s.queue.length, 0);
+  }
+});
+
+test('예약은 해시와 스냅샷을 그대로 통과한다', () => {
+  const a = createState(11, MIRROR);
+  a.players[0].minerals = RICH;
+  const home = mainBase(a, 0);
+  assert.ok(applyCommand(a, cmd(a.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.equal(a.queue.length, 1, '예약이 안 잡혀 이 검사가 헛돈다');
+  const snap = snapshot(a);
+  const b = createState(11, MIRROR);
+  restore(b, snap);
+  assert.equal(hashState(a), hashState(b), '스냅샷 왕복에서 예약이 어긋났다');
+  for (let i = 0; i < 30; i++) {
+    step(a, []);
+    step(b, []);
+  }
+  assert.equal(hashState(a), hashState(b), '복원 후 궤적이 갈렸다');
 });

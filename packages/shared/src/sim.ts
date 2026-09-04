@@ -41,7 +41,10 @@ import {
   BASE_MINERAL_RESERVE,
   BASE_RADIUS,
   BUILDING_RADIUS,
+  DEPLOY_RADIUS,
   DEPLOY_TICKS,
+  PRODUCE_QUEUE_MAX,
+  PRODUCE_TICKS_PER_COST,
   ENTITY_SCALE,
   HIGH_GROUND_DAMAGE_PCT,
   MATCH_TICKS,
@@ -245,12 +248,42 @@ export interface PlayerState {
   upgrading: { ticks: number } | null;
 }
 
+/**
+ * 생산 예약 한 건.
+ *
+ * `x, y`를 들고 다니는 것이 핵심이다 — **전진 배치를 유지하기 위해서**다.
+ * 예약할 때 찍은 자리에 그대로 나온다. 큐가 위치를 잊으면 유닛이 기지에서만
+ * 나오게 되고, 그러면 "배치 구역 앞쪽 끝에 뽑아 한 박자 빠르게 붙인다"는
+ * 전술이 사라진다.
+ */
+export interface ProduceOrder {
+  /** 이 예약을 굽는 기지의 엔티티 id */
+  base: number;
+  team: Team;
+  unit: string;
+  x: number;
+  y: number;
+  /** 남은 틱 */
+  left: number;
+}
+
 export interface GameState {
   /** 이 경기의 맵 id — step()이 매 틱 활성 맵을 이걸로 맞춘다 */
   mapId: string;
   tick: number;
   rng: Rng;
   nextId: number;
+  /**
+   * 생산 예약 — **대전 전용** (라운드 50).
+   *
+   * 기지마다 큐 하나. 앞에서부터 하나씩만 진행되므로 기지 수가 곧
+   * 돈→병력 전환 속도가 된다. 배열 하나로 두는 이유는 스냅샷·해시가
+   * 그대로 살기 때문이다 — 엔티티 안에 배열을 넣으면 둘 다 복잡해진다.
+   *
+   * 삽입 순서가 곧 처리 순서라 정렬이 필요 없다(커맨드가 이미 정규화된
+   * 순서로 들어온다).
+   */
+  queue: ProduceOrder[];
   /** 항상 id 오름차순 정렬 유지 */
   entities: Entity[];
   players: [PlayerState, PlayerState];
@@ -405,6 +438,7 @@ export function createState(
     tick: 0,
     rng: createRng(seed),
     nextId: 1,
+    queue: [],
     entities: [],
     players: [makePlayer(factions[0]), makePlayer(factions[1])],
     overtime: false,
@@ -784,6 +818,81 @@ function startUpgrade(s: GameState, cmd: Command): boolean {
   return true;
 }
 
+/** 생산 예약이 켜지는 판인가 — 대전만이다 */
+function queueOn(s: GameState): boolean {
+  return !s.invasion && !s.sandbox;
+}
+
+/** 그 기지에 걸린 예약 수 */
+function queueLenOf(s: GameState, baseId: number): number {
+  let n = 0;
+  for (const q of s.queue) if (q.base === baseId) n++;
+  return n;
+}
+
+/** 이 자리를 배치 구역에 품는 내 기지 중 가장 가까운 것 */
+function hostBase(s: GameState, team: Team, x: number, y: number): Entity | null {
+  let best: Entity | null = null;
+  let bestD2 = Infinity;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0 || e.deploy > 0) continue;
+    const d2 = dist2(e.x, e.y, x, y);
+    if (d2 > DEPLOY_RADIUS * DEPLOY_RADIUS) continue;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = e;
+    }
+  }
+  return best;
+}
+
+/**
+ * 예약을 굽는다 — 기지마다 **맨 앞 하나만** 진행된다.
+ *
+ * 굽던 기지가 부서지면 그 기지의 예약은 사라진다(환불 없음). 전진 기지에서
+ * 뽑는 것이 빠른 만큼, 그 기지를 잃으면 굽던 것도 잃는다.
+ */
+function tickQueue(s: GameState): void {
+  if (s.queue.length === 0) return;
+  const alive = new Set<number>();
+  for (const e of s.entities) {
+    if (e.kind === 'base' && e.hp > 0 && e.deploy <= 0) alive.add(e.id);
+  }
+  const busy = new Set<number>();
+  const done: ProduceOrder[] = [];
+  const keep: ProduceOrder[] = [];
+  for (const q of s.queue) {
+    if (!alive.has(q.base)) continue; // 기지를 잃으면 예약도 잃는다
+    if (busy.has(q.base)) {
+      keep.push(q); // 이 기지는 이미 하나 굽는 중이다
+      continue;
+    }
+    busy.add(q.base);
+    q.left--;
+    if (q.left <= 0) done.push(q);
+    else keep.push(q);
+  }
+  s.queue = keep;
+  for (const q of done) {
+    const u = getUnit(q.unit);
+    for (let i = 0; i < u.count; i++) {
+      const [ox, oy] = formationOffset(u.count, i);
+      spawnUnit(s, q.team, u, q.x + ox, q.y + oy);
+    }
+    // 집결지가 있으면 갓 나온 유닛은 거기로 (생산 즉시 배치와 같은 규칙)
+    const rally = s.players[q.team].rally;
+    if (rally) {
+      for (let i = s.entities.length - u.count; i < s.entities.length; i++) {
+        const e = s.entities[i];
+        if (e && e.kind === 'unit') {
+          e.orderX = rally.x;
+          e.orderY = rally.y;
+        }
+      }
+    }
+  }
+}
+
 function produceUnit(s: GameState, cmd: Command): boolean {
   const p = s.players[cmd.team];
   if (!isUnlocked(p, cmd.id)) return false;
@@ -813,6 +922,14 @@ function produceUnit(s: GameState, cmd: Command): boolean {
   const zone = s.sandbox ? ([[cmd.x, cmd.y]] as const) : ownBasePositions(s, cmd.team);
   if (!canDeployAt(cmd.x, cmd.y, zone)) return false;
 
+  // 찍은 자리를 품는 내 기지가 이 예약을 굽는다 — 클릭 한 번이 위치와
+  // 생산처를 동시에 정하므로 조작이 늘지 않는다
+  const host = hostBase(s, cmd.team, cmd.x, cmd.y);
+  if (queueOn(s) && u.kind === 'unit') {
+    if (!host) return false;
+    if (queueLenOf(s, host.id) >= PRODUCE_QUEUE_MAX) return false;
+  }
+
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 거절한다 (라운드 29, 침공 전용)
   if (s.invasion && u.kind === 'building') {
     // 설치권이 없으면 미네랄이 넘쳐도 못 세운다 (라운드 30)
@@ -827,6 +944,21 @@ function produceUnit(s: GameState, cmd: Command): boolean {
 
   p.minerals -= cost;
   if (s.invasion && u.kind === 'building') p.wallCharges--;
+  // 대전은 **예약**이다 (라운드 50). 돈이 있다고 즉시 병력이 되면 상한을
+  // 없앤 경제가 그대로 병력으로 쏟아진다. 침공·실험장은 즉시 그대로 —
+  // 파도를 막는 손과 상성을 보는 화면에 큐를 끼우면 둘 다 못 쓰게 된다
+  if (queueOn(s) && u.kind === 'unit' && host) {
+    s.queue.push({
+      base: host.id,
+      team: cmd.team,
+      unit: u.id,
+      x: cmd.x,
+      y: cmd.y,
+      left: Math.max(1, u.cost * PRODUCE_TICKS_PER_COST),
+    });
+    return true;
+  }
+
   const first = s.entities.length;
   for (let i = 0; i < u.count; i++) {
     const [ox, oy] = formationOffset(u.count, i);
@@ -1957,6 +2089,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (e.cd > 0) e.cd--;
   }
   reap(s);
+  // 생산 예약 — 기지마다 하나씩 굽는다 (대전 전용)
+  tickQueue(s);
 
   // 4.5) 충전 스킬 — 게이지가 차면 사거리 안 가장 가까운 적에게 자동 발사.
   // 읽기 패스로 발사 목록을 모은 뒤 한꺼번에 적용한다 (reap이 배열을 바꾸므로)
@@ -2543,6 +2677,7 @@ export function restore(target: GameState, snap: GameState): void {
   target.tick = fresh.tick;
   target.rng = fresh.rng;
   target.nextId = fresh.nextId;
+  target.queue = fresh.queue;
   target.entities = fresh.entities;
   target.players = fresh.players;
   target.overtime = fresh.overtime;
@@ -2580,6 +2715,15 @@ export function hashState(s: GameState): number {
   mix(s.waveBudget);
   mix(s.waveAlive ? 1 : 0);
   mix(s.waveReward);
+  mix(s.queue.length);
+  for (const q of s.queue) {
+    mix(q.base);
+    mix(q.team);
+    mixStr(q.unit);
+    mix(q.x);
+    mix(q.y);
+    mix(q.left);
+  }
   mix(s.draft.length);
   for (const d of s.draft) mixStr(d);
   mix(s.heroDraft.length);
