@@ -248,7 +248,22 @@ function observe(s, team) {
     foeTeching: s.players[foe].research !== null,
     foeWorkers: s.players[foe].workers,
     myWorkers: s.players[team].workers,
+    foeAir: airShare(s, foe),
   };
+}
+
+/** 상대 병력 중 공중이 차지하는 비율 (0~100) — 대공 판단용 */
+function airShare(s, team) {
+  let air = 0;
+  let all = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== team) continue;
+    const u = getUnit(e.unit);
+    const c = (u.cost * MINERAL_SCALE) / Math.max(1, u.count);
+    all += c;
+    if (u.flying) air += c;
+  }
+  return all > 0 ? Math.round((air / all) * 100) : 0;
 }
 
 /** 종족별 공중 테크 경로 — 선행 1단계 → 공중 2단계 */
@@ -266,6 +281,16 @@ function researchToward(s, team, target) {
   const node = getFaction(me.faction).tech.find((n) => n.unit === target);
   if (!node || me.minerals < node.cost * MINERAL_SCALE) return null;
   return { kind: 'tech', id: target, x: 0, y: 0 };
+}
+
+/** 해금된 것 중 공중을 때릴 수 있는 유닛이 있는가 */
+function hasAntiAir(s, team) {
+  for (const id of s.players[team].unlocked) {
+    const u = getUnit(id);
+    if (u.kind === 'spell') continue;
+    if (u.targets === 'any' || u.targets === 'air') return true;
+  }
+  return false;
 }
 
 /* ── 출진 지휘 ─────────────────────────────────────────────────────────────
@@ -404,11 +429,40 @@ const STRATS = {
     buyUpgrade(s, team, 6 * MINERAL_SCALE) ??
     castSpell(s, team) ??
     produce(s, team, rng, { reserve: 0 }),
+  /**
+   * 정보를 쓰는 원형 — 훔쳐본 값으로 **언제 나갈지**를 고른다.
+   *
+   * 자동 전진을 걷어내면서 정보가 붙을 자리가 생겼다. 예전에는 병력이
+   * 알아서 나갔으니 "상대를 안다"가 바꿀 수 있는 게 구매 목록뿐이었고,
+   * 그래서 정보의 승률 가치가 0에 붙어 있었다. 이제 출진 시점이 결정이다:
+   *
+   *   · 내가 더 세다        → 지금 나간다 (상대가 회복하기 전에)
+   *   · 상대가 배를 불렸다  → 지금 나간다 (병력이 얇을 때)
+   *   · 상대가 더 세다      → 안 나간다. 지키고 모은다
+   *   · 상대가 공중을 갔다  → 대공을 확보하고, 그 전에는 안 나간다
+   */
   REACT: (s, team, rng) => {
     const o = observe(s, team);
     const early = s.tick < 20 * 75;
-    // 일꾼 수 판독(올인 예고)도 실험했지만 대응 정책이 방어에 갇혀
-    // 역효과였다 — 감지보다 "언제 반격으로 전환하나"가 어렵다 (라운드 4)
+
+    // 상대가 공중으로 갔는데 내가 대공이 없다 — 나가면 헌납이다
+    const needAir = o.foeAir >= 40 && !hasAntiAir(s, team);
+    if (needAir) {
+      return (
+        buildDefense(s, team, rng) ??
+        research(s, team, 0, true) ??
+        produce(s, team, rng, { reserve: 0 })
+      );
+    }
+
+    // 유리할 때만 나간다 — 이게 정보가 승률로 바뀌는 지점이다
+    const stronger = o.myArmy > o.foeArmy + 4 * MINERAL_SCALE;
+    const foeGreedy = o.foeBases > o.myBases || (o.foeTeching && o.myArmy >= 6 * MINERAL_SCALE);
+    if (stronger || foeGreedy) {
+      const p = push(s, team, 6 * MINERAL_SCALE);
+      if (p) return p;
+    }
+
     if (early && o.foeArmy > o.myArmy + 4 * MINERAL_SCALE) {
       // 상대가 초반부터 병력을 쏟는다 → 포탑만 얹은 표준 매크로.
       // 수비 배치·확장 중단을 강제한 변형들은 전부 표준보다 나빴다
@@ -416,17 +470,19 @@ const STRATS = {
       // 한 수로 좁혀야 산다 (라운드 4의 교훈과 일치)
       return buildDefense(s, team, rng) ?? STRATS.BAL(s, team, rng);
     }
-    if (o.foeBases > o.myBases || (o.foeTeching && o.myArmy >= 6 * MINERAL_SCALE)) {
-      // 상대가 배를 불리거나 테크에 돈을 묻었다 → 지금 찌른다.
-      // (구 조건 "상대 병력 < 내 병력"은 병력을 유지하는 새 TECH 상대로
-      // 영영 안 열려 찌르기가 한 번도 안 나갔다 — REACT가 BAL과 완전 동일)
-      return (
-        push(s, team, 8 * MINERAL_SCALE) ??
-        produce(s, team, rng, { cheap: true }) ??
-        trainWorker(s, team)
-      );
+    if (foeGreedy) {
+      // 상대가 배를 불리거나 테크에 돈을 묻었다 → 싼 병력으로 찌른다
+      return produce(s, team, rng, { cheap: true }) ?? trainWorker(s, team);
     }
-    return STRATS.BAL(s, team, rng);
+    // 불리하면 나가지 않는다 — BAL의 출진을 건너뛰고 경제·병력만 굴린다
+    return (
+      trainWorker(s, team) ??
+      expand(s, team) ??
+      research(s, team) ??
+      buyUpgrade(s, team, 6 * MINERAL_SCALE) ??
+      castSpell(s, team) ??
+      produce(s, team, rng, { reserve: 0 })
+    );
   },
 };
 
@@ -598,8 +654,28 @@ for (const foe of fixed) {
 const reactPct = (100 * reactW) / Math.max(1, reactN);
 const balPct = (100 * balW) / Math.max(1, balN);
 console.log(
-  `\n종합: REACT ${reactPct.toFixed(1)}% vs BAL ${balPct.toFixed(1)}%` +
-    ` → 정보의 승률 가치 ≈ ${(reactPct - balPct).toFixed(1)}%p`,
+  `\n고정 봇 상대: REACT ${reactPct.toFixed(1)}% vs BAL ${balPct.toFixed(1)}%` +
+    ` → 차이 ${(reactPct - balPct).toFixed(1)}%p`,
+);
+
+// 위 지표는 **포화된다**: BAL이 고정 봇들을 이미 87%로 이겨 정보가 드러날
+// 여지가 없다(러시·경제 상대로는 양쪽 다 100%). 정보의 값은 둘을 직접
+// 붙여야 보인다 — 여기는 여지가 절반이다.
+const h2h = runPair('REACT', 'BAL');
+const decided = h2h.aw + h2h.bw;
+console.log(
+  `정면 대결: REACT ${h2h.aw}승 ${h2h.bw}패 ${h2h.n - decided}무` +
+    ` → 결정된 판 기준 ${decided ? ((100 * h2h.aw) / decided).toFixed(0) : '—'}%` +
+    '  ← 정보의 승률 가치',
+);
+
+// 진영 편향 감시 — 점대칭 맵의 미러는 반반이어야 한다. 한쪽으로 쏠리면
+// 맵이나 시뮬에 자리 이점이 있다는 뜻이고, 그러면 위의 모든 수치가 흔들린다
+const mirror = runPair('BAL', 'BAL');
+const mDecided = mirror.aw + mirror.bw;
+console.log(
+  `미러 편향: 아래 진영 ${mirror.aw} : ${mirror.bw} 위 진영 (무 ${mirror.n - mDecided})` +
+    `${mDecided && Math.abs(mirror.aw - mirror.bw) > mDecided * 0.3 ? '  ⚠️ 자리 이점' : ''}`,
 );
 
 const med = (a) => (a.length ? a.sort((x, y) => x - y)[Math.floor(a.length / 2)] : NaN);
