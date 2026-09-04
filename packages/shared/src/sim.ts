@@ -453,6 +453,23 @@ export function createState(
 
 /* ── 조회 헬퍼 ─────────────────────────────────────────────────────────── */
 
+/**
+ * 공격이 닿는 거리 — **몸통 끝에서 몸통 끝까지**로 잰다.
+ *
+ * 예전에는 `사거리 + 표적 반경`이었다. 전 유닛 반경이 400이던 시절에는
+ * 그래도 됐지만, 몸집을 키우자(ENTITY_SCALE) 근접 유닛이 **표적에 영영
+ * 닿지 못하게** 됐다: 밀어내기는 두 반경의 합만큼 떼어 놓는데 사거리 계산은
+ * 한쪽 반경만 더했기 때문이다. 거대포식자(반경 1100)와 소총병(600)은
+ * 1700 떨어져 서는데 포식자의 닿는 거리는 900+600=1500이었다 — 90초를
+ * 마주 보고도 서로 한 대도 못 때렸다 (결투 하네스 실측).
+ *
+ * 내 반경까지 더하면 `닿는 거리 = 사거리 + rA + rB ≥ 밀어내기 거리`가
+ * 항상 성립한다. 사거리 0이 아닌 이상 근접은 반드시 닿는다.
+ */
+export function reachOf(e: Entity, target: Entity, range: number): number {
+  return range + radiusOf(e) + radiusOf(target);
+}
+
 export function radiusOf(e: Entity): number {
   if (e.kind === 'base') return BASE_RADIUS;
   if (e.kind !== 'unit') return BUILDING_RADIUS;
@@ -2090,7 +2107,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (ti === undefined) continue;
     const t = s.entities[ti];
     const st = statsOf(s, e);
-    const reach = st.range + radiusOf(t);
+    const reach = reachOf(e, t, st.range);
     if (dist2(e.x, e.y, t.x, t.y) > reach * reach) continue;
     if (e.cd > 0) continue;
 
@@ -2160,7 +2177,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (t && dist2(e.x, e.y, t.x, t.y) <= reach * reach) chase = t;
       }
       if (chase) {
-        if (dist2(e.x, e.y, chase.x, chase.y) <= (st0.range + radiusOf(chase)) ** 2) continue;
+        if (dist2(e.x, e.y, chase.x, chase.y) <= reachOf(e, chase, st0.range) ** 2) continue;
         [gx, gy] = moveGoal(e, chase.x, chase.y);
       } else {
         // 명령 이동 — 도착하면 스스로 해제하고 기본 행동으로 돌아간다
@@ -2180,7 +2197,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       const t = findById(s, e.target);
       if (!t) continue;
       const st = statsOf(s, e);
-      if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
+      if (dist2(e.x, e.y, t.x, t.y) <= reachOf(e, t, st.range) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
     } else if (s.invasion) {
       if (e.team === 0) {

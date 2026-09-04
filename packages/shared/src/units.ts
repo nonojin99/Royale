@@ -227,8 +227,10 @@ const defs: UnitDef[] = [
      숫자로 압도한다. 개체는 약하지만 싸고 빠르다.
      주문이 없는 대신 방어 건물이 둘(지상용·대공용)이다. */
   unit({
+    // 라운드 50 상향: 등코스트 우세도 -0.65~-0.76. 물량의 존재 이유는
+    // "같은 돈이면 더 오래 버틴다"인데 24마리가 12코 상대에게 갈렸다
     id: 'gnawer', size: 'small', name: '물어뜯는것', cost: 2, kind: 'unit', count: 4,
-    hp: 95, damage: 55, hitSpeed: seconds(0.8, TICK_RATE),
+    hp: 115, damage: 55, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(0.7), speed: spd(1.5), targets: 'ground', siege: 40, color: 0xa16207,
   }),
   unit({
@@ -285,8 +287,10 @@ const defs: UnitDef[] = [
      비싸지만 한 방이 무겁다. 개체 하나하나가 강해 물량에 밀리지 않는다.
      대신 실수 한 번의 비용이 크다. */
   unit({
+    // 라운드 50 하향: 등코스트 결투에서 전 예산대 우세도 +0.68~+0.93으로
+    // 압도적이었다 — 1.5코짜리가 4·5코 유닛을 값으로 이기면 테크가 죽는다
     id: 'zealot', name: '광전사', cost: 3, kind: 'unit', count: 2,
-    hp: 700, damage: 120, hitSpeed: seconds(1.3, TICK_RATE),
+    hp: 580, damage: 120, hitSpeed: seconds(1.3, TICK_RATE),
     range: tiles(0.8), speed: spd(0.95), targets: 'ground', siege: 50, color: 0xfacc15,
   }),
   unit({
@@ -297,8 +301,10 @@ const defs: UnitDef[] = [
   unit({
     // 라운드 20 너프: 등코스트 전 매치업 무손실 전승 관측(130/1.6s/2.0).
     // 물어뜯는것만 1방, 소총병은 2방 유지 — 범위 학살의 '속도'만 깎는다
+    // 라운드 50 상향: 등코스트 우세도 -0.72~-0.83. 4코를 내고 사는 광역
+    // 딜러가 접근 전에 녹아 없어졌다 — 체력만 올려 사거리·화력은 그대로 둔다
     id: 'mystic', name: '술사', cost: 4, kind: 'unit',
-    hp: 300, damage: 110, hitSpeed: seconds(1.7, TICK_RATE),
+    hp: 420, damage: 110, hitSpeed: seconds(1.7, TICK_RATE),
     range: tiles(5.0), speed: spd(0.9), splash: tiles(1.7),
     targets: 'ground', siege: 80, color: 0x8b5cf6,
     charges: 'mindbreak',
