@@ -63,7 +63,20 @@
      */
     :root { --sidebar-w: 0px; }
     @media (min-width: 900px) {
-      :root { --sidebar-w: 380px; }
+      /*
+       * 생산 화면은 **늘 떠 있지 않는다** (라운드 50).
+       *
+       * 기지를 눌러야 열리고, 닫혀 있는 동안 사이드바는 자원·행동만 남긴
+       * 폭으로 줄어든다. 맵이 48×48 정사각이라 넓은 창에서 전장은 가로에
+       * 묶여 있어서, 사이드바 172px가 그대로 전장이 된다(1280×980에서 실측
+       * 876 → 926px).
+       *
+       * 클래스는 `body`가 아니라 **`html`**에 붙는다 — `fitCanvas`가
+       * `documentElement`에서 이 변수를 읽기 때문에, body에 걸면 값이 바뀌어도
+       * 캔버스는 못 본다.
+       */
+      :root { --sidebar-w: 208px; }
+      :root.panel-open { --sidebar-w: 380px; }
       body {
         display: grid;
         grid-template-columns: 1fr var(--sidebar-w);
@@ -304,6 +317,39 @@
     #tech-panel.hidden { display: none; }
     /* ── 통합 테크트리 — 연구와 생산이 한 판이다 ── */
     #palette { position: relative; display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+    /*
+     * 닫으면 **카드판만** 사라진다. 기지 줄은 남는다 —
+     * 갓 뽑은 병력이 기지 위에 서 있으면 지도에서 기지를 짚기가 어려워서,
+     * 이 줄이 "지금 어디서 뭐가 나오나"이자 다시 여는 손잡이 노릇을 한다.
+     */
+    :root:not(.panel-open) #palette { display: none; }
+    /* 208px에 세 버튼을 나란히 두면 "기지 건/설 (12)"로 잘린다 — 세로로 쌓는다 */
+    :root:not(.panel-open) #actions { flex-direction: column; }
+
+    /* ── 기지 줄 — 내 기지 전부의 큐를 한눈에, 고른 기지는 강조 ── */
+    #basebar { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    #basebar-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      font-size: 11px; color: #cbd5e1; letter-spacing: .04em;
+    }
+    #basebar-head b { font: 700 11px/1.2 var(--font-pixel); color: var(--mineral); }
+    .bchip {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 6px; cursor: pointer;
+      background: #0f172a; border: 1px solid #1e293b;
+      font-size: 11px; color: var(--muted); text-align: left; width: 100%;
+    }
+    .bchip:hover { border-color: #334155; }
+    .bchip.sel { border-color: var(--mineral); background: #0b2b33; color: #e2e8f0; }
+    .bchip .bname { font-weight: 700; white-space: nowrap; }
+    .bchip .bq { display: flex; gap: 3px; flex: 1; }
+    .qslot {
+      width: 16px; height: 16px; border-radius: 3px;
+      background: #1e293b; border: 1px solid #334155;
+      display: grid; place-items: center; font-size: 9px; color: #94a3b8;
+    }
+    .qslot.busy { background: var(--mineral); border-color: var(--mineral); color: #06232b; font-weight: 800; }
+    .bchip .btime { font-variant-numeric: tabular-nums; white-space: nowrap; }
     #tree-links { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
     #tree-legend {
       flex-basis: 100%; font-size: 11px; color: var(--muted);
@@ -731,6 +777,7 @@
       <button id="btn-selectall" type="button">▣ 전군</button>
     </div>
 
+    <div id="basebar"></div>
     <div id="palette"></div>
 
     <div id="meta">

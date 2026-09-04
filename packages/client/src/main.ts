@@ -24,6 +24,9 @@ import {
   waveTypeOf,
   RUN_STAGES,
   MINERAL_SCALE,
+  PRODUCE_QUEUE_MAX,
+  BASE_RADIUS,
+  radiusOf,
   OVERTIME_TICKS,
   TICK_RATE,
   WORKER_COST,
@@ -95,6 +98,16 @@ let baseMode = false;
  * 지점을 뜻한다. 즉발로 만들면 커서가 캔버스 밖에 있을 때 갈 곳이 없다.
  */
 let pendingOrder: '' | 'attack' | 'rally' = '';
+/**
+ * 지금 들여다보는 기지 (엔티티 id). -1이면 패널이 닫혀 있다.
+ *
+ * **생산처를 고르는 값이 아니다.** 어느 기지가 굽는지는 배치 좌표가 정한다
+ * (전진 배치 유지). 이 값은 "어느 기지의 큐를 강조해 볼 것인가"와
+ * "패널이 열려 있는가"만 뜻한다.
+ */
+let selectedBase = -1;
+/** 판이 시작될 때 본진 창을 한 번 열어 준다 — 그 뒤로는 플레이어가 정한다 */
+let panelInit = false;
 let cursor: [number, number] | null = null;
 /** 드래그로 고른 내 유닛 id — 순수 클라 상태(시뮬은 모른다) */
 const selectedIds = new Set<number>();
@@ -911,6 +924,13 @@ function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
 function selectUnit(unit: string): void {
   sound.play('ui');
   baseMode = false;
+  // 숫자키로 카드를 골랐는데 패널이 닫혀 있으면 무엇을 골랐는지 안 보인다.
+  // 아직 기지를 고르지 않았다면 본진을 기본으로 연다
+  if (selectedBase < 0) {
+    const s = net.state;
+    const home = s?.entities.find((e) => e.kind === 'base' && e.team === net.myTeam && e.isMain);
+    setPanel(home ? home.id : -1);
+  }
   pendingOrder = ''; // 카드를 고르면 다음 클릭은 배치다 — 대기 명령과 겹치지 않는다
   // 같은 카드를 다시 누르면 해제된다(토글). **조용히** 풀리면 그다음
   // 맵 클릭이 아무 일도 안 해서 "생산이 막혔다"로 읽힌다 — 말해 준다
@@ -967,6 +987,39 @@ function requestUpgrade(): void {
   sound.play('tech');
 }
 
+/**
+ * 생산 패널을 연다/닫는다.
+ *
+ * 사이드바 폭이 CSS 변수로 바뀌므로 캔버스를 다시 맞춰야 한다 — 닫는 것만
+ * 으로 전장이 넓어지는 것이 이 화면 개편의 목적이다 (라운드 50).
+ */
+function setPanel(baseId: number): void {
+  selectedBase = baseId;
+  // `body`가 아니라 `html`이다 — fitCanvas가 documentElement에서 --sidebar-w를 읽는다
+  document.documentElement.classList.toggle('panel-open', baseId >= 0);
+  fitCanvas();
+}
+
+/** 이 지점이 내 유닛의 **몸 안**인가 — 기지 위에 선 병력을 집으려는 클릭인지 가른다 */
+function ownUnitBodyAt(s: GameState, x: number, y: number): boolean {
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== net.myTeam) continue;
+    const r = radiusOf(e);
+    if ((e.x - x) ** 2 + (e.y - y) ** 2 <= r * r) return true;
+  }
+  return false;
+}
+
+/** 이 자리에 있는 내 기지 — 몸집 안을 짚으면 잡힌다 */
+function baseAt(s: GameState, x: number, y: number): number {
+  const reach = BASE_RADIUS + 1500;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== net.myTeam) continue;
+    if ((e.x - x) ** 2 + (e.y - y) ** 2 <= reach * reach) return e.id;
+  }
+  return -1;
+}
+
 function toggleBaseMode(): void {
   baseMode = !baseMode;
   if (baseMode) {
@@ -974,6 +1027,66 @@ function toggleBaseMode(): void {
     pendingOrder = '';
   }
   refreshActionButtons();
+}
+
+/**
+ * 기지 줄 — **내 기지 전부의 큐**를 줄지어 보이고, 고른 기지를 강조한다.
+ *
+ * 고른 기지만 보여 주는 쪽이 화면은 깨끗하지만 "지금 전체 생산이 어떻게
+ * 돌아가나"를 놓친다 (오너 결정). 기지가 넷이면 넷의 큐가 한눈에 보여야
+ * 다음에 무엇을 어디서 뽑을지 고를 수 있다.
+ *
+ * 패널을 닫아도 이 줄은 남는다 — 카드판만 접힌다.
+ */
+function updateBaseBar(s: GameState): void {
+  const root = $('basebar');
+  // 첫 판 시작 — 예전처럼 생산 창이 열린 상태로 출발한다. 닫는 것은 선택이다
+  if (!panelInit) {
+    panelInit = true;
+    const home = s.entities.find((e) => e.kind === 'base' && e.team === net.myTeam && e.isMain);
+    if (home) setPanel(home.id);
+  }
+  const mine = s.entities.filter((e) => e.kind === 'base' && e.team === net.myTeam);
+  // 고른 기지가 부서졌으면 패널을 닫는다 — 빈 창이 떠 있으면 거짓말이다
+  if (selectedBase >= 0 && !mine.some((e) => e.id === selectedBase)) setPanel(-1);
+  if (mine.length === 0) {
+    root.replaceChildren();
+    return;
+  }
+
+  const rows: HTMLElement[] = [];
+  const head = document.createElement('div');
+  head.id = 'basebar-head';
+  const total = s.queue.filter((q) => q.team === net.myTeam).length;
+  head.innerHTML = `<span>생산 거점 ${mine.length}</span><b>예약 ${total}</b>`;
+  rows.push(head);
+
+  for (const b of mine) {
+    const q = s.queue.filter((x) => x.base === b.id);
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'bchip' + (b.id === selectedBase ? ' sel' : '');
+    const slots: string[] = [];
+    for (let i = 0; i < PRODUCE_QUEUE_MAX; i++) {
+      const item = q[i];
+      slots.push(
+        item
+          ? `<span class="qslot busy" title="${getUnit(item.unit).name}">${getUnit(item.unit).name[0]}</span>`
+          : '<span class="qslot"></span>',
+      );
+    }
+    const wait = q.length ? `${Math.ceil(q[0].left / TICK_RATE)}초` : '—';
+    el.innerHTML =
+      `<span class="bname">${b.isMain ? '본진' : '확장'}</span>` +
+      `<span class="bq">${slots.join('')}</span>` +
+      `<span class="btime">${wait}</span>`;
+    el.addEventListener('click', () => {
+      setPanel(b.id);
+      sound.play('ui');
+    });
+    rows.push(el);
+  }
+  root.replaceChildren(...rows);
 }
 
 function refreshActionButtons(): void {
@@ -1257,6 +1370,20 @@ function onPointerUp(ev: PointerEvent): void {
   if (tap && isTouch(ev) && selectedIds.size > 0 && nearestOwnUnit(s, x, y) < 0) {
     commandMove(x, y);
     return;
+  }
+
+  // 내 기지를 짚었으면 그 기지의 창을 연다 (라운드 50).
+  //
+  // 유닛과 기지 중 무엇을 짚었는지는 **몸 안에 들어왔는가**로 가른다.
+  // 처음엔 "근처에 내 유닛이 있으면 유닛이 이긴다"로 짰는데, 갓 뽑은 병력이
+  // 늘 기지 위에 서 있어서 기지를 영영 못 누르게 됐다(스모크로 확인).
+  if (tap && !ownUnitBodyAt(s, x, y)) {
+    const hit = baseAt(s, x, y);
+    if (hit >= 0) {
+      setPanel(hit === selectedBase ? -1 : hit); // 같은 기지 재클릭 = 닫기
+      sound.play('ui');
+      return;
+    }
   }
 
   if (!ev.shiftKey) selectedIds.clear();
@@ -1674,6 +1801,8 @@ function updateHud(s: GameState): void {
       `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` +
       queueTag;
   }
+
+  updateBaseBar(s);
 
   // 통합 트리 — 해금 노드는 생산 카드, 잠긴 노드는 연구 카드로 갱신한다
   const f = factionOfMe();
