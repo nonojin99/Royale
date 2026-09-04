@@ -36,6 +36,9 @@ import {
   nextInt,
   occupiedSites,
   ownBasePositions,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
   siteReachable,
   workerCapacity,
   isHiddenFrom,
@@ -283,6 +286,8 @@ export class Bot {
 
     const reserve = this.reserveFor(s, me);
     const defenses = this.defenseCount(s);
+    const cap = supplyCapOf(s, 1);
+    const used = supplyUsedOf(s, 1);
     let best: string | null = null;
     let bestCost = -1;
     for (const id of me.unlocked) {
@@ -297,6 +302,8 @@ export class Bot {
       // 초급의 유예 시간 — 병력은 나중에, 방어 건물만 허용
       if (u.kind !== 'building' && s.tick < this.tune.armyDelay) continue;
       if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
+      // 천장을 넘는 카드는 시뮬이 거절한다 — 골라 봐야 그 판단이 버려진다
+      if (used + supplyOf(u) > cap) continue;
       if (u.cost > bestCost) {
         bestCost = u.cost;
         best = id;

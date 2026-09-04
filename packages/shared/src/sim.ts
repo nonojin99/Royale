@@ -45,6 +45,9 @@ import {
   DEPLOY_TICKS,
   PRODUCE_QUEUE_MAX,
   PRODUCE_TICKS_PER_COST,
+  SUPPLY_BY_SIZE,
+  SUPPLY_MAIN,
+  SUPPLY_PER_EXPANSION,
   ENTITY_SCALE,
   HIGH_GROUND_DAMAGE_PCT,
   MATCH_TICKS,
@@ -588,6 +591,45 @@ export function workerCapacity(s: GameState, team: Team): number {
   return cap;
 }
 
+/**
+ * 이 유닛 카드 한 장이 먹는 공급 칸 — 몸집 × 마리 수.
+ *
+ * 건물·주문은 0이다. 건물은 수명이 있어 스스로 사라지고, 주문은 남지 않는다 —
+ * 천장이 묶어야 하는 것은 **필드에 남는 병력**이다.
+ */
+export function supplyOf(u: UnitDef): number {
+  if (u.kind !== 'unit') return 0;
+  return SUPPLY_BY_SIZE[u.size ?? 'medium'] * u.count;
+}
+
+/** 팀의 공급 천장 — 다 지어진 살아 있는 기지 × 기지당 칸 */
+export function supplyCapOf(s: GameState, team: Team): number {
+  let cap = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0 || e.deploy !== 0) continue;
+    cap += e.isMain ? SUPPLY_MAIN : SUPPLY_PER_EXPANSION;
+  }
+  return cap;
+}
+
+/**
+ * 지금 물고 있는 칸 — 필드의 병력 **더하기 큐에 걸린 예약**.
+ *
+ * 예약을 빼고 세면 천장 앞에서 큐를 가득 채워 두는 것으로 천장을 넘길 수
+ * 있다. 예약은 이미 값을 치른 병력이므로 자리도 미리 잡아야 한다.
+ */
+export function supplyUsedOf(s: GameState, team: Team): number {
+  let n = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== team || e.hp <= 0) continue;
+    n += SUPPLY_BY_SIZE[getUnit(e.unit).size ?? 'medium'];
+  }
+  for (const q of s.queue) {
+    if (q.team === team) n += supplyOf(getUnit(q.unit));
+  }
+  return n;
+}
+
 /** 실제로 일하고 있는 일꾼 수 (정원을 넘는 분은 놀고 있다) */
 export function activeWorkers(s: GameState, team: Team): number {
   const cap = workerCapacity(s, team);
@@ -928,6 +970,11 @@ function produceUnit(s: GameState, cmd: Command): boolean {
   if (queueOn(s) && u.kind === 'unit') {
     if (!host) return false;
     if (queueLenOf(s, host.id) >= PRODUCE_QUEUE_MAX) return false;
+  }
+  // 공급 천장 — 대전에서만. 침공은 파도를 막는 손이고 실험장은 상성을
+  // 보는 화면이라, 둘 다 천장을 끼우면 못 쓰게 된다
+  if (queueOn(s) && u.kind === 'unit') {
+    if (supplyUsedOf(s, cmd.team) + supplyOf(u) > supplyCapOf(s, cmd.team)) return false;
   }
 
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 거절한다 (라운드 29, 침공 전용)

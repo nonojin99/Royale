@@ -240,6 +240,9 @@
     #income { font-size: 11px; color: var(--mineral); font-weight: 700; white-space: nowrap; }
     #workers { font-size: 11px; color: var(--base); font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
     #workers.full { color: #f87171; }
+    /* 공급 — 정원과 같은 문법. 천장에 닿으면 붉어진다 */
+    #supply { font-size: 11px; color: #a78bfa; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #supply.full { color: #f87171; }
 
     /* 액션 행 */
     #actions { display: flex; gap: 6px; margin-top: 8px; }
@@ -768,6 +771,7 @@
         <div id="mineral-num">8</div>
       </div>
       <span id="workers">⛏ 2/8</span>
+      <span id="supply">⛨ 0/16</span>
       <span id="income">+0.0/s</span>
     </div>
 

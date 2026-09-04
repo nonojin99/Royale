@@ -27,6 +27,9 @@ import {
   PRODUCE_QUEUE_MAX,
   BASE_RADIUS,
   radiusOf,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
   OVERTIME_TICKS,
   TICK_RATE,
   WORKER_COST,
@@ -1317,6 +1320,16 @@ function onPointerDown(ev: PointerEvent): void {
     warn('기지 반경(초록 원) 안에만 배치할 수 있습니다');
     return;
   }
+  // 공급 천장 — 시뮬이 조용히 거절하면 "생산이 막혔다"로 읽힌다.
+  // 무엇이 막았고 어떻게 푸는지(확장)까지 말해 준다
+  if (!s.invasion && !s.sandbox) {
+    const need = supplyOf(getUnit(selectedUnit));
+    const scap = supplyCapOf(s, net.myTeam);
+    if (need > 0 && supplyUsedOf(s, net.myTeam) + need > scap) {
+      warn(`공급 부족 — ${getUnit(selectedUnit).name}은(는) ${need}칸 필요 · 확장하면 늘어납니다`);
+      return;
+    }
+  }
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 시뮬이 거절하므로,
   // 전송 전에 같은 판정을 미리 해 즉시 알린다 (라운드 29)
   if (s.invasion && getUnit(selectedUnit).kind === 'building' && me.wallCharges <= 0) {
@@ -1732,6 +1745,18 @@ function updateHud(s: GameState): void {
   // 정원이 찼다는 것은 곧 확장 신호다 — 색으로 알린다
   $('workers').textContent = `⛏ ${me.workers}/${cap}`;
   $('workers').classList.toggle('full', cap > 0 && me.workers >= cap);
+
+  // 공급 — 대전에만 있다. 천장에 닿으면 더 뽑을 수 없으니 눈에 띄어야 한다
+  const sup = $('supply');
+  if (s.invasion || s.sandbox) {
+    sup.hidden = true;
+  } else {
+    const used = supplyUsedOf(s, net.myTeam);
+    const scap = supplyCapOf(s, net.myTeam);
+    sup.hidden = false;
+    sup.textContent = `⛨ ${used}/${scap}`;
+    sup.classList.toggle('full', scap > 0 && used >= scap);
+  }
 
   $('score').textContent = `🏠 ${baseCount(s, net.myTeam)} : ${baseCount(s, foe)}`;
 

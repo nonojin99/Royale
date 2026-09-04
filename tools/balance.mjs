@@ -48,6 +48,9 @@ import {
   blockedAt,
   ORDER_MAX_UNITS,
   PRODUCE_QUEUE_MAX,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
 } from '../packages/shared/dist/index.js';
 
 const args = process.argv.slice(2);
@@ -175,6 +178,8 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, onl
   const me = s.players[team];
   const bases = ownBasePositions(s, team);
   if (!bases.length) return null;
+  const cap = supplyCapOf(s, team);
+  const used = supplyUsedOf(s, team);
   let best = null;
   let bestCost = cheap ? Infinity : -1;
   for (const id of me.unlocked) {
@@ -183,6 +188,7 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, onl
     const u = getUnit(id);
     if (u.kind !== 'unit') continue; // 건물은 명시적 웅크림 채널로만
     if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
+    if (used + supplyOf(u) > cap) continue; // 천장을 넘는 카드는 시뮬이 거절한다
     if (cheap ? u.cost < bestCost : u.cost > bestCost) {
       bestCost = u.cost;
       best = id;
@@ -435,9 +441,13 @@ const STRATS = {
   // 2코스트 유닛 하나에 8초가 걸려 러시 자체가 성립하지 않는다)
   // 러시는 모으지 않는다 — 나오는 족족 보낸다. 그게 러시다
   RUSH: (s, team, rng) =>
+    // 모아서 나가 봤지만 더 나빴다 (GREED 13%→8%, TECH 60%→17%) —
+    // 러시의 값어치는 이른 압박이지 뭉치가 아니다
     push(s, team, 6 * MINERAL_SCALE) ??
     (s.players[team].workers < 6 ? trainWorker(s, team) : null) ??
-    produce(s, team, rng, { cheap: true }),
+    produce(s, team, rng, { cheap: true }) ??
+    // 천장에 닿으면 병력 카드가 안 나온다 — 남는 돈은 강화로 간다
+    buyUpgrade(s, team),
   // 경제는 모아서 한 번에 나간다 — 찔끔 내보내면 헌납이고, 그 물량이
   // 확장 값을 회수하는 순간이 이 전략의 존재 이유다
   GREED: (s, team, rng) => {
@@ -455,7 +465,11 @@ const STRATS = {
       (army >= workerDebt(s, team) ? trainWorker(s, team) : null) ??
       expand(s, team, wantBases) ??
       // 기지를 다 깔면 예비금은 죽은 돈이다 — 그대로 두면 생산이 막힌다
-      produce(s, team, rng, { reserve: baseCount(s, team) < wantBases ? BASE_BUILD_COST : 0 })
+      produce(s, team, rng, { reserve: baseCount(s, team) < wantBases ? BASE_BUILD_COST : 0 }) ??
+      // 천장이 차면 병력 카드가 안 나온다. 쌓인 돈은 질로 바꾼다 —
+      // 이게 천장을 둔 이유이자, 부자가 부자답게 두는 수다
+      buyUpgrade(s, team) ??
+      research(s, team)
     );
   },
   // 테크의 원형: 포탑 뒤에서 웅크리고 테크 → T2가 나오면 밀고 나간다.
@@ -469,8 +483,14 @@ const STRATS = {
       (t2 ? push(s, team, 24 * MINERAL_SCALE) : null) ??
       // 첫 포탑이 일꾼보다 먼저다 — 러시는 34초에 도착한다
       buildDefense(s, team, rng, 1) ??
-      trainWorker(s, team) ??
+      // 투자는 병력으로 값을 치른다 — GREED에 쓴 규칙과 같다.
+      // 안 걸면 앞마당을 먹은 뒤 일꾼·강화가 돈을 다 먹어 **공급 0/28**로
+      // 늙어 죽는다 (실측: 220초까지 병력 4)
+      (armyCost(s, team) >= workerDebt(s, team) ? trainWorker(s, team) : null) ??
       buildDefense(s, team, rng) ??
+      // 앞마당은 웅크림의 일부다 — 천장이 기지에 묶인 뒤로 1기지 테크는
+      // 28칸에 갇혀 늙어 죽는다 (실측: 120초까지 1기지, GREED에 0%)
+      expand(s, team, 2) ??
       // 포탑 뒤 앞마당 — 1기지 수입으로는 포탑 유지비+연구+병력을 다 못
       // 감당해 빈곤 대치로 늙어 죽는다 (실측: 5분 무승부). 단 러시 창
       // (~80초) 안에 확장비를 모으면 그 돈이 병력이 안 돼 그대로 죽는다
@@ -478,8 +498,15 @@ const STRATS = {
       // 연구가 확장보다 먼저다 — 테크가 이 전략의 이름이자 승리 수단인데
       // 확장이 앞에 있으면 모은 12가 매번 기지로 나가 T2에 영영 못 닿는다
       research(s, team, 0, true) ??
-      (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
-      buyUpgrade(s, team, 4 * MINERAL_SCALE) ??
+      // 천장에 닿았으면 러시 창이 닫히길 기다릴 이유가 없다 — 확장이
+      // 곧 천장이라, 안 늘리면 병력이 그 자리에서 멈춘다
+      (s.tick > 20 * 90 || supplyUsedOf(s, team) >= supplyCapOf(s, team)
+        ? expand(s, team, 2)
+        : null) ??
+      // 강화도 마찬가지다 — 지킬 병력이 없는데 올린 공격력은 0에 곱해진다
+      (armyCost(s, team) >= 8 * MINERAL_SCALE
+        ? buyUpgrade(s, team, 4 * MINERAL_SCALE)
+        : null) ??
       castSpell(s, team) ??
       // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다). T2 후에도
       // 병력이 한 무리 모일 때까지 집에서 싸운다 — 한 기씩 전진하면
@@ -490,10 +517,14 @@ const STRATS = {
         // 러시 창(~90초)이 닫히면 **다음 연구비를 남긴다**. 창 안에 모으면
         // 그 돈이 병력이 안 돼 그대로 죽는다(라운드 6.5), 창 밖에서 안 모으면
         // 영영 T2에 못 닿는다 — 둘 다 실측으로 겪었다
+        // 앞마당을 먹을 때까지는 확장비를 남긴다 — 예비금 4로는 돈이 7에서
+        // 멈춰 12에 영영 못 닿았고(실측), 그래서 220초까지 1기지였다
         reserve:
-          s.tick > 20 * 90
-            ? Math.max(techReserve(s, team), baseCount(s, team) < 2 ? BASE_BUILD_COST : 0)
-            : 4 * MINERAL_SCALE,
+          baseCount(s, team) < 2
+            ? BASE_BUILD_COST
+            : s.tick > 20 * 90
+              ? techReserve(s, team)
+              : 4 * MINERAL_SCALE,
         defend: !t2 || armyCost(s, team) < 24 * MINERAL_SCALE,
       })
     );
@@ -667,7 +698,7 @@ if (args.includes('--trace')) {
         return (
           `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers}` +
           ` 기지${bases.length}(${hp}) 돈${Math.round(p.minerals / 1000)}` +
-          ` T1:${t1} T2:${t2} 큐${q}`
+          ` 공급${supplyUsedOf(s, t)}/${supplyCapOf(s, t)} T1:${t1} T2:${t2} 큐${q}`
         );
       });
       console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);

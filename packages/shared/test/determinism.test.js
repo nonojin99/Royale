@@ -17,6 +17,11 @@ import {
   BASE_BUILD_TICKS,
   BASE_MINERAL_RESERVE,
   BASE_SITES,
+  SUPPLY_MAIN,
+  SUPPLY_PER_EXPANSION,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
   DEPLOY_RADIUS,
   FACTION_IDS,
   MATCH_TICKS,
@@ -2845,4 +2850,79 @@ test('예약은 해시와 스냅샷을 그대로 통과한다', () => {
     step(b, []);
   }
   assert.equal(hashState(a), hashState(b), '복원 후 궤적이 갈렸다');
+});
+
+/* ── 공급 천장 (라운드 50) ────────────────────────────────────────────── */
+
+test('공급 천장은 본진이 크게, 확장이 조금 더한다', () => {
+  const s = createState(21, MIRROR);
+  assert.equal(supplyCapOf(s, 0), SUPPLY_MAIN, '시작은 본진 몫이어야 한다');
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
+  assert.ok(site, '확장 자리가 없어 이 검사가 헛돈다');
+  step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
+  assert.equal(supplyCapOf(s, 0), SUPPLY_MAIN, '짓는 중인 기지가 벌써 천장을 줬다');
+  for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
+  assert.equal(supplyCapOf(s, 0), SUPPLY_MAIN + SUPPLY_PER_EXPANSION);
+});
+
+test('천장을 넘는 생산은 거절된다 — 예약도 자리를 미리 문다', () => {
+  const s = createState(22, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  const per = supplyOf(getUnit('rifleman'));
+  assert.ok(per > 0, '소총병 공급이 0이면 이 검사가 헛돈다');
+  let made = 0;
+  for (let i = 0; i < 60; i++) {
+    s.players[0].minerals = RICH; // 돈이 아니라 **공급**이 막는지만 본다
+    if (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000))) made++;
+    // 큐 상한(5)이 아니라 공급이 막는 것을 보려면 구운 것을 비워 줘야 한다
+    for (let k = 0; k < 40 && s.queue.length; k++) step(s, []);
+  }
+  assert.ok(made > 0, '한 장도 못 뽑았다');
+  assert.ok(supplyUsedOf(s, 0) <= supplyCapOf(s, 0), '천장을 넘겼다');
+  assert.ok(
+    supplyUsedOf(s, 0) + per > supplyCapOf(s, 0),
+    `천장(${supplyCapOf(s, 0)})에 닿기 전에 멈췄다 — ${supplyUsedOf(s, 0)}칸`,
+  );
+});
+
+test('예약만으로는 천장을 넘길 수 없다', () => {
+  const s = createState(23, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  // 큐에만 쌓는다 (step을 돌리지 않으니 필드 병력은 0)
+  while (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.ok(supplyUsedOf(s, 0) <= supplyCapOf(s, 0), '예약이 천장을 넘었다');
+  assert.equal(s.entities.filter((e) => e.kind === 'unit' && e.team === 0).length, 0);
+});
+
+test('침공·실험장에는 천장이 없다', () => {
+  for (const [sandbox, invasion] of [[true, false], [false, true]]) {
+    const s = createState(24, MIRROR, DEFAULT_MAP_ID, sandbox, invasion);
+    s.players[0].minerals = RICH;
+    const home = mainBase(s, 0);
+    let made = 0;
+    for (let i = 0; i < 30; i++) {
+      if (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000))) made++;
+      s.players[0].minerals = RICH;
+    }
+    assert.ok(
+      supplyUsedOf(s, 0) > supplyCapOf(s, 0),
+      `${sandbox ? '실험장' : '침공'}에 천장이 걸렸다 — ${made}장`,
+    );
+  }
+});
+
+test('기지를 잃으면 천장이 내려간다 — 초과분은 그대로 남는다', () => {
+  const s = createState(25, MIRROR);
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
+  step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
+  for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
+  const exp = s.entities.find((e) => e.kind === 'base' && e.team === 0 && !e.isMain);
+  assert.ok(exp, '확장이 안 세워져 이 검사가 헛돈다');
+  const wide = supplyCapOf(s, 0);
+  exp.hp = 0;
+  assert.equal(supplyCapOf(s, 0), wide - SUPPLY_PER_EXPANSION, '확장을 잃었는데 천장이 그대로다');
 });
