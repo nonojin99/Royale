@@ -222,8 +222,11 @@ const defs: UnitDef[] = [
     range: tiles(5.5), speed: spd(0.8), siege: 120, color: 0x475569,
   }),
   unit({
+    // 라운드 50 상향: 러시가 병력을 모아 오게 되면서(봇의 집결 후 출진)
+    // 첫 뭉치를 못 버티면 웅크림 전략 자체가 성립하지 않는다. 다만 전량
+    // 상향은 과했다 — RUSH vs TECH 55%→35%로 뒤집혔다. 절반만 준다
     id: 'bulwark', name: '방벽', cost: 2, kind: 'building',
-    hp: 1000, damage: 165, hitSpeed: seconds(0.8, TICK_RATE),
+    hp: 1000, damage: 182, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0x78716c,
     // 지뢰 부설 — 9초마다 둘레에 한 기, 셋까지. 벽이 스스로 지뢰밭을 기른다
     ability: { kind: 'mine', charge: seconds(9, TICK_RATE), radius: tiles(3.0), power: 3 },
@@ -270,7 +273,7 @@ const defs: UnitDef[] = [
   }),
   unit({
     id: 'spinetentacle', name: '가시촉수', cost: 2, kind: 'building',
-    hp: 950, damage: 205, hitSpeed: seconds(1.0, TICK_RATE),
+    hp: 950, damage: 225, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: 0, targets: 'ground',
     lifetime: BUILDING_LIFE, color: 0x9f1239,
   }),
@@ -334,13 +337,16 @@ const defs: UnitDef[] = [
     chargeStart: seconds(5.4, TICK_RATE),
   }),
   unit({
+    // 라운드 50 하향: 신념단 편성 리그에서 홀로 +0.23 돌출(다른 종족은 전부
+    // ±0.09 안). 광역을 좁혀 **대군에서의 값**만 깎는다 — 한 방이 무겁다는
+    // 정체성(체력·데미지)은 건드리지 않는다
     id: 'fusionite', size: 'large', name: '융합체', cost: 5, kind: 'unit',
     hp: 1300, damage: 200, hitSpeed: seconds(1.6, TICK_RATE),
-    range: tiles(1.0), speed: spd(0.8), splash: tiles(1.6), siege: 200, color: 0x06b6d4,
+    range: tiles(1.0), speed: spd(0.8), splash: tiles(1.3), siege: 200, color: 0x06b6d4,
   }),
   unit({
     id: 'lightpylon', name: '빛기둥', cost: 2, kind: 'building',
-    hp: 900, damage: 175, hitSpeed: seconds(0.9, TICK_RATE),
+    hp: 900, damage: 192, hitSpeed: seconds(0.9, TICK_RATE),
     // 하늘색(0x38bdf8)은 렌더러의 아군 팀 색과 겹쳐서, 적 빛기둥이 아군 건물처럼
     // 보인다. 카드 색은 팀 색과 반드시 구분되어야 한다.
     range: tiles(5.5), speed: 0, lifetime: BUILDING_LIFE, color: 0xfcd34d,

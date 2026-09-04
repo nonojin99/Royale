@@ -45,6 +45,7 @@ import {
   step,
   workerCapacity,
   isHiddenFrom,
+  blockedAt,
   ORDER_MAX_UNITS,
 } from '../packages/shared/dist/index.js';
 
@@ -273,6 +274,24 @@ const AIR_PATH = {
   covenant: ['mystic', 'skiff'],
 };
 
+/**
+ * 지금 노릴 수 있는 가장 싼 연구 노드의 값 (미네랄 단위). 없으면 0.
+ *
+ * 이게 없으면 TECH는 **영영 테크를 못 탄다**: 병력 생산이 예비금 4까지
+ * 계속 긁어써서 12짜리 노드에 손이 닿지 않는다. 실측에서 6판 전부
+ * T2 미도달로 전멸했다 — 웅크리다 죽는 게 아니라 웅크린 채 못 크는 것이었다.
+ */
+function techReserve(s, team) {
+  const me = s.players[team];
+  if (me.research) return 0;
+  let cheapest = Infinity;
+  for (const node of getFaction(me.faction).tech) {
+    if (!canResearch(me, node.unit)) continue;
+    if (node.cost < cheapest) cheapest = node.cost;
+  }
+  return cheapest === Infinity ? 0 : cheapest * MINERAL_SCALE;
+}
+
 /** 특정 노드를 향해 곧장 연구한다 */
 function researchToward(s, team, target) {
   const me = s.players[team];
@@ -339,11 +358,42 @@ function strikeAt(s, team) {
 }
 
 /**
- * 출진 명령. `minArmy`(미네랄 환산)만큼 모였으면 공격 이동으로 내보낸다.
- * 공격 이동이라 가는 길에 만난 것과 싸운다 — 확장을 지나치지 않는다.
+ * 전방 집결지 — 내 기지와 목표의 중간쯤.
+ *
+ * 여기가 없으면 병력이 **줄줄이 흘러들어간다**: 생산 즉시 한 기씩 출발해
+ * 52타일을 혼자 건너다 앞에서 각개격파된다. 실측에서 27기 중 최근접만
+ * 4타일이고 중앙값이 25타일이었다 — 절반이 늘 이동 중이라 한 덩어리로
+ * 도착하는 순간이 영영 오지 않았고, 그래서 경기가 300초 상한까지 갔다.
+ */
+function stagingPoint(s, team) {
+  const mine = ownBasePositions(s, team);
+  const from = mine.length ? mine[0] : enemyMain(team);
+  const [tx, ty] = strikeAt(s, team);
+  return [
+    Math.trunc(from[0] + (tx - from[0]) * 0.55),
+    Math.trunc(from[1] + (ty - from[1]) * 0.55),
+  ];
+}
+
+/**
+ * 출진 지휘 — 먼저 모으고, 모이면 보낸다.
+ *
+ * 집결지(Y)를 전방에 찍어 두면 새로 나온 병력이 알아서 그리로 걸어가
+ * 대기한다. `minArmy`만큼 쌓이면 전군에 공격 이동을 건다 — 공격 이동이라
+ * 가는 길에 만난 것과 싸운다(확장을 지나치지 않는다).
  */
 function push(s, team, minArmy) {
   if (s.tick % PUSH_EVERY >= DECIDE_EVERY) return null;
+  const me = s.players[team];
+  const [sx, sy] = stagingPoint(s, team);
+  // 집결지를 아직 안 찍었거나 목표가 바뀌어 멀어졌으면 다시 찍는다.
+  // 같은 자리에 다시 찍으면 해제되므로(setRally) 넉넉히 멀 때만 옮긴다
+  if (
+    !blockedAt(sx, sy) &&
+    (!me.rally || Math.hypot(me.rally.x - sx, me.rally.y - sy) > 8000)
+  ) {
+    return { kind: 'rally', id: '', x: sx, y: sy };
+  }
   if (armyCost(s, team) < minArmy) return null;
   const ids = armyIds(s, team);
   if (!ids.length) return null;
@@ -356,7 +406,7 @@ const STRATS = {
   // 2코스트 유닛 하나에 8초가 걸려 러시 자체가 성립하지 않는다)
   // 러시는 모으지 않는다 — 나오는 족족 보낸다. 그게 러시다
   RUSH: (s, team, rng) =>
-    push(s, team, 0) ??
+    push(s, team, 6 * MINERAL_SCALE) ??
     (s.players[team].workers < 6 ? trainWorker(s, team) : null) ??
     produce(s, team, rng, { cheap: true }),
   // 경제는 모아서 한 번에 나간다 — 찔끔 내보내면 헌납이고, 그 물량이
@@ -383,8 +433,10 @@ const STRATS = {
       // 감당해 빈곤 대치로 늙어 죽는다 (실측: 5분 무승부). 단 러시 창
       // (~80초) 안에 확장비를 모으면 그 돈이 병력이 안 돼 그대로 죽는다
       // (실측: RUSH 98%) — 창이 닫힌 뒤에만 저축·확장한다
-      (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
+      // 연구가 확장보다 먼저다 — 테크가 이 전략의 이름이자 승리 수단인데
+      // 확장이 앞에 있으면 모은 12가 매번 기지로 나가 T2에 영영 못 닿는다
       research(s, team, 0, true) ??
+      (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
       buyUpgrade(s, team, 4 * MINERAL_SCALE) ??
       castSpell(s, team) ??
       // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다). T2 후에도
@@ -393,9 +445,12 @@ const STRATS = {
       produce(s, team, rng, {
         // 러시 창이 닫히면 확장비(8)를 모은다 — 예비금 4로는 8이 영영 안
         // 모이고(실측: expand 무발동), 창 안에 모으면 병력이 비어 죽는다
+        // 러시 창(~90초)이 닫히면 **다음 연구비를 남긴다**. 창 안에 모으면
+        // 그 돈이 병력이 안 돼 그대로 죽는다(라운드 6.5), 창 밖에서 안 모으면
+        // 영영 T2에 못 닿는다 — 둘 다 실측으로 겪었다
         reserve:
-          s.tick > 20 * 90 && baseCount(s, team) < 2
-            ? BASE_BUILD_COST
+          s.tick > 20 * 90
+            ? Math.max(techReserve(s, team), baseCount(s, team) < 2 ? BASE_BUILD_COST : 0)
             : 4 * MINERAL_SCALE,
         defend: !t2 || armyCost(s, team) < 24 * MINERAL_SCALE,
       })
