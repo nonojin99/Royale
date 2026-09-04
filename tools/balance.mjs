@@ -47,6 +47,7 @@ import {
   isHiddenFrom,
   blockedAt,
   ORDER_MAX_UNITS,
+  PRODUCE_QUEUE_MAX,
 } from '../packages/shared/dist/index.js';
 
 const args = process.argv.slice(2);
@@ -75,18 +76,41 @@ function armyCost(s, team) {
 }
 
 /** 전방(적 본진 방향)으로 치우친 배치 좌표를 찾는다 */
+/** 이 기지 자리에 걸린 예약 수 — 어느 기지가 아직 여유가 있는지 고른다 */
+function queueAt(s, team, pos) {
+  let host = -1;
+  let bestD2 = Infinity;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0 || e.deploy > 0) continue;
+    const d2 = (e.x - pos[0]) ** 2 + (e.y - pos[1]) ** 2;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      host = e.id;
+    }
+  }
+  if (host < 0) return PRODUCE_QUEUE_MAX;
+  let n = 0;
+  for (const o of s.queue) if (o.base === host) n++;
+  return n;
+}
+
 function forwardSpot(s, team, rng) {
   const bases = ownBasePositions(s, team);
   if (!bases.length) return null;
   const [ex, ey] = enemyMain(team);
-  // 적에게 가장 가까운 기지에서 적 방향으로 민다
-  let front = bases[0];
-  let best = Infinity;
-  for (const b of bases) {
-    const d = Math.abs(b[0] - ex) + Math.abs(b[1] - ey);
-    if (d < best) {
-      best = d;
+  // 앞선 기지부터 쓰되, **큐가 찬 기지는 건너뛴다**.
+  //
+  // 늘 최전방에만 배치하면 주문이 한 기지에 몰려 팀 전체 큐가 5에서
+  // 멈춘다 — 기지가 넷이어도 처리량은 하나 몫이고, 남는 돈은 그냥 쌓인다
+  // (실측: 4기지 GREED가 387코를 쥐고 죽었다). 앞이 막히면 뒤에서 굽는다.
+  const order = bases
+    .map((b) => [b, Math.abs(b[0] - ex) + Math.abs(b[1] - ey)])
+    .sort((p, q) => p[1] - q[1]);
+  let front = order[0][0];
+  for (const [b] of order) {
+    if (queueAt(s, team, b) < PRODUCE_QUEUE_MAX) {
       front = b;
+      break;
     }
   }
   const dx = ex - front[0];
@@ -99,6 +123,11 @@ function forwardSpot(s, team, rng) {
     if (canDeployAt(x, y, bases)) return [x, y];
   }
   return [front[0], front[1]];
+}
+
+/** 첫 기지 몫을 넘은 일꾼이 요구하는 최소 병력 — 일꾼 하나당 1코 */
+function workerDebt(s, team) {
+  return Math.max(0, s.players[team].workers - 8) * MINERAL_SCALE;
 }
 
 function trainWorker(s, team) {
@@ -411,11 +440,24 @@ const STRATS = {
     produce(s, team, rng, { cheap: true }),
   // 경제는 모아서 한 번에 나간다 — 찔끔 내보내면 헌납이고, 그 물량이
   // 확장 값을 회수하는 순간이 이 전략의 존재 이유다
-  GREED: (s, team, rng) =>
-    push(s, team, 20 * MINERAL_SCALE) ??
-    trainWorker(s, team) ??
-    expand(s, team) ??
-    produce(s, team, rng, { reserve: BASE_BUILD_COST }),
+  GREED: (s, team, rng) => {
+    const army = armyCost(s, team);
+    // 욕심에는 값을 치른다.
+    //
+    // 예전엔 일꾼도 확장도 공짜였다 — 상한까지 일꾼을 채우고 60초에
+    // 4기지를 깔면서 **병력이 120초 내내 0**이었다(실측 96:0). 그건
+    // 전략이 아니라 헌납이다. 이제 첫 기지 몫(일꾼 8기·앞마당 1개)까지는
+    // 공짜지만, 그 위로는 일꾼 하나에 1코씩, 확장 하나에 12코씩 병력이
+    // 먼저 서 있어야 한다
+    const wantBases = army >= BASE_BUILD_COST ? 4 : 2;
+    return (
+      push(s, team, 20 * MINERAL_SCALE) ??
+      (army >= workerDebt(s, team) ? trainWorker(s, team) : null) ??
+      expand(s, team, wantBases) ??
+      // 기지를 다 깔면 예비금은 죽은 돈이다 — 그대로 두면 생산이 막힌다
+      produce(s, team, rng, { reserve: baseCount(s, team) < wantBases ? BASE_BUILD_COST : 0 })
+    );
+  },
   // 테크의 원형: 포탑 뒤에서 웅크리고 테크 → T2가 나오면 밀고 나간다.
   // 영원히 웅크리면 기지 수 판정에서 자동으로 진다 — 웅크림은 수단이지 목표가 아니다
   TECH: (s, team, rng) => {
@@ -618,7 +660,15 @@ if (args.includes('--trace')) {
         const p = s.players[t];
         const bases = s.entities.filter((e) => e.kind === 'base' && e.team === t);
         const hp = bases.reduce((x, e) => x + Math.max(0, e.hp), 0);
-        return `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers} 기지${bases.length}(${hp})`;
+        const f = getFaction(p.faction);
+        const t2 = f.tech.filter((n) => n.tier === 2 && p.unlocked.includes(n.unit)).length;
+        const t1 = f.tech.filter((n) => n.tier === 1 && p.unlocked.includes(n.unit)).length;
+        const q = s.queue.filter((o) => o.team === t).length;
+        return (
+          `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers}` +
+          ` 기지${bases.length}(${hp}) 돈${Math.round(p.minerals / 1000)}` +
+          ` T1:${t1} T2:${t2} 큐${q}`
+        );
       });
       console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);
     }
