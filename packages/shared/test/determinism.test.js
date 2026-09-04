@@ -96,6 +96,7 @@ import {
   UNIT_RADIUS_LARGE,
   UNIT_RADIUS_SMALL,
   HIGH_GROUND_SIGHT_PCT,
+  reachOf,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -754,7 +755,7 @@ function place(s, team, unitId, x, y) {
     life: -1,
     target: -1,
     flying: u.flying,
-    charge: 0,
+    charge: u.chargeStart ?? 0,
     orderX: -1,
     orderY: -1,
     orderAttack: 0,
@@ -2585,4 +2586,123 @@ test('정찰 기록은 해시에 들어간다 (리싱크가 이걸 놓치면 안
   assert.equal(hashState(a), hashState(b));
   a.players[0].scouted |= 1 << 3;
   assert.notEqual(hashState(a), hashState(b), 'scouted가 해시에 안 들어간다');
+});
+
+/* ── 몸집과 사거리의 관계 (라운드 50 — 근접이 표적에 못 닿던 버그) ─────── */
+
+test('모든 유닛은 밀어내기 거리 너머까지 닿는다 — 근접이 허공을 치면 안 된다', () => {
+  // 밀어내기는 두 몸집의 합만큼 떼어 놓는다. 닿는 거리가 그보다 짧으면
+  // 그 짝은 **영원히 서로를 못 때린다** — 몸집을 키우면서 실제로 그랬다
+  // (거대포식자 반경 1100 + 소총병 600 = 1700 떨어져 서는데 닿는 거리 1500).
+  const fake = (id) => ({ kind: 'unit', unit: id, team: 0 });
+  const fighters = UNIT_IDS.filter((id) => {
+    const u = getUnit(id);
+    return u.kind === 'unit' && u.range > 0;
+  });
+  for (const a of fighters) {
+    for (const b of UNIT_IDS) {
+      if (getUnit(b).kind !== 'unit') continue;
+      const ea = fake(a);
+      const eb = fake(b);
+      const push = radiusOf(ea) + radiusOf(eb);
+      const reach = reachOf(ea, eb, getUnit(a).range);
+      assert.ok(
+        reach > push,
+        `${getUnit(a).name}가 ${getUnit(b).name}에 못 닿는다 (닿는 거리 ${reach} ≤ 밀어내기 ${push})`,
+      );
+    }
+  }
+});
+
+test('같은 유닛끼리 대군으로 붙으면 어느 쪽도 이기지 않는다', () => {
+  // 미러가 한쪽으로 기울면 자리나 순서에 이점이 있다는 뜻이고, 그러면
+  // 결투 하네스의 모든 수치가 같이 기운다. 사거리 버그 시절 실제로 기울었다
+  // 고도가 균일하고 통행 가능한 자리를 먼저 찾는다. 언덕에 걸치면 데미지가
+  // 70%로 깎이고 시야가 ±30% 달라져, 유닛이 아니라 지형을 재게 된다
+  let spot = null;
+  for (let ty = 6; ty < ARENA_W_TILES - 12 && !spot; ty++) {
+    for (let tx = 6; tx < ARENA_W_TILES - 8; tx++) {
+      const e0 = elevAt(tx * 1000 + 500, ty * 1000 + 500);
+      let ok = true;
+      for (let y = ty; y < ty + 10 && ok; y++) {
+        for (let x = tx; x < tx + 6; x++) {
+          const px = x * 1000 + 500;
+          const py = y * 1000 + 500;
+          if (blockedAt(px, py) || elevAt(px, py) !== e0) {
+            ok = false;
+            break;
+          }
+        }
+      }
+      if (ok) {
+        spot = [tx * 1000 + 1500, ty * 1000 + 5000];
+        break;
+      }
+    }
+  }
+  assert.ok(spot, '고도가 균일한 평지를 찾지 못했다');
+
+  for (const id of ['zealot', 'rifleman', 'siegetank']) {
+    const s = createState(9, MIRROR);
+    const N = 6;
+    for (let i = 0; i < N; i++) {
+      place(s, 0, id, spot[0] + (i % 3) * 1600, spot[1] + 1600 + ((i / 3) | 0) * 1600);
+      place(s, 1, id, spot[0] + (i % 3) * 1600, spot[1] - 1600 - ((i / 3) | 0) * 1600);
+    }
+    for (let t = 0; t < 1200; t++) {
+      step(s, []);
+      const a = s.entities.some((e) => e.kind === 'unit' && e.team === 0);
+      const b = s.entities.some((e) => e.kind === 'unit' && e.team === 1);
+      if (!a || !b) break;
+    }
+    const live = (t) => s.entities.filter((e) => e.kind === 'unit' && e.team === t).length;
+    assert.equal(
+      live(0),
+      live(1),
+      `${getUnit(id).name} 미러가 기울었다 (${live(0)} : ${live(1)}) — 자리나 순서에 이점이 있다`,
+    );
+  }
+});
+
+/* ── 공중의 지형 이점 (라운드 50, 오너 지시) ───────────────────────────── */
+
+test('공중은 같은 사거리의 지상보다 멀리 본다 — 지형이 시야를 막지 못한다', () => {
+  // 사격보행기(지상)와 부유선(공중)은 둘 다 대공 가능한 4코 유닛이다.
+  // 같은 거리에 적을 두고, 공중 쪽이 먼저 본다
+  const probe = (watcher) => {
+    const s = createState(5, MIRROR);
+    const w = place(s, 0, watcher, 24000, 30000);
+    const foe = place(s, 1, 'rifleman', 24000, 30000 - 9500); // 9.5타일
+    step(s, []);
+    void w;
+    return !isHiddenFrom(s, 0, byId(s, foe.id));
+  };
+  assert.equal(probe('skiff'), true, '공중이 9.5타일 밖을 못 본다');
+  assert.equal(probe('strider'), false, '지상이 공중만큼 멀리 본다 — 이점이 없다');
+});
+
+test('충전 스킬은 유닛마다 다른 시간을 쓰고, 술사는 게이지를 채워 나온다', () => {
+  const mystic = getUnit('mystic');
+  assert.ok(mystic.chargeTicks, '술사에 유닛별 충전 시간이 없다');
+  assert.ok(mystic.chargeStart > 0, '술사가 빈 게이지로 나온다 — 한 방을 못 쓴다');
+  assert.ok(
+    mystic.chargeStart < mystic.chargeTicks,
+    '만충으로 나오면 붙자마자 한 무리를 지운다 (실측: 소총병 12기 즉사)',
+  );
+  // 실제로 생산 경로를 타면 게이지가 차 있어야 한다
+  const s = createState(5, ['covenant', 'covenant']);
+  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].unlocked = [...s.players[0].unlocked, 'mystic'].sort();
+  const home = mainBase(s, 0);
+  const before = s.entities.length;
+  assert.ok(applyCommand(s, cmd(0, 0, 'unit', 'mystic', home.x, home.y - 1000)));
+  const made = s.entities.slice(before);
+  assert.ok(made.length > 0 && made[0].charge === mystic.chargeStart, '생산된 술사의 게이지가 비었다');
+});
+
+test('지상 전용 시전자의 주문도 지상만 때린다', () => {
+  // 술사는 지상만 때리는데 그 주문(정신붕괴)만 공중을 때리면
+  // "못 때리는 유닛이 때린다"가 된다
+  assert.equal(getUnit('mystic').targets, 'ground');
+  assert.equal(getUnit('mindbreak').targets, 'ground');
 });

@@ -53,6 +53,23 @@ export interface UnitDef {
   /** 충전 스킬 — 게이지가 차면 이 주문을 사거리 안에서 자동 발사한다 */
   charges?: string;
   /**
+   * 충전에 걸리는 틱. 적지 않으면 `SKILL_CHARGE_TICKS`(14초).
+   *
+   * 14초는 **전투가 끝난 뒤에 차는 시간**이다. 결투 실측에서 교전은 3~18초에
+   * 결판나므로, 술사처럼 "긴 쿨타임 대신 광역 한 방"이 정체성인 유닛은
+   * 그 한 방을 평생 못 써 보고 죽었다 (등코스트 우세도 -0.8).
+   */
+  chargeTicks?: number;
+  /**
+   * 생산될 때 게이지가 차 있는 정도 (틱). 적지 않으면 0에서 시작한다.
+   *
+   * "긴 쿨타임 대신 광역 한 방"이 정체성인 유닛에게는 **첫 한 방을 쓸 수
+   * 있느냐**가 전부다. 술사는 집중 사격에 4초 만에 녹아 게이지가 41/140에서
+   * 멈췄다(실측) — 충전을 줄여도 소용이 없었던 이유다. 도착하자마자 한 번
+   * 터뜨리고, 그다음은 길게 기다린다.
+   */
+  chargeStart?: number;
+  /**
    * 능동 특성 (4축, 라운드 35) — **침공 전용**.
    *
    * 라운드 21의 게이지 틀을 재사용하되, "주문을 쏜다"가 아니라 **상태를
@@ -305,9 +322,16 @@ const defs: UnitDef[] = [
     // 딜러가 접근 전에 녹아 없어졌다 — 체력만 올려 사거리·화력은 그대로 둔다
     id: 'mystic', name: '술사', cost: 4, kind: 'unit',
     hp: 420, damage: 110, hitSpeed: seconds(1.7, TICK_RATE),
-    range: tiles(5.0), speed: spd(0.9), splash: tiles(1.7),
+    range: tiles(5.0), speed: spd(0.9), splash: tiles(2.1),
     targets: 'ground', siege: 80, color: 0x8b5cf6,
+    // 라운드 50: 다수전 특화 (오너 지시). 광역을 1.7→2.1타일로 넓히고
+    // 충전을 14→7초로 줄인다. "긴 쿨타임 대신 광역 한 방"이 정체성인데
+    // 14초는 교전이 끝난 뒤에나 차서 그 한 방을 못 써 보고 죽었다
     charges: 'mindbreak',
+    chargeTicks: seconds(9, TICK_RATE),
+    // 만충으로 도착하면 붙자마자 한 무리를 지운다(실측: 소총병 12기 즉사).
+    // 60%면 교전 3~4초째에 터진다 — 앞줄이 버텨 준 값이라 조합의 보상이 된다
+    chargeStart: seconds(5.4, TICK_RATE),
   }),
   unit({
     id: 'fusionite', size: 'large', name: '융합체', cost: 5, kind: 'unit',
@@ -337,9 +361,11 @@ const defs: UnitDef[] = [
     targets: 'ground', siege: 100, color: 0xe879f9,
   }),
   unit({
+    // 지상만 때린다 — 시전자(술사)가 지상 전용인데 그 주문만 공중을 때리면
+    // "못 때리는 유닛이 때린다"가 된다 (결정론 테스트가 잡았다)
     id: 'mindbreak', name: '정신붕괴', cost: 3, kind: 'spell', count: 0,
     hp: 0, damage: 260, hitSpeed: 0, range: 0, speed: 0,
-    splash: tiles(2.6), color: 0x7e22ce,
+    splash: tiles(2.6), targets: 'ground', color: 0x7e22ce,
   }),
 
   /* ── 침공 전용 지원 건물 (라운드 31) ────────────────────────────────

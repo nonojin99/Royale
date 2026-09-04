@@ -117,14 +117,20 @@ const CAPACITY = COLS * ROWS;
 
 /** 결투 한 판. n마리씩 마주 세우고 결판이 날 때까지 돌린다 */
 function duel(aId, bId, n, seed = 7, nB = n) {
+  return fight([{ id: aId, n }], [{ id: bId, n: nB }], seed);
+}
+
+/** 부대 대 부대 — `[{id, n}, ...]`. 섞인 편성도 그대로 받는다 */
+function fight(forceA, forceB, seed = 7) {
   // 실험장 모드 — 승패 판정이 없고, 표적 없는 유닛이 서로에게 전진한다
   const s = createState(seed, ['steel', 'steel'], 'coast', true);
   // 기지는 사거리와 시야를 가진 참가자다. 결투에서는 치운다
   s.entities.length = 0;
 
-  const put = (team, id, count) => {
+  const put = (team, id, count, offset) => {
     const u = getUnit(id);
-    for (let i = 0; i < count; i++) {
+    for (let k = 0; k < count; k++) {
+      const i = offset + k;
       const col = i % COLS;
       const row = (i / COLS) | 0;
       const x = ARENA.cx + (col - (COLS - 1) / 2) * GAP;
@@ -145,7 +151,7 @@ function duel(aId, bId, n, seed = 7, nB = n) {
         life: -1,
         target: -1,
         flying: u.flying,
-        charge: 0,
+        charge: u.chargeStart ?? 0, // 생산될 때의 게이지 — 현실과 같아야 한다
         mode: 0,
         haste: 0,
         orderX: -1,
@@ -159,11 +165,14 @@ function duel(aId, bId, n, seed = 7, nB = n) {
       });
     }
   };
-  put(0, aId, n);
-  put(1, bId, nB);
+  let slotA = 0;
+  let slotB = 0;
+  for (const g of forceA) put(0, g.id, g.n, slotA), (slotA += g.n);
+  for (const g of forceB) put(1, g.id, g.n, slotB), (slotB += g.n);
 
-  const startA = n * unitValue(aId);
-  const startB = nB * unitValue(bId);
+  const cost = (f) => f.reduce((sum, g) => sum + g.n * unitValue(g.id), 0);
+  const startA = cost(forceA);
+  const startB = cost(forceB);
 
   let ticks = 0;
   for (; ticks < 1800; ticks++) {
@@ -394,6 +403,148 @@ function outliers() {
   console.log('');
 }
 
+/* ── 4. 혼합 대 순수 ───────────────────────────────────────────────────── */
+
+/**
+ * 예산을 여러 종류에 **값이 고르게** 나눠 담는다.
+ *
+ * `budget/2`로 나눠 각자 내림하면 비싼 유닛에서 예산이 샌다 — 4코짜리 둘을
+ * 12코로 섞으면 1+1=8코가 되어 12코 몰빵을 상대로 3분의 1을 손해 보고 시작한다.
+ * 그러면 "혼합이 약하다"가 아니라 "혼합이 가난하다"를 재게 된다 (실측에서
+ * 역시너지 27건이 전부 이 artifact였다). 그래서 값이 적은 쪽부터 한 마리씩
+ * 채워 예산을 끝까지 쓴다.
+ */
+function evenForce(ids, budget) {
+  const vals = ids.map(unitValue);
+  const ns = ids.map(() => 0);
+  let spent = 0;
+  for (;;) {
+    // 지금 가장 값이 적게 들어간 종류부터 — 없으면 들어갈 수 있는 아무거나
+    const order = ids
+      .map((_, i) => i)
+      .sort((x, y) => ns[x] * vals[x] - ns[y] * vals[y]);
+    const pick = order.find((i) => spent + vals[i] <= budget + 1e-9 && ns[i] < CAPACITY);
+    if (pick === undefined) break;
+    ns[pick]++;
+    spent += vals[pick];
+  }
+  return ids.map((id, i) => ({ id, n: ns[i] })).filter((g) => g.n > 0);
+}
+
+const mixOf = (a, b, budget) => evenForce([a, b], budget);
+const pureOf = (id, budget) => [{ id, n: countFor(id, budget) }];
+const forceCost = (f) => f.reduce((sum, g) => sum + g.n * unitValue(g.id), 0);
+const forceLabel = (f) => f.map((g) => `${nameOf(g.id)}×${g.n}`).join(' + ');
+
+/**
+ * 섞는 것이 이득인가 — 같은 돈으로 **A+B 혼합**과 **A 몰빵 · B 몰빵**을 붙인다.
+ *
+ * 이게 조합 밸런스의 첫 질문이다. 혼합이 자기 재료 둘을 **모두** 이기면
+ * 시너지(앞줄이 버티고 뒷줄이 때린다)이고, 둘 다에게 지면 역시너지다.
+ * 둘 다 없이 중간이면 그 짝은 그냥 취향 문제고, 그건 건강한 상태다.
+ */
+function mixTable(budget) {
+  console.log(`── 4. 혼합 대 순수 (예산 ${budget}코, 반반) ──`);
+  const syn = [];
+  const anti = [];
+  for (let i = 0; i < ROSTER.length; i++) {
+    for (let j = i + 1; j < ROSTER.length; j++) {
+      const a = ROSTER[i];
+      const b = ROSTER[j];
+      const mix = mixOf(a, b, budget);
+      const pa = pureOf(a, budget);
+      const pb = pureOf(b, budget);
+      // 값이 한 코 넘게 어긋나면 비교가 아니라 빈부 격차를 재는 것이다
+      if (Math.abs(forceCost(mix) - forceCost(pa)) > 1) continue;
+      if (Math.abs(forceCost(mix) - forceCost(pb)) > 1) continue;
+      const vsA = fight(mix, pa).edge;
+      const vsB = fight(mix, pb).edge;
+      if (vsA === null || vsB === null) continue;
+      const worst = Math.min(vsA, vsB);
+      const best = Math.max(vsA, vsB);
+      if (worst > 0.15) syn.push([a, b, vsA, vsB, worst]);
+      else if (best < -0.15) anti.push([a, b, vsA, vsB, best]);
+    }
+  }
+  syn.sort((x, y) => y[4] - x[4]);
+  anti.sort((x, y) => x[4] - y[4]);
+
+  console.log(`  ▲ 시너지 — 섞은 쪽이 재료 둘 다를 이긴다 (${syn.length}건)`);
+  for (const [a, b, vsA, vsB] of syn.slice(0, 10)) {
+    console.log(
+      `    ${pad(nameOf(a) + ' + ' + nameOf(b), 24)} vs ${pad(nameOf(a), 12)}${fmt(vsA)}` +
+        `   vs ${pad(nameOf(b), 12)}${fmt(vsB)}`,
+    );
+  }
+  console.log(`  ▼ 역시너지 — 섞으면 재료 둘보다 못하다 (${anti.length}건)`);
+  for (const [a, b, vsA, vsB] of anti.slice(0, 10)) {
+    console.log(
+      `    ${pad(nameOf(a) + ' + ' + nameOf(b), 24)} vs ${pad(nameOf(a), 12)}${fmt(vsA)}` +
+        `   vs ${pad(nameOf(b), 12)}${fmt(vsB)}`,
+    );
+  }
+  console.log('');
+}
+
+/* ── 5. 세 종류 조합 ───────────────────────────────────────────────────── */
+
+const trioOf = (ids, budget) => evenForce(ids, budget);
+
+/**
+ * 종족 안에서 세 종류를 골라 짠 편성끼리 리그를 돌린다.
+ *
+ * 실제 경기에서 고르는 것은 유닛 하나가 아니라 **편성**이다. 유닛 단독
+ * 우세도가 낮아도(술사처럼) 앞줄을 세워 주면 값을 하는 경우가 있고,
+ * 그 값은 단독 결투로는 영영 안 보인다.
+ */
+function trioTable(budget) {
+  console.log(`── 5. 세 종류 조합 리그 (예산 ${budget}코, 3분할) ──`);
+  for (const f of FACTION_IDS) {
+    const pool = getFaction(f)
+      .tech.map((n) => n.unit)
+      .filter((id) => getUnit(id).kind === 'unit' && getUnit(id).targets !== 'buildings');
+    const combos = [];
+    for (let i = 0; i < pool.length; i++) {
+      for (let j = i + 1; j < pool.length; j++) {
+        for (let k = j + 1; k < pool.length; k++) combos.push([pool[i], pool[j], pool[k]]);
+      }
+    }
+    const score = combos.map(() => 0);
+    const played = combos.map(() => 0);
+    for (let x = 0; x < combos.length; x++) {
+      for (let y = x + 1; y < combos.length; y++) {
+        const r = fight(trioOf(combos[x], budget), trioOf(combos[y], budget));
+        if (r.edge === null) continue;
+        score[x] += r.edge;
+        score[y] -= r.edge;
+        played[x]++;
+        played[y]++;
+      }
+    }
+    const rank = combos
+      .map((c, i) => ({ c, avg: played[i] ? score[i] / played[i] : null }))
+      .filter((r) => r.avg !== null)
+      .sort((a, b) => b.avg - a.avg);
+    console.log(`\n  【${getFaction(f).name}】 ${combos.length}개 편성`);
+    for (const r of rank.slice(0, 3)) {
+      console.log(`    최강 ${pad(r.c.map(nameOf).join(' + '), 34)} ${fmt(r.avg)}`);
+    }
+    for (const r of rank.slice(-3)) {
+      console.log(`    최약 ${pad(r.c.map(nameOf).join(' + '), 34)} ${fmt(r.avg)}`);
+    }
+    // 특정 유닛이 편성에 들어가면 평균이 오르는가 — 조합 안에서의 값어치
+    console.log('    유닛이 편성에 들어갈 때의 평균 우세도:');
+    const per = pool
+      .map((id) => {
+        const withIt = rank.filter((r) => r.c.includes(id));
+        return { id, avg: withIt.reduce((s2, r) => s2 + r.avg, 0) / Math.max(1, withIt.length) };
+      })
+      .sort((a, b) => b.avg - a.avg);
+    console.log('      ' + per.map((x) => `${nameOf(x.id)} ${fmt(x.avg)}`).join('  ·  '));
+  }
+  console.log('');
+}
+
 /* ── 실행 ──────────────────────────────────────────────────────────────── */
 
 const t0 = Date.now();
@@ -414,9 +565,17 @@ if (ONLY_PAIR) {
     );
   }
 } else {
-  mirrorCheck();
-  scaleTable();
-  budgetTable();
-  outliers();
+  const MODE = argOf('--mode') ?? 'all';
+  const want = (m) => MODE === 'all' || MODE === m;
+  if (want('unit')) {
+    mirrorCheck();
+    scaleTable();
+    budgetTable();
+    outliers();
+  }
+  if (want('comp')) {
+    mixTable(20);
+    trioTable(24);
+  }
 }
 console.log(`${((Date.now() - t0) / 1000).toFixed(1)}s 소요`);

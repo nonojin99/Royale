@@ -730,7 +730,7 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     life: u.lifetime > 0 ? u.lifetime * lifeMul : u.lifetime,
     target: -1,
     flying: u.flying,
-    charge: 0,
+    charge: u.chargeStart ?? 0,
     mode: 0,
     haste: 0,
     orderX: -1,
@@ -1353,7 +1353,12 @@ function fogOn(s: GameState): boolean {
 function sightOf(s: GameState, e: Entity): number {
   if (e.kind === 'base') return SIGHT_BASE;
   const r = statsOf(s, e).range + SIGHT_MARGIN;
-  return r > SIGHT_UNIT ? r : SIGHT_UNIT;
+  let sight = r > SIGHT_UNIT ? r : SIGHT_UNIT;
+  // 공중은 늘 고지에서 내려다본다 (오너 지시) — 지형이 시야를 막지 못하므로
+  // 언덕에 선 것과 같은 이점을 항상 받는다. 이게 공중의 지형 이점이다:
+  // 절벽도 강도 넘어 보고, 그래서 안개 속 정찰은 공중의 일이 된다
+  if (e.flying) sight = Math.trunc((sight * (100 + HIGH_GROUND_SIGHT_PCT)) / 100);
+  return sight;
 }
 
 /** 팀별 "지금 보이는 적 엔티티 id" 집합. 안개가 꺼진 판에서는 null */
@@ -1963,11 +1968,13 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   const casts: Array<{ team: Team; spell: UnitDef; x: number; y: number; caster: Entity }> = [];
   for (const e of s.entities) {
     if (e.kind !== 'unit' || e.deploy > 0) continue;
-    const spellId = getUnit(e.unit).charges;
+    const caster = getUnit(e.unit);
+    const spellId = caster.charges;
     if (!spellId) continue;
-    if (e.charge < SKILL_CHARGE_TICKS) {
+    const full = caster.chargeTicks ?? SKILL_CHARGE_TICKS;
+    if (e.charge < full) {
       e.charge += hasRelic(s.players[e.team], 'focus') ? 2 : 1;
-      if (e.charge > SKILL_CHARGE_TICKS) e.charge = SKILL_CHARGE_TICKS;
+      if (e.charge > full) e.charge = full;
       continue;
     }
     const spell = getUnit(spellId);
