@@ -543,6 +543,7 @@ let selectedMap =
 /** 맵 선택 — 종족 픽커와 같은 문법의 카드 줄 */
 /** 솔로 봇 난이도 (대전 전용) */
 let selectedLevel = new URLSearchParams(location.search).get('level') ?? 'normal';
+const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
 /**
  * 게임 모드 — 모드가 맵 목록과 난이도 줄 표시를 결정한다 (라운드 26 분리).
  *
@@ -790,14 +791,6 @@ function buildPalette(): void {
   workerNode = wEl;
   cols.get(0)!.appendChild(wEl);
 
-  // 읽는 법 한 줄 — "잠긴 유닛은 어떻게 뽑나"라는 질문이 나오지 않게
-  const legend = document.createElement('div');
-  legend.id = 'tree-legend';
-  legend.innerHTML =
-    '🔒 잠김 카드는 클릭(또는 <kbd>Shift</kbd>+숫자)하면 연구 시작 — ' +
-    '연구가 끝나면 바로 생산할 수 있고, 선행 유닛을 뽑을 필요는 없습니다';
-  root.appendChild(legend);
-
   let key = 0;
   for (const node of factionOfMe().tech) {
     const u = getUnit(node.unit);
@@ -893,8 +886,10 @@ function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
     const x2 = b.left - base.left;
     const y2 = b.top + b.height / 2 - base.top;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const mx = (x1 + x2) / 2;
-    path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    // 직각 커넥터 — 열 사이 거터 안에서만 꺾인다. 곡선은 카드 위를 가로질러
+    // 국수처럼 보였다 (디자인 크리틱)
+    const mx = Math.round((x1 + x2) / 2);
+    path.setAttribute('d', `M ${x1} ${y1} H ${mx} V ${y2} H ${x2}`);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', '#334155');
     path.setAttribute('stroke-width', '2');
@@ -1058,7 +1053,9 @@ function unitTipHtml(id: string): string {
   const st = net.state;
   const viewer = st ? st.players[net.myTeam] : null;
   const node = factionOfMe().tech.find((n) => n.unit === id);
-  if (viewer && node && !isUnlocked(viewer, id)) {
+  if (viewer && node && !isUnlocked(viewer, id) && st?.invasion) {
+    rows.push(`<span class="tt-warn">🎁 파도를 소탕하고 전리품에서 골라 해금</span>`);
+  } else if (viewer && node && !isUnlocked(viewer, id)) {
     rows.push(
       node.requires
         ? `<span class="tt-warn">🔒 ${getUnit(node.requires).name} 연구 후 → 연구 ${node.cost}로 해금</span>`
@@ -1558,15 +1555,15 @@ function updateHud(s: GameState): void {
     let heroTag = '';
     if (me.hero) {
       heroTag = me.heroRespawn > 0
-        ? ` · ⚔ 재기 ${Math.ceil(me.heroRespawn / TICK_RATE)}초`
-        : ` · ⚔ Lv${me.heroLevel}`;
+        ? ` · ⚔ 영웅 재기 ${Math.ceil(me.heroRespawn / TICK_RATE)}초`
+        : ` · ⚔ 영웅 Lv${me.heroLevel}`;
     }
     // 목표를 채운 뒤에는 파도가 더 오지 않는다 — 카운트다운도 거짓말하면 안 된다
     const noMore = !st.nest && s.wave >= goal;
     $('timer').textContent =
-      `${stageTag} · 🌊 ${s.wave}` +
+      `${stageTag} · 🌊 파도 ${s.wave}` +
       (noMore ? ' · 전장 소탕 중' : ` · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초`) +
-      ` · 🧱 ${me.wallCharges}${heroTag}`;
+      ` · 🧱 방벽 ${me.wallCharges}${heroTag}`;
     updateDraft(s);
   } else if (s.sandbox) {
     const el = Math.floor(s.tick / TICK_RATE);
@@ -1612,6 +1609,8 @@ function updateHud(s: GameState): void {
     cost.textContent = unlocked
       ? String(u.cost)
       : s.invasion ? '전리품' : `🔬${node?.cost ?? '?'}`;
+    // 전리품은 값이 아니다 — 비용 배지와 같은 색이면 "전리품 = 가격"으로 읽힌다
+    cost.classList.toggle('loot', !unlocked && !!s.invasion);
 
     if (researching && me.research && node) {
       const frac = 1 - me.research.ticks / node.researchTicks;
@@ -1658,8 +1657,13 @@ function updateHud(s: GameState): void {
     ? `연구 중: ${getUnit(me.research.unit).name} ${Math.ceil(me.research.ticks / TICK_RATE)}초`
     : '';
 
+  // 넷 계기판은 개발자 도구다 — 기본은 숨기고 ?debug=1 이거나 데스싱크가
+  // 났을 때만 보인다 (데스싱크는 조용히 넘어가면 안 되는 것이므로 예외)
   const st = net.stats();
-  $('netinfo').textContent = `${st.rttMs}ms · tick ${st.simTick}/${st.leadTick} · desync ${st.desyncs}`;
+  const showNet = DEBUG || st.desyncs > 0;
+  $('netinfo').textContent = showNet
+    ? `${st.rttMs}ms · tick ${st.simTick}/${st.leadTick} · desync ${st.desyncs}`
+    : '';
   $('netinfo').classList.toggle('bad', st.desyncs > 0);
 }
 

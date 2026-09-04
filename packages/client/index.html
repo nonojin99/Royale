@@ -125,8 +125,7 @@
       right: 6px;
       font-size: 10px;
       font-weight: 700;
-      color: var(--muted);
-      opacity: .8;
+      color: #cbd5e1; /* muted(#94a3b8)는 패널 위에서 3:1 — 4.5:1을 넘기는 값 */
     }
     #over-actions {
       display: flex;
@@ -318,7 +317,7 @@
     .tnode.worker-node { --unit-color: var(--mineral); }
     .tcol { display: flex; flex-direction: column; gap: 8px; flex: 1; z-index: 1; }
     .tcol-head {
-      font-size: 10px; font-weight: 700; color: var(--muted);
+      font: 700 11px/1.2 var(--font-pixel); color: #cbd5e1;
       letter-spacing: .08em; text-align: center; margin-bottom: 2px;
     }
     .tnode {
@@ -345,12 +344,16 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 18px; font-weight: 800; color: var(--unit-color);
     }
-    .tnode .nname { font-size: 10.5px; font-weight: 700; letter-spacing: -.3px; }
+    .tnode .nname { font: 700 11px/1.2 var(--font-pixel); letter-spacing: 0; }
     .tnode .ncost {
       position: absolute; right: 4px; bottom: 4px;
       font-size: 10px; font-weight: 800;
       background: var(--mineral); color: #06232b;
       border-radius: 999px; padding: 1px 5px;
+    }
+    .tnode .ncost.loot {
+      background: transparent; color: #c4b5fd;
+      box-shadow: inset 0 0 0 1px #7c3aed; font-weight: 700;
     }
     .tnode .ukey { position: absolute; top: 3px; left: 5px; right: auto; }
     .tnode .nlock {
@@ -365,8 +368,9 @@
     .tnode .nprog i { display: block; height: 100%; width: 0; background: var(--deploy, #facc15); }
     .tnode.selected { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
     .tnode.unaffordable { opacity: .45; }
-    .tnode.locked { opacity: .5; }
-    .tnode.locked .nicon { filter: grayscale(.85) brightness(.7); }
+    .tnode.locked { opacity: .72; }
+    /* 실루엣은 남긴다 — 무슨 유닛인지 안 보이면 "다음에 뭘 열지"를 계획할 수 없다 */
+    .tnode.locked .nicon { filter: grayscale(.9) brightness(.85) contrast(.9); }
     .tnode.researchable { opacity: .95; border-style: dashed; border-color: #a78bfa; }
     .tnode.researchable .ncost { background: #a78bfa; color: #1e1533; }
     .tnode.researching { opacity: 1; border-color: #facc15; }
@@ -456,6 +460,9 @@
       box-shadow: inset 0 0 0 1.5px #38bdf8, 0 0 24px rgba(56, 189, 248, .25);
     }
     #draft.hidden { display: none; }
+    /* 드래프트 뒤 어둠막 — 없으면 뒤 카드 그리드 글자와 섞여 보인다 */
+    #draft-dim { position: fixed; inset: 0; z-index: 39; background: rgba(3, 7, 16, .6); display: none; }
+    body:has(#draft:not(.hidden)) #draft-dim { display: block; }
     #draft-title {
       font: 700 13px/1 var(--font-pixel); color: #7dd3fc;
       letter-spacing: 1px; text-align: center; margin-bottom: 10px;
@@ -794,6 +801,7 @@
     <div id="status"></div>
   </div>
 
+  <div id="draft-dim"></div>
   <div id="draft" class="hidden">
     <div id="draft-title">파도 소탕 — 전리품을 골라라</div>
     <div id="draft-cards"></div>

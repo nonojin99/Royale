@@ -16,6 +16,7 @@ import { art } from './art.js';
 import {
   ARENA_H,
   ARENA_W,
+  BASE_BUILD_COST,
   BASE_BUILD_TICKS,
   BASE_MINERAL_RESERVE,
   BASE_SITES,
@@ -24,6 +25,7 @@ import {
   Entity,
   GameState,
   MINERAL_PATCHES,
+  MINERAL_SCALE,
   SCALE,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
@@ -276,6 +278,8 @@ export class Renderer {
     }
     // 미네랄·일꾼도 스프라이트를 쓰므로 풀 반납은 첫 사용처보다 앞에서 한 번에 한다
     this.resetSprites();
+    // 라벨도 같은 이유로 첫 사용처(drawFields의 확장 지점 표기)보다 앞에서 반납한다
+    this.resetLabels();
     this.drawFields(input);
     this.drawZone(input);
     this.drawEntities(input);
@@ -770,7 +774,7 @@ export class Renderer {
           const [wx, wy] = worldTile(sx, sy);
           if (blockedTile(wx, wy)) continue;
           const d = noise(wx * 3 + 17, wy * 3 - 11);
-          if (d > 0.09) continue; // 9%쯤만 — 빽빽하면 전장이 안 읽힌다
+          if (d > 0.06) continue; // 6%쯤만 — 빽빽하면 전장이 안 읽힌다
           // 기지 반경 2타일은 비운다
           let nearSite = false;
           for (const site of BASE_SITES) {
@@ -793,6 +797,8 @@ export class Renderer {
           sp.height = size;
           sp.anchor.set(0.5, 0.85); // 발밑 기준
           sp.position.set(sx * t + t / 2, sy * t + t * 0.9);
+          // 소품은 유닛보다 눌려 있어야 한다 — 반투명으로 지면에 묻힌다
+          sp.alpha = 0.6;
           this.gTiles.addChild(sp);
         }
       }
@@ -874,8 +880,21 @@ export class Renderer {
       // 이을 수 있는 지점(내 기지에서 11타일 안)은 또렷하게 — 다음 확장의
       // 후보가 한눈에 보여야 "출진해서 땅을 넓힌다"가 계획이 된다
       const ok = siteReachable(state, myTeam, site);
-      g.circle(sx, sy, this.pxLen(1200));
+      const cr = this.pxLen(1200);
+      g.circle(sx, sy, cr);
       g.stroke({ width: ok ? 2.5 : 1.5, color: COLORS.siteMarker, alpha: ok ? 0.55 : 0.15 });
+      // 빈 원은 장식과 구분이 안 된다 — 안에 기지 실루엣(지붕+몸통)을 넣어
+      // "여기 지을 수 있다"를 기호로 말한다. 이을 수 있는 곳은 값도 적는다
+      const gs = PX_PER_TILE * 0.5;
+      const ga = ok ? 0.6 : 0.18;
+      g.moveTo(sx - gs, sy - gs * 0.1);
+      g.lineTo(sx, sy - gs * 0.85);
+      g.lineTo(sx + gs, sy - gs * 0.1);
+      g.closePath();
+      g.fill({ color: COLORS.siteMarker, alpha: ga });
+      g.rect(sx - gs * 0.7, sy - gs * 0.1, gs * 1.4, gs * 0.75);
+      g.fill({ color: COLORS.siteMarker, alpha: ga });
+      if (ok) this.label(`확장 ${BASE_BUILD_COST / MINERAL_SCALE}`, sx, sy - cr - 7, 9);
       this.drawMineralPatches(g, sx, sy, 1, ok ? 0.3 : 0.12, site.id);
     }
 
@@ -946,7 +965,6 @@ export class Renderer {
     const d = this.gDecor;
     g.clear();
     d.clear();
-    this.resetLabels();
     this.pruneAnimState(state);
     this.drawDecals(g); // 유닛보다 먼저 = 유닛 아래 — 데칼은 땅의 일부다
 
@@ -1001,7 +1019,7 @@ export class Renderer {
         const size = PX_PER_TILE * (boss ? 2.6 : 1.5);
         if (tex) {
           g.ellipse(sx, sy + size * 0.12, size * 0.52, size * 0.22);
-          g.fill({ color: 0x000000, alpha: 0.22 });
+          g.fill({ color: 0x000000, alpha: 0.32 });
           this.groundRing(g, sx, sy, size * 0.5, teamColor);
           this.applyHit(this.place(tex, sx, sy, PX_PER_TILE * (boss ? 4.0 : 2.0), 0.85), hit);
         } else {
@@ -1035,8 +1053,8 @@ export class Renderer {
         // 접지 그림자 — 이게 없으면 스프라이트가 바닥에 붙은 스티커로 보인다.
         // 공중 유닛의 "그림자가 떨어져 있음"도 지상 그림자가 있어야 대비가 산다
         if (!e.flying) {
-          g.ellipse(sx, sy + r * 0.18, r * 0.95, r * 0.4);
-          g.fill({ color: 0x000000, alpha: 0.22 });
+          g.ellipse(sx, sy + r * 0.18, r * 1.05, r * 0.45);
+          g.fill({ color: 0x000000, alpha: 0.32 });
         }
         // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
         if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
@@ -1994,15 +2012,25 @@ export class Renderer {
     if (left > 30) return; // 30초 넘게 남았으면 아직 소음이다
     const urgency = left <= 0 ? 1 : 1 - left / 30;
     const pulse = 1 + 0.14 * Math.sin(this.nowMs / (420 - 260 * urgency));
+    const nextAnchor = waveAnchorOf(s, s.wave + 1);
+    const weight = 0.9 + 1.5 * urgency;
     this.waveArrow(
       g,
       input,
-      waveAnchorOf(s, s.wave + 1),
+      nextAnchor,
       home,
       waveTypeOf(s.wave + 1) === 'boss' ? 0xa855f7 : 0xef4444,
       (0.35 + 0.5 * urgency) * pulse,
-      0.9 + 1.5 * urgency,
+      weight,
     );
+    // 화살표만으로는 "언제"가 없다 — 상단 바의 카운트다운을 진입로에 붙여
+    // 방향과 시간이 한 자리에서 읽히게 한다. 가장자리 앵커는 화면 안으로 민다
+    const [ax, ay] = this.toScreen(nextAnchor[0], nextAnchor[1], input.myTeam);
+    const ring = PX_PER_TILE * 1.1 * weight;
+    const lx = Math.min(VIEW_W - 24, Math.max(24, ax));
+    const ly = Math.min(VIEW_H - 8, Math.max(8, ay - ring - 8));
+    const boss = waveTypeOf(s.wave + 1) === 'boss';
+    this.label(`${boss ? '보스' : '침공'} ${Math.max(0, Math.ceil(left))}초`, lx, ly, 10);
   }
 
   /** 앵커에서 본진 쪽으로 굵은 화살표 하나. `weight`는 굵기 배율 */
