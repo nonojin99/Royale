@@ -1747,7 +1747,7 @@ export class Renderer {
         }
         const [tx, ty] = this.toScreen(bx, by2, myTeam);
         const faction = state.players[e.team].faction;
-        this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], tx, ty, 650, PX_PER_TILE * 3.2);
+        this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], tx, ty, 650, ENT_PX * 3.2);
         this.onFx?.('impact', faction, tx);
       }
       const prev = this.fxPrevCd.get(e.id);
@@ -1757,8 +1757,8 @@ export class Renderer {
       if (!victim) continue;
       const faction = state.players[e.team].faction;
       const [sx, sy] = this.toScreen(victim.x, victim.y, myTeam);
-      const lift = victim.flying ? PX_PER_TILE * 0.55 : 0;
-      this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
+      const lift = victim.flying ? ENT_PX * 0.55 : 0;
+      this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, ENT_PX * 1.1);
       this.onFx?.('impact', faction, sx);
 
       // 곡사 — 광역이 크거나 사거리가 긴 지상 유닛은 포물선으로 던진다
@@ -1769,7 +1769,7 @@ export class Renderer {
         if (this.arcs.length >= 30) this.arcs.shift();
         this.arcs.push({
           ax: ax2,
-          ay: ay2 - PX_PER_TILE * 0.35,
+          ay: ay2 - ENT_PX * 0.35,
           bx: sx,
           by: sy - lift,
           color: FX_COLOR[faction] ?? 0xffffff,
@@ -1779,10 +1779,10 @@ export class Renderer {
       // 원거리 사격은 히트스캔 트레이서 한 줄 — 데미지가 즉시 들어가는
       // 시뮬과 어긋나지 않는 유일한 '투사체'다 (비행 투사체는 거짓말이 된다)
       const [ax, ay0] = this.toScreen(e.x, e.y, myTeam);
-      const ay = ay0 - (e.flying ? PX_PER_TILE * 0.55 : 0) - PX_PER_TILE * 0.3;
+      const ay = ay0 - (e.flying ? ENT_PX * 0.55 : 0) - ENT_PX * 0.3;
       const ddx = sx - ax;
       const ddy = sy - lift - ay;
-      if (!lobs && ddx * ddx + ddy * ddy > PX_PER_TILE * 1.8 * (PX_PER_TILE * 1.8)) {
+      if (!lobs && ddx * ddx + ddy * ddy > ENT_PX * 1.8 * (ENT_PX * 1.8)) {
         if (this.tracers.length >= 40) this.tracers.shift();
         this.tracers.push({
           ax,
@@ -1807,7 +1807,7 @@ export class Renderer {
         seen.sx,
         seen.sy,
         550,
-        PX_PER_TILE * 1.3,
+        ENT_PX * 1.3,
       );
       this.onFx?.('death', seen.faction, seen.sx);
       // 히트스톱 — 4코스트 이상 대형 유닛·구조물의 죽음만. 소형 유닛까지
@@ -1888,12 +1888,19 @@ export class Renderer {
         continue;
       }
       // 살짝 번지며 옅어진다 — 처음부터 흐릿해야 시체가 아니라 흔적으로 읽힌다
-      const r = PX_PER_TILE * (0.45 + 0.15 * t);
+      const r = ENT_PX * (0.45 + 0.15 * t);
       g.ellipse(dc.sx, dc.sy + 2, r, r * 0.45);
       g.fill({ color: 0x120d08, alpha: 0.26 * (1 - t) });
     }
   }
 
+  /**
+   * 타격 이펙트는 **엔티티 배율(ENT_PX)** 을 쓴다.
+   *
+   * 지형 타일(PX_PER_TILE)을 기준으로 잡으면 유닛만 커졌을 때 착탄이
+   * 유닛 발치의 점이 되고, 공중 유닛은 본체와 착탄 높이가 어긋난다.
+   * 이펙트는 지면이 아니라 **맞은 것**에 붙는다.
+   */
   private drawFx(d: Graphics): void {
     // 곡사 궤적 — 포물선을 따라 나아가는 포탄과 옅은 잔상
     for (let i = this.arcs.length - 1; i >= 0; i--) {
@@ -1903,7 +1910,7 @@ export class Renderer {
         this.arcs.splice(i, 1);
         continue;
       }
-      const lift = PX_PER_TILE * 2.2;
+      const lift = ENT_PX * 2.2;
       const at = (k: number): [number, number] => [
         a.ax + (a.bx - a.ax) * k,
         a.ay + (a.by - a.ay) * k - lift * 4 * k * (1 - k), // 포물선
