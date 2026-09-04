@@ -902,9 +902,17 @@ export class Renderer {
     const g = this.gField;
     g.clear();
 
-    // 아직 비어 있는 지점은 옅은 표식으로 남겨 "여기 지을 수 있다"를 알린다
+    // 아직 비어 있는 지점은 옅은 표식으로 남겨 "여기 지을 수 있다"를 알린다.
+    //
+    // **안 보이는 기지는 없는 것으로 친다.** 안개에 가린 적 기지의 지점만
+    // 표식이 사라지면, 그 빈자리가 곧 "여기 뭔가 있다"는 신호가 된다 —
+    // 가려 놓고 위치를 알려주는 셈이다.
     const taken = new Set<number>();
-    for (const e of state.entities) if (e.kind === 'base') taken.add(e.siteId);
+    for (const e of state.entities) {
+      if (e.kind !== 'base') continue;
+      if (isHiddenFrom(state, myTeam, e)) continue;
+      taken.add(e.siteId);
+    }
 
     for (const site of BASE_SITES) {
       if (taken.has(site.id)) continue;
@@ -932,6 +940,9 @@ export class Renderer {
 
     for (const e of state.entities) {
       if (e.kind !== 'base') continue;
+      // 종족 필드는 반경 9타일짜리 색 원이다 — 가린 기지에까지 그리면
+      // 스프라이트만 숨기고 자리는 대놓고 알려주는 꼴이 된다
+      if (isHiddenFrom(state, myTeam, e)) continue;
       const faction = getFaction(state.players[e.team].faction);
       const [sx, sy] = this.toScreen(e.x, e.y, myTeam);
       const r = this.pxLen(DEPLOY_RADIUS);
@@ -1148,6 +1159,9 @@ export class Renderer {
       const r = this.pxLen(radiusOf(e));
       const sizeK = radiusOf(e) / UNIT_RADIUS; // 소형 .75 · 중형 1 · 대형 1.375
       const lift = e.flying ? ENT_PX * 0.55 : 0;
+      // 피격 밀림은 **몸에만** 얹는다. 아래에서 그림자와 발밑 링은 sx, sy를
+      // 그대로 쓰므로 발이 땅에 남고 상체만 뒤로 밀린 것으로 읽힌다
+      const [kx, ky] = this.knockOf(e.id);
       const by = sy - lift;
 
       if (e.flying) {
@@ -1192,8 +1206,8 @@ export class Renderer {
         // 같은 키가 된다. 전장에 하나뿐인 유닛은 실루엣만으로 구분돼야 한다
         const sp2 = this.place(
           tex,
-          sx,
-          by - bob + entryDy,
+          sx + kx,
+          by - bob + entryDy + ky,
           UNIT_SPRITE_H * sizeK * (u.hero ? 1.3 : 1),
           0.88,
           this.facingOf(e, p, myTeam),
@@ -1218,12 +1232,12 @@ export class Renderer {
         if (isCloakedNow(state, e)) sp2.alpha *= 0.5;
         this.applyHit(sp2, hit);
       } else {
-        g.circle(sx, by, r);
+        g.circle(sx + kx, by + ky, r);
         g.fill(u.color);
-        g.circle(sx, by, r);
+        g.circle(sx + kx, by + ky, r);
         g.stroke({ width: 2.5, color: teamColor });
         if (hit > 0) {
-          g.circle(sx, by, r);
+          g.circle(sx + kx, by + ky, r);
           g.fill({ color: 0xffffff, alpha: 0.5 * hit });
         }
       }
@@ -1362,6 +1376,26 @@ export class Renderer {
     const until = this.flashUntil.get(e.id);
     if (until === undefined || until <= this.nowMs) return 0;
     return (until - this.nowMs) / 90;
+  }
+
+  /**
+   * 이 유닛의 지금 밀림 오프셋 (px). 140ms에 걸쳐 빠르게 나갔다 되돌아온다.
+   *
+   * 되돌아오는 것이 중요하다 — 밀린 채로 두면 스프라이트가 제 좌표에서
+   * 영영 어긋나 보인다. 나갔다 돌아오는 반동이라야 "맞았다"로 읽힌다.
+   */
+  private knockOf(id: number): [number, number] {
+    const k = this.knocks.get(id);
+    if (!k) return [0, 0];
+    const t = (this.nowMs - k.startMs) / 140;
+    if (t >= 1) {
+      this.knocks.delete(id);
+      return [0, 0];
+    }
+    // 0→1→0 (앞의 1/3에 나가고 나머지에 돌아온다)
+    const e = t < 0.33 ? t / 0.33 : 1 - (t - 0.33) / 0.67;
+    const amp = ENT_PX * 0.16 * e;
+    return [k.dx * amp, k.dy * amp];
   }
 
   /** 플래시 세기를 스프라이트에 적용 — 붉은 틴트 + 6% 스케일 범프 */
@@ -1669,6 +1703,21 @@ export class Renderer {
     color: number;
     startMs: number;
   }> = [];
+  /**
+   * 총구 섬광 — 쏘는 쪽에 90ms 짧게 터진다.
+   *
+   * 트레이서는 **맞는 쪽**에서만 읽힌다. 대군 교전에서 "누가 쐈나"가 안
+   * 보이는 이유가 그것이다: 사선은 있는데 시작점에 아무 일도 안 일어난다.
+   */
+  private readonly muzzles: Array<{ x: number; y: number; color: number; r: number; startMs: number }> = [];
+  /**
+   * 피격 밀림 — 맞은 유닛의 **몸만** 잠깐 뒤로 밀린다 (140ms).
+   *
+   * 그림자와 발밑 링은 지면에 남는다. 몸이 밀리고 발이 남아야 "맞고
+   * 버텼다"로 읽히지, 통째로 움직이면 그냥 순간이동이다. 렌더 전용이라
+   * 시뮬 좌표는 건드리지 않는다.
+   */
+  private readonly knocks = new Map<number, { dx: number; dy: number; startMs: number }>();
   /** 죽음 데칼 — 지상 유닛이 쓰러진 자리의 그을음. 8초에 걸쳐 스며 사라진다 */
   private readonly decals: Array<{ sx: number; sy: number; startMs: number }> = [];
   /**
@@ -1782,6 +1831,19 @@ export class Renderer {
       const ay = ay0 - (e.flying ? ENT_PX * 0.55 : 0) - ENT_PX * 0.3;
       const ddx = sx - ax;
       const ddy = sy - lift - ay;
+
+      // 총구 섬광 — 사선의 시작점을 표시한다
+      if (this.muzzles.length >= 40) this.muzzles.shift();
+      this.muzzles.push({
+        x: ax,
+        y: ay,
+        color: FX_COLOR[faction] ?? 0xffffff,
+        r: ENT_PX * (lobs ? 0.3 : 0.22),
+        startMs: this.nowMs,
+      });
+      // 피격 밀림 — 사선 방향으로 맞은 몸을 민다
+      const kd = Math.hypot(ddx, ddy) || 1;
+      this.knocks.set(victim.id, { dx: ddx / kd, dy: ddy / kd, startMs: this.nowMs });
       if (!lobs && ddx * ddx + ddy * ddy > ENT_PX * 1.8 * (ENT_PX * 1.8)) {
         if (this.tracers.length >= 40) this.tracers.shift();
         this.tracers.push({
@@ -1956,6 +2018,20 @@ export class Renderer {
       d.stroke({ width: 1.5, color: tr.color, alpha: 0.65 * (1 - t) });
     }
 
+    // 총구 섬광 — 짧고 밝게, 링이 아니라 채운 원이다 (착탄과 구분된다)
+    for (let i = this.muzzles.length - 1; i >= 0; i--) {
+      const m = this.muzzles[i];
+      const t = (this.nowMs - m.startMs) / 90;
+      if (t >= 1) {
+        this.muzzles.splice(i, 1);
+        continue;
+      }
+      d.circle(m.x, m.y, m.r * (1 + 0.8 * t));
+      d.fill({ color: m.color, alpha: 0.85 * (1 - t) });
+      d.circle(m.x, m.y, m.r * (0.45 + 0.4 * t));
+      d.fill({ color: 0xffffff, alpha: 0.7 * (1 - t) });
+    }
+
     for (let i = this.fxList.length - 1; i >= 0; i--) {
       const f = this.fxList[i];
       const t = (this.nowMs - f.startMs) / f.durMs;
@@ -2014,6 +2090,7 @@ export class Renderer {
     for (const id of this.facing.keys()) if (!live.has(id)) this.facing.delete(id);
     for (const id of this.lastHp.keys()) if (!live.has(id)) this.lastHp.delete(id);
     for (const id of this.flashUntil.keys()) if (!live.has(id)) this.flashUntil.delete(id);
+    for (const id of this.knocks.keys()) if (!live.has(id)) this.knocks.delete(id);
   }
 
   /** 건설·배치 진행 게이지 — 노란 바가 차오른다 */

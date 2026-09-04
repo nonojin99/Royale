@@ -34,7 +34,8 @@ import {
   nearestFreeSite,
   setActiveMap,
 } from './arena.js';
-import { navStep, pathExists, setBlockers, tileIndex, tileX, tileY } from './nav.js';
+import { navDistance,
+  navStep, pathExists, setBlockers, tileIndex, tileX, tileY } from './nav.js';
 import {
   BASE_BUILD_COST,
   BASE_BUILD_TICKS,
@@ -74,10 +75,13 @@ import {
   STAGE_WALL_GRANT,
   StageDef,
   SKILL_CHARGE_TICKS,
+  HIGH_GROUND_SIGHT_PCT,
+  REVEAL_TICKS,
   SIGHT_BASE,
   SIGHT_MARGIN,
   SIGHT_UNIT,
   SKILL_CAST_RANGE,
+  SWEEP_ARRIVE,
   INVASION_FIRST_WAVE_TICKS,
   INVASION_WAVE_TICKS,
   INVASION_WAVE_ACCEL,
@@ -163,6 +167,20 @@ export interface Entity {
    */
   orderAttack: number;
   /**
+   * 이 틱까지는 적에게 드러난다 (틱). 공격하거나 맞으면 갱신된다.
+   * 안개 속의 일방적 저격을 막는 장치다 — 쏘면 내 자리가 드러난다.
+   */
+  reveal: number;
+  /**
+   * 지금 훑고 있는 기지 지점 id (-1이면 없음).
+   *
+   * 상태 없이 해 보려다 두 번 실패했다. "가장 가까운 남의 지점"은 도착
+   * 지점과 다음 지점 사이를 앞뒤로 오가고, "나보다 깊은 지점"은 그 경계에
+   * 유닛이 올라앉는다. 둘 다 원인이 같다 — **이미 가 본 곳을 기억하지 못해서**다.
+   * 정수 하나면 끝나는 일이라 그냥 기억하게 했다.
+   */
+  sweep: number;
+  /**
    * 정지 명령을 받았는가 (S). 1이면 기본 행동(대전=적 진영으로 전진 /
    * 침공=집결지로 행군)을 하지 않고 그 자리를 지킨다. 사거리 안의 적은
    * 그대로 쏜다 — 정지는 "가지 마라"이지 "싸우지 마라"가 아니다.
@@ -214,6 +232,20 @@ export interface PlayerState {
    * null이면 제자리 대기. 우클릭으로 옮긴다 — 수비 모드의 유일한 컨트롤.
    */
   rally: { x: number; y: number } | null;
+  /**
+   * 정찰한 기지 지점 — 지점 id를 비트로 세운 마스크 (대전 안개 전용).
+   *
+   * **기지는 움직이지 않는다.** 그래서 한 번 본 자리는 계속 아는 것이
+   * 맞고, 그 성질 덕에 기억을 정수 하나로 적을 수 있다 — 해시도 스냅샷도
+   * 그대로다(Set이었으면 JSON 왕복에서 깨진다).
+   *
+   * 이게 없으면 본진을 가린 순간 게임에 목표가 사라진다: 병력이 지점을
+   * 훑다 적 본진을 찾아도 시야를 벗어나면 곧바로 잊어버려, 찾은 것이
+   * 아무 소용이 없다 (실측: 경기가 5분 상한까지 안 끝났다).
+   *
+   * 정찰에 값이 붙는 것도 여기다 — 먼저 찾은 쪽이 먼저 노린다.
+   */
+  scouted: number;
   /** 해금된 유닛 id. **항상 오름차순 정렬** (해시 결정론) */
   unlocked: string[];
   /** 연구 중인 유닛과 남은 틱. 동시에 하나만 */
@@ -330,6 +362,7 @@ function makePlayer(factionId: string): PlayerState {
     heroLevel: 0,
     heroRespawn: 0,
     rally: null,
+    scouted: 0,
     unlocked: startingUnlocks(f),
     research: null,
     upgrade: 0,
@@ -363,6 +396,8 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     orderY: -1,
     orderAttack: 0,
     hold: 0,
+    sweep: -1,
+    reveal: -1,
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -697,6 +732,8 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     orderY: -1,
     orderAttack: 0,
     hold: 0,
+    sweep: -1,
+    reveal: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -1328,35 +1365,75 @@ type SeenSets = readonly [ReadonlySet<number>, ReadonlySet<number>];
 function computeSeen(s: GameState): SeenSets | null {
   if (!fogOn(s)) return null;
   const seen: [Set<number>, Set<number>] = [new Set<number>(), new Set<number>()];
-  for (const w of s.entities) {
+  const n = s.entities.length;
+  // 고도는 쌍마다 다시 묻지 않는다 — n²번 부르면 그것만으로 틱을 먹는다
+  const high = new Array<boolean>(n);
+  for (let i = 0; i < n; i++) {
+    const e = s.entities[i];
+    high[i] = !e.flying && elevAt(e.x, e.y) === 1;
+  }
+
+  for (let i = 0; i < n; i++) {
+    const w = s.entities[i];
     if (w.hp <= 0) continue; // 죽은 것은 아무것도 밝히지 못한다
     const sr = sightOf(s, w);
-    const sr2 = sr * sr;
     const mine = seen[w.team];
-    for (const o of s.entities) {
+    for (let j = 0; j < n; j++) {
+      const o = s.entities[j];
       if (o.team === w.team || o.hp <= 0) continue;
       if (mine.has(o.id)) continue;
-      if (dist2(w.x, w.y, o.x, o.y) <= sr2) mine.add(o.id);
+      // 공격한 것·맞은 것은 고도와 무관하게 잠시 드러난다
+      if (o.reveal >= s.tick) {
+        mine.add(o.id);
+        continue;
+      }
+      let r = sr;
+      if (high[i] !== high[j] && !w.flying && !o.flying) {
+        r = high[i]
+          ? Math.trunc((r * (100 + HIGH_GROUND_SIGHT_PCT)) / 100)
+          : Math.trunc((r * (100 - HIGH_GROUND_SIGHT_PCT)) / 100);
+      }
+      if (dist2(w.x, w.y, o.x, o.y) <= r * r) mine.add(o.id);
     }
   }
   return seen;
 }
 
 /**
+ * 시야에 든 적 기지를 정찰 기록에 남긴다 — **시뮬 안에서만 부른다.**
+ *
+ * `computeSeen`은 렌더러도 부르므로 순수해야 한다. 상태를 바꾸는 일은
+ * 여기로 떼어 두었다: 화면을 한 번 더 그렸다고 정찰이 되면 서버와
+ * 클라이언트가 갈린다.
+ */
+function recordScouting(s: GameState, seen: SeenSets): void {
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.siteId < 0 || e.hp <= 0) continue;
+    const foe: Team = e.team === 0 ? 1 : 0;
+    if (seen[foe].has(e.id)) s.players[foe].scouted |= 1 << e.siteId;
+  }
+}
+
+/**
  * viewer 팀의 시야 안에 들어와 있는가.
  *
- * **본진은 언제나 보인다.** 시작 지점은 맵에 그려진 공개 정보이고(양쪽
- * 본진 자리는 처음부터 점유되어 있다), 이 게임의 유닛은 표적이 없으면
- * 스스로 적 본진으로 향하는 것이 기본 행동이다. 본진까지 가리면 전군이
- * 적 진영 방향으로 직진만 하다가 맵 끝에 붙어 서고, "상대 본진을 부수면
- * 승리"라는 규칙이 조작 없이는 성립하지 않는다. 가리는 것은 **확장·병력·
- * 건물** — 즉 상대가 그 사이에 무엇을 했는가다.
+ * **본진도 가린다** (오너 결정 — 4인용 맵을 염두에 둔다: 적이 어느
+ * 모서리에서 시작했는지를 모르는 것 자체가 전략이 된다).
+ *
+ * 이게 성립하려면 표적 없는 병력이 갈 곳이 있어야 한다. 그 답이
+ * `sweepGoal`이다 — 기지 지점은 맵에 그려진 공개 정보이므로, 병력은
+ * 지점을 훑으며 **거기 무엇이 있는지 가서 확인한다.** 둘은 한 쌍이라
+ * 한쪽만 넣으면 게임이 서지 않는다.
  */
-function inSight(seen: SeenSets | null, viewer: Team, target: Entity): boolean {
+function inSight(s: GameState, seen: SeenSets | null, viewer: Team, target: Entity): boolean {
   if (!seen) return true;
   if (target.team === viewer) return true;
-  if (target.kind === 'base' && target.isMain) return true;
-  return seen[viewer].has(target.id);
+  if (seen[viewer].has(target.id)) return true;
+  // 한 번 정찰한 기지 자리는 계속 안다 — 기지는 움직이지 않으므로 거짓이 아니다
+  if (target.kind === 'base' && target.siteId >= 0) {
+    return (s.players[viewer].scouted & (1 << target.siteId)) !== 0;
+  }
+  return false;
 }
 
 /**
@@ -1376,7 +1453,7 @@ function visibleTo(
   target: Entity,
   seen: SeenSets | null,
 ): boolean {
-  if (!inSight(seen, viewer, target)) return false;
+  if (!inSight(s, seen, viewer, target)) return false;
   if (!isCloaked(s, target)) return true;
   return detectedBy(s, viewer, target.x, target.y);
 }
@@ -1816,6 +1893,102 @@ function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
   return navStep(e.x, e.y, tx, ty);
 }
 
+/**
+ * 지점별 점유 팀 — 틱마다 한 번만 만든다 (-1은 빈 지점).
+ * 유닛마다 전 엔티티를 훑으면 유휴 병력이 많을 때 그것만으로 틱을 먹는다.
+ */
+function siteOwners(s: GameState): number[] {
+  const owners = new Array<number>(BASE_SITES.length).fill(-1);
+  for (const o of s.entities) {
+    if (o.kind !== 'base' || o.hp <= 0) continue;
+    if (o.siteId >= 0 && o.siteId < owners.length) owners[o.siteId] = o.team;
+  }
+  return owners;
+}
+
+/**
+ * 집에서 그 지점까지의 **길이** — 지상은 길찾기 거리, 공중은 직선.
+ * 갈 수 없으면 -1 (섬은 지상군의 목적지가 될 수 없다).
+ */
+function depthOf(e: Entity, hx: number, hy: number, x: number, y: number): number {
+  if (e.flying) return isqrt(dist2(x, y, hx, hy));
+  return navDistance(x, y, hx, hy);
+}
+
+/**
+ * 표적이 없는 병력이 향할 곳 — **남의 기지 지점을 집에서 먼 순으로 하나씩.**
+ *
+ * 예전에는 "적 진영 방향으로 직진"이었다. 안개가 없던 시절에는 그래도
+ * 됐다: 구조물은 거리 제한 없이 표적이 되므로 병력이 알아서 적 건물로
+ * 향했고, 직진은 그 전까지의 임시 방향일 뿐이었다. 안개가 그 길을 막자
+ * 직진이 **유일한** 행동이 되어 전군이 한 줄로 북상하다 맵 끝에 붙어
+ * 섰고, 상대 확장은 아무도 치지 않았다 — 경제 전략이 승률 27%로 죽은
+ * 것이 이것 때문이다 (하네스 실측).
+ *
+ * 기지 지점은 맵에 그려진 공개 지형 정보다(화면에도 원으로 표시된다).
+ * 그러니 "지점을 훑는다"는 안개를 뚫는 반칙이 아니라 사람이 맵을 보고
+ * 하는 일 그대로다 — 어디인지는 알고, **뭐가 있는지는 가 봐야 안다.**
+ *
+ * 깊이는 **길찾기 거리**로 잰다. 직선으로 재면 섬(서쪽 섬 같은)처럼
+ * 지상으로 갈 수 없는 지점을 골라 벽에 박힌다.
+ *
+ * 적이 차지한 지점에는 영영 "도착"하지 못한다 — 기지 몸집에 막혀 그 앞에
+ * 서고, 사거리에 들면 타겟 선정이 넘겨받는다. 그게 이 규칙이 노리는 것이다.
+ */
+function sweepGoal(e: Entity, owners: number[]): [number, number] {
+  // 내 시작 지점 — 맵 데이터라 본진이 부서져도 남는다. "바깥"의 기준점이다
+  let hx = e.x;
+  let hy = e.y;
+  for (const site of BASE_SITES) {
+    if (site.startFor === e.team) {
+      hx = site.x;
+      hy = site.y;
+      break;
+    }
+  }
+
+  // 들고 있던 목표가 아직 유효하고 아직 안 닿았으면 그대로 간다
+  if (e.sweep >= 0 && e.sweep < BASE_SITES.length && owners[e.sweep] !== e.team) {
+    const cur = BASE_SITES[e.sweep];
+    if (dist2(e.x, e.y, cur.x, cur.y) > SWEEP_ARRIVE * SWEEP_ARRIVE) return [cur.x, cur.y];
+  }
+
+  // 닿았거나(빈 지점이었다) 목표가 내 것이 됐다 — 한 걸음 더 바깥으로
+  const from = e.sweep >= 0 && e.sweep < BASE_SITES.length ? BASE_SITES[e.sweep] : null;
+  const floor = from ? depthOf(e, hx, hy, from.x, from.y) : -1;
+
+  let nextId = -1;
+  let nextDepth = Infinity;
+  let deepId = -1;
+  let deepDepth = -1;
+
+  for (let i = 0; i < BASE_SITES.length; i++) {
+    if (owners[i] === e.team) continue; // 내 땅은 훑을 이유가 없다
+    const site = BASE_SITES[i];
+    const d = depthOf(e, hx, hy, site.x, site.y);
+    if (d < 0) continue; // 지상군이 갈 수 없는 곳(섬)
+    if (d > deepDepth) {
+      deepDepth = d;
+      deepId = i;
+    }
+    if (i === e.sweep || d <= floor) continue;
+    if (d < nextDepth) {
+      nextDepth = d;
+      nextId = i;
+    }
+  }
+
+  // 더 바깥이 없다 = 맵 끝까지 훑었다. 가장 깊은 남의 지점을 붙든다
+  if (nextId < 0) nextId = deepId;
+  if (nextId < 0) {
+    // 훑을 곳이 하나도 없다 = 맵이 다 내 것이다. 예전 행동으로 떨어진다
+    e.sweep = -1;
+    return [e.x, e.team === 0 ? 0 : ARENA_H];
+  }
+  e.sweep = nextId;
+  return [BASE_SITES[nextId].x, BASE_SITES[nextId].y];
+}
+
 /* ── 틱 진행 ───────────────────────────────────────────────────────────── */
 
 /**
@@ -2007,6 +2180,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   const targets = new Array<number>(n);
   // 그 틱의 시야는 여기서 딱 한 번 만든다 — 타겟 선정 직전, 이동 전이다
   const seen = computeSeen(s);
+  if (seen) recordScouting(s, seen);
   for (let i = 0; i < n; i++) {
     const e = s.entities[i];
     targets[i] = e.deploy > 0 ? -1 : pickTarget(s, e, seen);
@@ -2030,6 +2204,10 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (e.cd > 0) continue;
 
     e.cd = st.hitSpeed;
+    // 쏘면 내 자리가 드러난다. 맞은 쪽도 함께 — 광역에 스친 것까지 포함해
+    // "여기서 뭔가 일어났다"는 양쪽이 같이 알아야 공평하다
+    e.reveal = s.tick + REVEAL_TICKS;
+    t.reveal = s.tick + REVEAL_TICKS;
     // 은신은 때리는 순간 풀리고(게이지 0), 지뢰는 밟히는 순간 함께 사라진다.
     // 여기 한 줄이 "은신 상대에게는 손도 못 쓴다"를 막는 안전판이다 (4축)
     const ab = abilityOf(s, e);
@@ -2043,6 +2221,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (!canAttack(e, o)) continue;
         if (dist2(o.x, o.y, t.x, t.y) <= sp2) {
           dmg[j] += withRally(s, e, damageTo(e, st, o, effUpgrade(s.players[e.team])));
+          o.reveal = s.tick + REVEAL_TICKS;
         }
       }
     } else {
@@ -2051,6 +2230,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   }
 
   // 7) 이동 — 현재 위치 스냅샷을 읽고 전부 계산한 뒤 한꺼번에 적용
+  const owners = siteOwners(s); // 유휴 병력의 순회 목적지 계산용, 틱당 한 번
   const nx = new Array<number>(n);
   const ny = new Array<number>(n);
   for (let i = 0; i < n; i++) {
@@ -2077,8 +2257,6 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     let gx: number;
     let gy: number;
     if (e.orderX >= 0) {
-      // 공격 이동(A) — 길에서 만난 적을 쫓는다. 사거리에 들면 멈춰서 쏘고,
-      // 표적이 죽으면 명령이 남아 있으므로 스스로 목적지로 다시 향한다
       // 공격 이동(A) — **감지 범위 안의** 적만 쫓는다.
       //
       // 여기서 거리를 묻지 않으면 A가 "이 지점으로"가 아니라 "적 본진으로"가
@@ -2125,8 +2303,9 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (dist2(e.x, e.y, r.x, r.y) <= RALLY_ARRIVE * RALLY_ARRIVE) continue;
         [gx, gy] = moveGoal(e, r.x, r.y);
       } else {
-        // 타겟이 없으면 적 진영 방향으로 전진
-        [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
+        // 타겟이 없으면 남의 기지 지점을 집에서 먼 순으로 한 걸음씩 훑는다
+        const [tx, ty] = sweepGoal(e, owners);
+        [gx, gy] = moveGoal(e, tx, ty);
       }
     }
 
@@ -2498,6 +2677,8 @@ export function hashState(s: GameState): number {
     mix(e.orderY);
     mix(e.orderAttack);
     mix(e.hold);
+    mix(e.sweep);
+    mix(e.reveal);
     mix(e.x);
     mix(e.y);
     mix(e.hp);
@@ -2521,6 +2702,7 @@ export function hashState(s: GameState): number {
     mixStr(p.hero);
     mix(p.heroLevel);
     mix(p.heroRespawn);
+    mix(p.scouted);
     mix(p.rally ? p.rally.x : -1);
     mix(p.rally ? p.rally.y : -1);
     if (p.research) {

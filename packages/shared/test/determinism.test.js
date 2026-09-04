@@ -95,6 +95,7 @@ import {
   UNIT_RADIUS,
   UNIT_RADIUS_LARGE,
   UNIT_RADIUS_SMALL,
+  HIGH_GROUND_SIGHT_PCT,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
@@ -758,6 +759,8 @@ function place(s, team, unitId, x, y) {
     orderY: -1,
     orderAttack: 0,
     hold: 0,
+    sweep: -1,
+    reveal: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -825,7 +828,12 @@ test('기지는 공중 유닛을 공격한다', () => {
 test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다', () => {
   const s = createState(5, MIRROR);
   const air = place(s, 0, 'gunship', 9000, 20000);
-  void air;
+  // 목적지를 **명령으로** 준다. 예전에는 표적 없는 유닛의 기본 행동에
+  // 기댔는데, 그 행동이 바뀔 때마다(안개·지점 순회) 경로가 달라져 이
+  // 테스트가 같이 흔들렸다. 검사하려는 것은 "공중은 지형을 무시한다"이지
+  // "기본 행동이 어디로 향하나"가 아니다
+  const foeMain = mainBase(s, 1);
+  assert.ok(applyCommand(s, cmd(0, 0, 'move', String(air.id), foeMain.x, foeMain.y)));
 
   let flewOverWall = false;
   for (let i = 0; i < 300; i++) {
@@ -2262,7 +2270,7 @@ test('시야 안에 들어온 적은 보이고 타겟이 된다', () => {
   assert.equal(byId(s, me.id).target, foe.id);
 });
 
-test('본진은 안개와 무관하게 보이지만 확장 기지는 가려진다', () => {
+test('안개는 본진도 가린다 — 시야 밖이면 무엇이든 안 보인다', () => {
   const s = createState(5, MIRROR);
   s.players[1].minerals = BASE_BUILD_COST;
   const site = BASE_SITES.find((b) => b.id === 1);
@@ -2271,13 +2279,47 @@ test('본진은 안개와 무관하게 보이지만 확장 기지는 가려진�
   const foeMain = mainBase(s, 1);
   const myMain = mainBase(s, 0);
 
-  // 내 본진에서 본다 — 상대 진영은 시야 밖이다
-  assert.ok(!isHiddenFrom(s, 0, foeMain), '적 본진이 가려졌다 — 유닛이 갈 곳을 잃는다');
-  assert.ok(
-    isHiddenFrom(s, 0, expansion),
-    '적 확장이 그대로 보인다 — 가려야 할 것은 그 사이에 무엇을 했는가다',
-  );
+  // 내 본진에서 본다 — 상대 진영은 전부 시야 밖이다
+  assert.ok(isHiddenFrom(s, 0, foeMain), '적 본진이 그대로 보인다 (4인용 맵의 전제가 깨진다)');
+  assert.ok(isHiddenFrom(s, 0, expansion), '적 확장이 그대로 보인다');
   assert.ok(!isHiddenFrom(s, 0, myMain), '내 것이 가려졌다');
+});
+
+test('표적이 없는 병력은 남의 기지 지점을 훑으며 바깥으로 나아간다', () => {
+  const s = createState(5, MIRROR);
+  const home = mainBase(s, 0);
+  const me = place(s, 0, 'rifleman', home.x - 2000, home.y - 2000);
+  const d0 = Math.hypot(me.x - home.x, me.y - home.y);
+
+  const visited = new Set();
+  for (let i = 0; i < 1200; i++) {
+    step(s, []);
+    const m = byId(s, me.id);
+    if (!m) break;
+    if (m.sweep >= 0) visited.add(m.sweep);
+  }
+  const m = byId(s, me.id);
+  assert.ok(m, '유닛이 죽었다 — 전제가 깨졌다');
+  const d1 = Math.hypot(m.x - home.x, m.y - home.y);
+  assert.ok(d1 > d0 + 10000, `집에서 멀어지지 않았다 (${Math.round(d0)} → ${Math.round(d1)})`);
+  assert.ok(visited.size >= 2, `지점을 하나밖에 훑지 않았다 (${[...visited].join(',')})`);
+});
+
+test('순회는 지상으로 갈 수 없는 지점을 고르지 않는다', () => {
+  const s = createState(5, MIRROR);
+  const home = mainBase(s, 0);
+  const me = place(s, 0, 'rifleman', home.x - 2000, home.y - 2000);
+  for (let i = 0; i < 900; i++) {
+    step(s, []);
+    const m = byId(s, me.id);
+    if (!m) break;
+    if (m.sweep < 0) continue;
+    const site = BASE_SITES[m.sweep];
+    assert.ok(
+      navDistance(m.x, m.y, site.x, site.y) >= 0,
+      `지상군이 갈 수 없는 지점 ${m.sweep}을 목표로 잡았다`,
+    );
+  }
 });
 
 /* ── 명령어 A · S · Y (오너 지시) ──────────────────────────────────────── */
@@ -2305,21 +2347,18 @@ test('공격 이동(A)은 길에서 만난 적에 붙고, 그냥 이동은 지�
 });
 
 test('정지(S)는 기본 전진을 멈춘다 — 명령 해제만으로는 멈추지 않는다', () => {
-  const advance = () => {
+  // 기본 행동의 **방향**은 묻지 않는다 (지점 순회라 맵마다 다르다).
+  // "명령이 없으면 움직이고, 정지를 받으면 안 움직인다"만 본다
+  const run = (stop) => {
     const s = createState(5, MIRROR);
     const me = place(s, 0, 'rifleman', 24000, 30000);
+    if (stop) assert.ok(applyCommand(s, cmd(0, 0, 'stop', String(me.id))));
     for (let i = 0; i < 60; i++) step(s, []);
-    return byId(s, me.id).y;
+    const m = byId(s, me.id);
+    return Math.hypot(m.x - 24000, m.y - 30000);
   };
-  const held = () => {
-    const s = createState(5, MIRROR);
-    const me = place(s, 0, 'rifleman', 24000, 30000);
-    assert.ok(applyCommand(s, cmd(0, 0, 'stop', String(me.id))));
-    for (let i = 0; i < 60; i++) step(s, []);
-    return byId(s, me.id).y;
-  };
-  assert.ok(advance() < 30000, '표적 없는 유닛이 전진하지 않았다 — 전제가 깨졌다');
-  assert.equal(held(), 30000, '정지 명령을 받고도 걸어나갔다');
+  assert.ok(run(false) > 1000, '표적 없는 유닛이 전진하지 않았다 — 전제가 깨졌다');
+  assert.equal(run(true), 0, '정지 명령을 받고도 걸어나갔다');
 });
 
 test('정지한 유닛도 사거리 안의 적은 쏜다 — 정지는 "가지 마라"이지 "싸우지 마라"가 아니다', () => {
@@ -2405,4 +2444,133 @@ test('확장 기지는 6초 뒤에 가동한다', () => {
   assert.ok(byId(s, built.id).deploy > 0, '6초가 되기 전에 가동했다');
   step(s, []);
   assert.equal(byId(s, built.id).deploy, 0, '6초가 지나도 가동하지 않았다');
+});
+
+/* ── 안개 2차 규칙 (오너 지시: 교전 노출 · 고지 시야 · 정찰 기억) ───────── */
+
+test('공격하면 안개 속이라도 내 자리가 드러난다', () => {
+  const s = createState(5, MIRROR);
+  const shooter = place(s, 0, 'rifleman', 24000, 26000);
+  const target = place(s, 1, 'rifleman', 24000, 24000); // 2타일 — 사거리 안
+  target.hp = 999999;
+  target.maxHp = 999999;
+
+  // 실제로 한 대 칠 때까지 돌린다 (쿨다운 때문에 첫 틱에 쏘지 않을 수 있다)
+  let fired = false;
+  for (let i = 0; i < 60 && !fired; i++) {
+    step(s, []);
+    const sh = byId(s, shooter.id);
+    if (sh && sh.reveal >= s.tick) fired = true;
+  }
+  assert.ok(fired, '공격하고도 드러나지 않았다');
+
+  // 시야 밖으로 물러나도 노출이 남은 동안은 보인다
+  const sh = byId(s, shooter.id);
+  sh.x = 4000;
+  sh.y = 44000;
+  assert.ok(!isHiddenFrom(s, 1, sh), '공격 직후인데 안 보인다');
+});
+
+test('노출은 시간이 지나면 풀린다', () => {
+  const s = createState(5, MIRROR);
+  const shooter = place(s, 0, 'rifleman', 24000, 26000);
+  const target = place(s, 1, 'rifleman', 24000, 24000);
+  target.hp = 999999;
+  target.maxHp = 999999;
+  for (let i = 0; i < 60; i++) step(s, []);
+
+  const sh = byId(s, shooter.id);
+  assert.ok(sh, '공격자가 죽었다 — 전제가 깨졌다');
+  // 아무도 없는 구석으로 물려 노출이 갱신되지 않게 한다
+  sh.x = 4000;
+  sh.y = 44000;
+  const target2 = byId(s, target.id);
+  if (target2) {
+    target2.x = 44000;
+    target2.y = 4000;
+  }
+  for (let i = 0; i < 4 * TICK_RATE; i++) step(s, []);
+  const sh2 = byId(s, shooter.id);
+  assert.ok(sh2, '공격자가 사라졌다');
+  assert.ok(isHiddenFrom(s, 1, sh2), '4초가 지나도 노출이 안 풀렸다');
+});
+
+test('고지에 선 쪽이 더 멀리 본다', () => {
+  const s = createState(5, MIRROR);
+  // 맵에서 고지/저지 타일을 하나씩 찾는다
+  let high = null;
+  let low = null;
+  for (let ty = 4; ty < ARENA_W_TILES - 4 && (!high || !low); ty++) {
+    for (let tx = 4; tx < ARENA_W_TILES - 4; tx++) {
+      const x = tx * 1000 + 500;
+      const y = ty * 1000 + 500;
+      if (blockedAt(x, y)) continue;
+      if (!high && elevAt(x, y) === 1) high = [x, y];
+      if (!low && elevAt(x, y) === 0) low = [x, y];
+    }
+  }
+  assert.ok(high && low, '맵에 고지 또는 저지가 없다');
+
+  // 같은 거리에서, 고지→저지가 저지→고지보다 먼저 보인다
+  const gap = 9000; // 기본 시야 8타일보다 조금 멀게
+  const upper = () => {
+    const t = createState(5, MIRROR);
+    const w = place(t, 0, 'rifleman', high[0], high[1]);
+    const o = place(t, 1, 'rifleman', high[0] + gap, high[1]);
+    // 상대를 저지로 옮긴다 — x만 옮기면 고도가 안 바뀔 수 있어 실제 저지 좌표를 쓴다
+    o.x = low[0];
+    o.y = low[1];
+    w.x = high[0];
+    w.y = high[1];
+    return { t, w, o };
+  };
+  const A = upper();
+  const d = Math.hypot(A.w.x - A.o.x, A.w.y - A.o.y);
+  step(A.t, []);
+  const highSeesLow = !isHiddenFrom(A.t, 0, byId(A.t, A.o.id));
+
+  const B = upper();
+  // 시점을 뒤집는다 — 저지에 선 쪽이 고지의 적을 본다
+  step(B.t, []);
+  const lowSeesHigh = !isHiddenFrom(B.t, 1, byId(B.t, B.w.id));
+
+  // 거리가 시야 근처일 때만 의미 있는 비교다
+  if (d > 8000 * 0.7 && d < 8000 * 1.3) {
+    assert.ok(
+      highSeesLow || !lowSeesHigh,
+      '저지가 고지를 보는데 고지는 저지를 못 본다 — 우위가 뒤집혔다',
+    );
+  }
+  assert.equal(HIGH_GROUND_SIGHT_PCT > 0, true, '고지 시야 보정이 꺼져 있다');
+});
+
+test('한 번 정찰한 기지 자리는 계속 안다', () => {
+  const s = createState(5, MIRROR);
+  const foeMain = mainBase(s, 1);
+  assert.ok(isHiddenFrom(s, 0, foeMain), '처음부터 적 본진이 보인다');
+  assert.equal(s.players[0].scouted & (1 << foeMain.siteId), 0);
+
+  // 정찰병을 적 본진 앞에 세운다
+  // 적 본진은 고지 주머니에 있다 — 저지에서 올려다보면 시야가 30% 깎이므로
+  // 넉넉히 붙인다 (그 규칙 자체는 아래 고지 테스트가 따로 본다)
+  const scout = place(s, 0, 'scoutcar', foeMain.x + 2500, foeMain.y + 2500);
+  step(s, []);
+  assert.ok((s.players[0].scouted & (1 << foeMain.siteId)) !== 0, '봤는데 기록되지 않았다');
+  assert.ok(!isHiddenFrom(s, 0, mainBase(s, 1)), '보고 있는데 안 보인다');
+
+  // 정찰병이 사라져도 자리는 기억한다 — 기지는 움직이지 않으므로 거짓이 아니다
+  const idx = s.entities.findIndex((e) => e.id === scout.id);
+  s.entities.splice(idx, 1);
+  step(s, []);
+  assert.ok(!isHiddenFrom(s, 0, mainBase(s, 1)), '정찰한 기지 자리를 잊어버렸다');
+});
+
+test('정찰 기록은 해시에 들어간다 (리싱크가 이걸 놓치면 안 된다)', () => {
+  const a = createState(7, MIRROR);
+  const b = createState(7, MIRROR);
+  step(a, []);
+  step(b, []);
+  assert.equal(hashState(a), hashState(b));
+  a.players[0].scouted |= 1 << 3;
+  assert.notEqual(hashState(a), hashState(b), 'scouted가 해시에 안 들어간다');
 });
