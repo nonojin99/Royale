@@ -642,7 +642,7 @@ export function canResearch(p: PlayerState, unit: string): boolean {
 /**
  * count마리를 겹치지 않게 배치하기 위한 고정 오프셋 (RNG를 쓰지 않는다).
  *
- * 간격은 몸집을 따라간다 — 500은 반경 400 시절의 값이라, 3배로 커진 지금
+ * 간격은 몸집을 따라간다 — 500은 ENTITY_SCALE이 없던 시절의 값이라, 커진 지금
  * 그대로 두면 한 점에 뭉쳐 생성되어 밀어내기가 유닛을 사방으로 튕겨낸다.
  */
 const FORM_GAP = 500 * ENTITY_SCALE;
