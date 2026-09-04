@@ -21,7 +21,7 @@ import {
   FACTION_IDS,
   MATCH_TICKS,
   OVERTIME_TICKS,
-  MINERAL_MAX,
+  MINERAL_SANDBOX,
   SKILL_CHARGE_TICKS,
   MINERAL_SCALE,
   MINERAL_START,
@@ -103,6 +103,9 @@ import {
 
 /** 기본 대전 구성 — 기갑단 미러전 */
 const MIRROR = ['steel', 'steel'];
+
+/** 자원이 문제가 아님을 분명히 하는 넉넉한 보유량 (상한은 없다) */
+const RICH = 100 * MINERAL_SCALE;
 
 const cmd = (execTick, team, kind, id, x = 0, y = 0) => ({ execTick, team, kind, id, x, y });
 
@@ -308,10 +311,10 @@ test('일꾼은 정원을 넘겨 살 수 없다', () => {
   assert.equal(workerCapacity(s, 0), WORKER_CAP_PER_BASE, '본진 하나의 정원이 기대와 다르다');
 
   // 자원을 넉넉히 주고 정원보다 많이 사려고 해본다
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   for (let i = 0; i < WORKER_CAP_PER_BASE + 5; i++) {
     step(s, [cmd(s.tick, 0, 'worker', '')]);
-    s.players[0].minerals = MINERAL_MAX; // 자원 부족이 아니라 정원으로 막히는지 본다
+    s.players[0].minerals = RICH; // 자원 부족이 아니라 정원으로 막히는지 본다
   }
   assert.equal(s.players[0].workers, WORKER_CAP_PER_BASE, '정원을 넘겨 일꾼이 늘었다');
 });
@@ -319,18 +322,25 @@ test('일꾼은 정원을 넘겨 살 수 없다', () => {
 test('확장하면 정원이 늘고 그만큼 일꾼을 더 붙일 수 있다', () => {
   const s = createState(5, MIRROR);
   const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
 
   assert.equal(workerCapacity(s, 0), WORKER_CAP_PER_BASE * 2, '확장으로 정원이 늘지 않았다');
 });
 
-test('미네랄은 상한을 넘지 않는다', () => {
+test('미네랄은 상한 없이 쌓인다 — 잘 쓰는 것이 실력이다', () => {
+  // 보유 상한(30)은 라운드 50에 없앴다. 상한이 있으면 "더 벌어도 소용없다"가
+  // 되어 남는 돈을 급하게 태우는 것이 최적이 된다
   const s = createState(5, MIRROR);
   s.players[0].workers = WORKER_CAP_PER_BASE;
   for (let i = 0; i < 2000; i++) step(s, []);
-  assert.equal(s.players[0].minerals, MINERAL_MAX);
+  assert.ok(
+    s.players[0].minerals > 30 * MINERAL_SCALE,
+    `예전 상한(30)을 넘겨 쌓여야 한다 (${s.players[0].minerals / MINERAL_SCALE})`,
+  );
+  // 매장량이 유한하므로 무한히 쌓이지는 않는다 — 그게 진짜 브레이크다
+  assert.ok(s.players[0].minerals <= BASE_MINERAL_RESERVE);
 });
 
 test('기지 매장량은 유한하고, 고갈되면 수입도 정원도 사라진다', () => {
@@ -387,8 +397,8 @@ test('미네랄이 모자라면 기지를 세울 수 없다', () => {
 test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
   const s = createState(5, MIRROR);
   const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
-  s.players[0].minerals = MINERAL_MAX;
-  s.players[1].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
+  s.players[1].minerals = RICH;
 
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   const after = baseCount(s, 0);
@@ -401,7 +411,7 @@ test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
 test('본진 자리는 상대도 시작부터 점유되어 있어 세울 수 없다', () => {
   const s = createState(5, MIRROR);
   const enemyMain = BASE_SITES.find((b) => b.startFor === 1);
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   const before = baseCount(s, 0);
   step(s, [cmd(s.tick, 0, 'base', '', enemyMain.x, enemyMain.y)]);
   assert.equal(baseCount(s, 0), before, '상대 본진 자리에 기지를 세웠다');
@@ -1245,7 +1255,7 @@ test('실험장 — 반경 해제·무한 자원·승패 없음, 해시에 모�
 
   // 전 유닛 해금 상태로 시작한다
   assert.ok(s.players[0].unlocked.length > 5, '실험장은 전 유닛 해금');
-  assert.equal(s.players[0].minerals, MINERAL_MAX);
+  assert.equal(s.players[0].minerals, MINERAL_SANDBOX);
 
   // 기지 반경 밖(맵 한가운데)에 배치가 통한다 — 양 팀 모두
   const mid = 24 * 1000;
@@ -1259,7 +1269,7 @@ test('실험장 — 반경 해제·무한 자원·승패 없음, 해시에 모�
     '실험장은 어디든 배치된다',
   );
   // 자원은 계속 만땅
-  assert.equal(s.players[0].minerals, MINERAL_MAX);
+  assert.equal(s.players[0].minerals, MINERAL_SANDBOX);
 
   // 본진이 죽어도 경기는 계속된다
   for (const e of s.entities) if (e.kind === 'base' && e.isMain && e.team === 0) e.hp = 0;
@@ -2094,7 +2104,7 @@ test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된
   const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
   const p = s.players[0];
   // 병력을 세운다 (정산 대상). 시뮬이 직접 만들게 하지 않고 배치 명령을 쓴다
-  p.minerals = MINERAL_MAX;
+  p.minerals = RICH;
   const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
   let placed = 0;
   for (let i = 0; i < 6; i++) {
@@ -2103,7 +2113,7 @@ test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된
       x: base.x + (i - 3) * 900, y: base.y - 2600,
     });
     if (okCmd) placed++;
-    p.minerals = MINERAL_MAX; // 배치 성공을 단언하기 위해 돈 걱정을 지운다
+    p.minerals = RICH; // 배치 성공을 단언하기 위해 돈 걱정을 지운다
   }
   assert.ok(placed >= 4, `병력이 실제로 섰다 (${placed}기)`);
   for (let i = 0; i < 40; i++) step(s, []);
@@ -2116,7 +2126,7 @@ test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된
   assert.ok(pushStage(s), '무대를 넘겼다');
   assert.equal(s.stage, 1, '2무대');
   assert.ok(s.salvage > 0, `정산이 있었다 (+${s.salvage})`);
-  assert.ok(p.minerals > before - MINERAL_MAX, '정산이 미네랄로 들어왔다');
+  assert.ok(p.minerals > before - RICH, '정산이 미네랄로 들어왔다');
 
   // 정산액은 판 것의 STAGE_REFUND_PCT — 소총병 코스트로 하한을 확인한다
   const floor = Math.trunc((army * getUnit('rifleman').cost * MINERAL_SCALE * STAGE_REFUND_PCT) / 100);
@@ -2130,7 +2140,7 @@ test('정산에는 상한이 있다 (스노볼 차단)', () => {
   const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
   // 상한을 확실히 넘길 만큼 세운다
   for (let i = 0; i < 40; i++) {
-    p.minerals = MINERAL_MAX;
+    p.minerals = RICH;
     applyCommand(s, {
       execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
       x: base.x + ((i % 7) - 3) * 700, y: base.y - 2200 - Math.trunc(i / 7) * 700,
@@ -2160,13 +2170,15 @@ test('영웅과 소환물은 정산 대상이 아니다 (영웅은 따라오고,
     '영웅은 무대를 따라온다');
 });
 
-test('보유 상한을 넘긴 정산금을 채굴이 깎지 않는다', () => {
+test('채굴은 이미 쌓인 정산금을 깎지 않는다', () => {
   const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
   const p = s.players[0];
-  p.minerals = MINERAL_MAX + 20 * MINERAL_SCALE; // 정산으로 넘겨받은 상태를 흉내
+  p.minerals = 50 * MINERAL_SCALE; // 정산으로 크게 넘겨받은 상태를 흉내
   const before = p.minerals;
   for (let i = 0; i < 200; i++) step(s, []);
-  assert.equal(p.minerals, before, `채굴이 넘친 몫을 깎지 않는다 (${before} → ${p.minerals})`);
+  // 상한이 사라졌으므로 채굴은 **더하기만** 한다 — 예전에는 천장 위의 몫을
+  // 매 틱 깎아 정산금이 증발했다 (라운드 48에 고친 버그의 회귀 방지)
+  assert.ok(p.minerals >= before, `채굴이 쌓인 몫을 깎았다 (${before} → ${p.minerals})`);
 });
 
 test('대전·실험장에는 정산이 없다 (침공 전용)', () => {
@@ -2175,7 +2187,7 @@ test('대전·실험장에는 정산이 없다 (침공 전용)', () => {
   assert.equal(v.salvage, 0, '대전은 정산을 모른다');
   assert.equal(v.stage, 0, '대전은 무대를 모른다');
   // 그리고 대전의 보유 상한은 그대로다
-  assert.ok(v.players[0].minerals <= MINERAL_MAX, `대전 미네랄은 상한 안 (${v.players[0].minerals})`);
+  assert.equal(v.salvage, 0, '대전에 정산이 들어왔다');
 });
 
 test('무대를 넘기면 파도 예산이 되감긴다 (번호·조성 예고는 그대로)', () => {
@@ -2396,7 +2408,7 @@ test('새 이동·공격 명령은 정지를 푼다', () => {
 
 test('집결지(Y)는 대전에서 갓 생산된 유닛을 그리로 보낸다', () => {
   const s = createState(5, MIRROR);
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   const home = mainBase(s, 0);
   const rx = home.x - 4000;
   const ry = home.y - 4000;
@@ -2691,7 +2703,7 @@ test('충전 스킬은 유닛마다 다른 시간을 쓰고, 술사는 게이지
   );
   // 실제로 생산 경로를 타면 게이지가 차 있어야 한다
   const s = createState(5, ['covenant', 'covenant']);
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   s.players[0].unlocked = [...s.players[0].unlocked, 'mystic'].sort();
   const home = mainBase(s, 0);
   const before = s.entities.length;

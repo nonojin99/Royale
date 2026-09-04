@@ -14,8 +14,15 @@ export const OVERTIME_TICKS = 60 * TICK_RATE;
 
 /** 미네랄은 1/1000 단위 정수로 저장한다 */
 export const MINERAL_SCALE = 1000;
-/** 보유 상한 */
-export const MINERAL_MAX = 30 * MINERAL_SCALE;
+/**
+ * 실험장에서 쥐어 주는 보유량 — **상한이 아니다.**
+ *
+ * 보유 상한(30)은 라운드 50에 없앴다(오너 결정). 상한이 있으면 "더 벌어도
+ * 소용없다"가 되어 경제가 어느 지점부터 무의미해지고, 남는 돈을 급하게
+ * 태우는 것이 최적이 된다. 이제 자원은 캔 만큼 쌓이고, **잘 쓰는 것**이
+ * 실력이다. 무한 생산은 생산 쿨타임으로 막는다(별도 라운드).
+ */
+export const MINERAL_SANDBOX = 30 * MINERAL_SCALE;
 /**
  * 시작 보유량.
  *

@@ -45,7 +45,7 @@ import {
   ENTITY_SCALE,
   HIGH_GROUND_DAMAGE_PCT,
   MATCH_TICKS,
-  MINERAL_MAX,
+  MINERAL_SANDBOX,
   MINERAL_SCALE,
   MINERAL_START,
   OVERTIME_TICKS,
@@ -432,7 +432,7 @@ export function createState(
         if (!p.unlocked.includes(id)) p.unlocked.push(id);
       }
       p.unlocked.sort();
-      p.minerals = MINERAL_MAX;
+      p.minerals = MINERAL_SANDBOX;
     }
   }
 
@@ -612,14 +612,9 @@ function mine(s: GameState): void {
       const take = e.reserve < want ? e.reserve : want;
       e.reserve -= take;
       p.mined += take;
-      // 상한은 **채굴로 도달할 수 있는 천장**이지 절대 상한이 아니다.
-      // 철수 정산(라운드 48)은 이 천장을 넘겨 들어오는데, 매 틱 깎아 버리면
-      // 정산금이 다음 틱에 증발한다. 이미 천장 위에 있으면 채굴이 손대지
-      // 않는다 — 천장 아래일 때의 동작은 예전과 완전히 같다
-      if (p.minerals < MINERAL_MAX) {
-        p.minerals += take;
-        if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
-      }
+      // 보유 상한은 없다 (라운드 50) — 캔 만큼 쌓인다. 매장량이 유한하므로
+      // 무한 축적이 아니라 "언제 쓰느냐"의 문제가 된다
+      p.minerals += take;
     }
   }
 }
@@ -1932,7 +1927,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 2) 채굴
   mine(s);
   // 실험장 — 자원 걱정 없이 아무거나 계속 배치할 수 있게 상시 보충
-  if (s.sandbox) for (const p of s.players) p.minerals = MINERAL_MAX;
+  if (s.sandbox) for (const p of s.players) p.minerals = MINERAL_SANDBOX;
 
   // 3) 연구·강화 진행
   for (const p of s.players) {
@@ -2325,7 +2320,6 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       let reward = s.waveReward;
       if (hasRelic(p, 'reserves')) reward = Math.trunc((reward * 130) / 100);
       p.minerals += reward;
-      if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
       // 파도를 넘겼으니 설치권 보충 — 성은 파도를 견딘 만큼 자란다
       p.wallCharges = Math.min(INVASION_WALL_CAP, p.wallCharges + INVASION_WALL_PER_WAVE);
       // 영웅은 파도를 넘길 때마다 자란다 — 런이 길어질수록 손맛이 커진다

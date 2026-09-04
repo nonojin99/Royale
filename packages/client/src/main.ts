@@ -16,7 +16,6 @@ import {
   MAPS,
   GameState,
   MATCH_TICKS,
-  MINERAL_MAX,
   RELIC_BY_ID,
   pathExists,
   tileIndex,
@@ -1586,9 +1585,17 @@ function updateHud(s: GameState): void {
   const me = s.players[net.myTeam];
   const foe = net.myTeam === 0 ? 1 : 0;
 
+  // 보유 상한이 없어졌으므로(라운드 50) 막대가 "상한까지 얼마"를 뜻할 수
+  // 없다. 대신 **지금 무엇을 살 수 있나**를 뜻하게 한다 — 기준은 확장비와
+  // 내가 해금한 가장 비싼 카드 중 큰 쪽이고, 꽉 차면 "뭐든 살 수 있다"다
   const minerals = me.minerals / MINERAL_SCALE;
-  $('mineral-fill').style.width = `${(me.minerals / MINERAL_MAX) * 100}%`;
-  $('mineral-num').textContent = `${Math.floor(minerals)} / ${MINERAL_MAX / MINERAL_SCALE}`;
+  let priciest = BASE_BUILD_COST;
+  for (const id of me.unlocked) {
+    const c = getUnit(id).cost * MINERAL_SCALE;
+    if (c > priciest) priciest = c;
+  }
+  $('mineral-fill').style.width = `${Math.min(100, (me.minerals / priciest) * 100)}%`;
+  $('mineral-num').textContent = String(Math.floor(minerals));
 
   // 초당 수입 = 실제로 일하는 일꾼 수 × 일꾼당 채굴 × 틱레이트
   const working = activeWorkers(s, net.myTeam);
