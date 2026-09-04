@@ -83,6 +83,15 @@ export interface UnitDef {
     rangeAdd?: number;
   };
   /**
+   * 몸집 — 충돌 반경을 고른다 (constants.ts의 `UNIT_RADIUS_*`).
+   *
+   * 적지 않으면 'medium'. 예전에는 전 유닛이 한 반경이라 소총병 셋과
+   * 공성전차 하나가 같은 자리를 차지했다 — 화면에서 "큰 놈이 큰 자리를
+   * 먹는다"가 거짓이었다는 뜻이다. 물량 유닛은 'small', 중장갑·영웅은
+   * 'large'. 건물·기지는 이 값을 쓰지 않는다(고정 반경).
+   */
+  size?: 'small' | 'medium' | 'large';
+  /**
    * 지뢰인가 — 상시 은신 + 접촉 자폭. 이 둘은 늘 함께 다니므로 한 플래그다.
    * 길찾기 장애물에서도 빠진다: 1축의 벽은 '지은 것'이지 '묻은 것'이 아니다.
    */
@@ -160,7 +169,7 @@ const defs: UnitDef[] = [
      방어선을 세우고 카운터친다. 건물이 강하고 원거리 유닛이 많다.
      느린 대신 사거리로 이득을 보는 종족. */
   unit({
-    id: 'rifleman', name: '소총병', cost: 3, kind: 'unit', count: 3,
+    id: 'rifleman', size: 'small', name: '소총병', cost: 3, kind: 'unit', count: 3,
     hp: 220, damage: 65, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(5.0), speed: spd(1.0), siege: 30, color: 0x3b82f6,
   }),
@@ -171,14 +180,14 @@ const defs: UnitDef[] = [
     targets: 'ground', siege: 60, color: 0xf97316,
   }),
   unit({
-    id: 'scoutcar', name: '정찰차', cost: 2, kind: 'unit',
+    id: 'scoutcar', size: 'small', name: '정찰차', cost: 2, kind: 'unit',
     hp: 420, damage: 130, hitSpeed: seconds(1.1, TICK_RATE),
     range: tiles(0.8), speed: spd(1.4), targets: 'buildings', siege: 120, color: 0xfbbf24,
     // 디텍터 — 값싼 정찰 유닛에 붙여야 "보는 눈을 사서 데리고 다닌다"가 된다
     ability: { kind: 'detect', radius: tiles(6.5) },
   }),
   unit({
-    id: 'siegetank', name: '공성전차', cost: 5, kind: 'unit',
+    id: 'siegetank', size: 'large', name: '공성전차', cost: 5, kind: 'unit',
     hp: 1000, damage: 230, hitSpeed: seconds(2.2, TICK_RATE),
     range: tiles(7.0), speed: spd(0.45), splash: tiles(2.0),
     targets: 'ground', siege: 220, color: 0x1d4ed8,
@@ -191,7 +200,7 @@ const defs: UnitDef[] = [
     },
   }),
   unit({
-    id: 'ironwalker', name: '강철거인', cost: 4, kind: 'unit',
+    id: 'ironwalker', size: 'large', name: '강철거인', cost: 4, kind: 'unit',
     hp: 850, damage: 110, hitSpeed: seconds(1.2, TICK_RATE),
     range: tiles(5.5), speed: spd(0.8), siege: 120, color: 0x475569,
   }),
@@ -218,13 +227,13 @@ const defs: UnitDef[] = [
      숫자로 압도한다. 개체는 약하지만 싸고 빠르다.
      주문이 없는 대신 방어 건물이 둘(지상용·대공용)이다. */
   unit({
-    id: 'gnawer', name: '물어뜯는것', cost: 2, kind: 'unit', count: 4,
+    id: 'gnawer', size: 'small', name: '물어뜯는것', cost: 2, kind: 'unit', count: 4,
     hp: 95, damage: 55, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(0.7), speed: spd(1.5), targets: 'ground', siege: 40, color: 0xa16207,
   }),
   unit({
     // 라운드 21 상향: 결투 매트릭스 0/14 전패 — 군체 유일 대공의 몸값을 못 했다
-    id: 'spitter', name: '가시뱉는것', cost: 3, kind: 'unit', count: 2,
+    id: 'spitter', size: 'small', name: '가시뱉는것', cost: 3, kind: 'unit', count: 2,
     hp: 340, damage: 80, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(4.5), speed: spd(1.05), siege: 50, color: 0x84cc16,
   }),
@@ -235,7 +244,7 @@ const defs: UnitDef[] = [
     targets: 'ground', siege: 100, color: 0x713f12,
   }),
   unit({
-    id: 'devourer', name: '거대포식자', cost: 5, kind: 'unit',
+    id: 'devourer', size: 'large', name: '거대포식자', cost: 5, kind: 'unit',
     hp: 1600, damage: 170, hitSpeed: seconds(1.5, TICK_RATE),
     range: tiles(0.9), speed: spd(0.7), splash: tiles(1.2),
     targets: 'ground', siege: 200, color: 0x7c2d12,
@@ -247,7 +256,7 @@ const defs: UnitDef[] = [
     lifetime: BUILDING_LIFE, color: 0x9f1239,
   }),
   unit({
-    id: 'wingswarm', name: '날개무리', cost: 4, kind: 'unit', count: 3, flying: true,
+    id: 'wingswarm', size: 'small', name: '날개무리', cost: 4, kind: 'unit', count: 3, flying: true,
     hp: 240, damage: 65, hitSpeed: seconds(1.0, TICK_RATE),
     range: tiles(2.5), speed: spd(1.4), siege: 100, color: 0xc026d3,
   }),
@@ -258,7 +267,7 @@ const defs: UnitDef[] = [
     lifetime: BUILDING_LIFE, color: 0x86198f,
   }),
   unit({
-    id: 'tunneler', name: '굴착충', cost: 2, kind: 'unit',
+    id: 'tunneler', size: 'small', name: '굴착충', cost: 2, kind: 'unit',
     hp: 520, damage: 140, hitSpeed: seconds(1.2, TICK_RATE),
     range: tiles(0.7), speed: spd(1.6), targets: 'buildings', siege: 120, color: 0xca8a04,
     // 굴착 진동 — 12초마다 둘레 아군 지상군이 4초간 +45%. 재배치가 곧 생존인
@@ -295,7 +304,7 @@ const defs: UnitDef[] = [
     charges: 'mindbreak',
   }),
   unit({
-    id: 'fusionite', name: '융합체', cost: 5, kind: 'unit',
+    id: 'fusionite', size: 'large', name: '융합체', cost: 5, kind: 'unit',
     hp: 1300, damage: 200, hitSpeed: seconds(1.6, TICK_RATE),
     range: tiles(1.0), speed: spd(0.8), splash: tiles(1.6), siege: 200, color: 0x06b6d4,
   }),
@@ -353,7 +362,7 @@ const defs: UnitDef[] = [
      "이 종족은 이 영웅"이 되어 런마다 다른 선택이라는 목적이 사라진다.
      각자 능동기가 하나씩 다르다: 포격 / 산란 / 치유. */
   unit({
-    id: 'hero_commander', name: '강철 사령관', cost: 0, kind: 'unit', hero: true,
+    id: 'hero_commander', size: 'large', name: '강철 사령관', cost: 0, kind: 'unit', hero: true,
     hp: 1600, damage: 190, hitSpeed: seconds(1.2, TICK_RATE),
     range: tiles(5.5), speed: spd(0.85), splash: tiles(1.2), siege: 150,
     color: 0x2563eb, charges: 'heroshell',
@@ -364,7 +373,7 @@ const defs: UnitDef[] = [
     splash: tiles(2.8), color: 0x93c5fd,
   }),
   unit({
-    id: 'hero_queen', name: '군체 여왕', cost: 0, kind: 'unit', hero: true,
+    id: 'hero_queen', size: 'large', name: '군체 여왕', cost: 0, kind: 'unit', hero: true,
     hp: 1900, damage: 150, hitSpeed: seconds(1.1, TICK_RATE),
     range: tiles(1.0), speed: spd(1.0), splash: tiles(1.0),
     targets: 'ground', siege: 120, color: 0x9a3412,
@@ -372,13 +381,13 @@ const defs: UnitDef[] = [
     ability: { kind: 'spawn', charge: seconds(10, TICK_RATE), power: 3, radius: tiles(1.5) },
   }),
   unit({
-    id: 'broodling', name: '새끼', cost: 0, kind: 'unit',
+    id: 'broodling', size: 'small', name: '새끼', cost: 0, kind: 'unit',
     hp: 130, damage: 60, hitSpeed: seconds(0.8, TICK_RATE),
     range: tiles(0.7), speed: spd(1.5), targets: 'ground', siege: 30,
     lifetime: seconds(40, TICK_RATE), color: 0xd97706,
   }),
   unit({
-    id: 'hero_prophet', name: '빛의 예언자', cost: 0, kind: 'unit', hero: true,
+    id: 'hero_prophet', size: 'large', name: '빛의 예언자', cost: 0, kind: 'unit', hero: true,
     hp: 1400, damage: 130, hitSpeed: seconds(1.4, TICK_RATE),
     range: tiles(6.0), speed: spd(0.9), siege: 90, color: 0xa855f7,
     // 치유의 빛 — 8초마다 둘레 아군을 일으킨다. 물량을 오래 살린다

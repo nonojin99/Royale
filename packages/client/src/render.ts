@@ -22,10 +22,13 @@ import {
   BASE_SITES,
   DEPLOY_RADIUS,
   DEPLOY_TICKS,
+  ENTITY_SCALE,
   Entity,
   GameState,
   MINERAL_PATCHES,
   MINERAL_SCALE,
+  UNIT_RADIUS,
+  radiusOf,
   SCALE,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
@@ -45,6 +48,7 @@ import {
   getUnit,
   inSiegeMode,
   isCloakedNow,
+  sightCirclesOf,
   isHiddenFrom,
   siteReachable,
   waveAnchorOf,
@@ -68,15 +72,25 @@ const PX_PER_TILE = 15;
  * §3.3) 이 값 하나로 소형 ~26px, 대형 ~42px가 나온다. 도형일 때의 지름 25px과
  * 소형이 맞아떨어지도록 잡은 값이다.
  */
-const UNIT_SPRITE_H = PX_PER_TILE * 2.0;
+/**
+ * 엔티티(유닛·건물·기지와 그 부속물)를 그릴 때 쓰는 타일 크기.
+ *
+ * 지형은 `PX_PER_TILE` 그대로 그리고 **엔티티만** 이 값으로 그린다 —
+ * 몸집 3배는 "맵을 확대한다"가 아니라 "말이 판보다 커진다"이기 때문이다.
+ * 시뮬의 충돌 반경도 같은 배율(constants.ts의 ENTITY_SCALE)로 커져 있어서,
+ * 보이는 크기와 차지하는 자리가 어긋나지 않는다.
+ */
+const ENT_PX = PX_PER_TILE * ENTITY_SCALE;
+
+const UNIT_SPRITE_H = ENT_PX * 2.0;
 /**
  * 미네랄 덩이와 일꾼.
  *
  * 기지 하나에 덩이 4개와 일꾼 8기가 폭 1.65타일 안에 들어간다. 유닛 규격을
  * 그대로 쓰면 서로 뭉개지므로 훨씬 작게 잡는다 — 읽히기만 하면 되는 배경 요소다.
  */
-const MINERAL_SPRITE_H = PX_PER_TILE * 0.85;
-const WORKER_SPRITE_H = PX_PER_TILE * 0.7;
+const MINERAL_SPRITE_H = ENT_PX * 0.85;
+const WORKER_SPRITE_H = ENT_PX * 0.7;
 
 /**
  * 이펙트 시트(`fx.png`)의 칸 번호 — 4행 6열을 행 우선으로 편 24칸.
@@ -148,7 +162,18 @@ const COLORS = {
   siteMarker: 0x94a3b8,
   mineral: 0x67e8f9,
   worker: 0xfde68a,
+  fog: 0x030712,
 } as const;
+
+/**
+ * 안개 짙기.
+ *
+ * 완전히 검게 덮지 않는 것이 중요하다. 지형(강·다리·언덕)은 양쪽이 처음부터
+ * 아는 공개 정보이고, 그마저 가리면 "어디로 보낼지"를 못 고른다. 가려야 하는
+ * 것은 **상대가 그 사이에 무엇을 했는가** — 병력·확장·건물이고, 그것들은
+ * 애초에 그려지지 않는다(시뮬의 시야 판정이 렌더까지 그대로 흐른다).
+ */
+const FOG_ALPHA = 0.72;
 
 export interface RenderInput {
   state: GameState;
@@ -187,6 +212,11 @@ export class Renderer {
   private readonly sprites = new Container();
   /** 체력바처럼 스프라이트 **위에** 떠야 하는 것 */
   private readonly gDecor = new Graphics();
+  /**
+   * 전장의 안개 — 시야 밖 타일을 덮는다. 엔티티 위, UI 오버레이 아래다:
+   * 시야 밖 지형은 어두워야 하지만 배치 구역 안내선까지 삼키면 안 된다.
+   */
+  private readonly gFog = new Graphics();
   private readonly gOverlay = new Graphics();
   private readonly labels = new Container();
   private readonly labelPool: Text[] = [];
@@ -221,6 +251,7 @@ export class Renderer {
       this.gEntities,
       this.sprites,
       this.gDecor,
+      this.gFog,
       this.gOverlay,
       this.labels,
     );
@@ -283,6 +314,7 @@ export class Renderer {
     this.drawFields(input);
     this.drawZone(input);
     this.drawEntities(input);
+    this.drawFog(input);
     this.drawOverlay(input);
   }
 
@@ -885,7 +917,7 @@ export class Renderer {
       g.stroke({ width: ok ? 2.5 : 1.5, color: COLORS.siteMarker, alpha: ok ? 0.55 : 0.15 });
       // 빈 원은 장식과 구분이 안 된다 — 안에 기지 실루엣(지붕+몸통)을 넣어
       // "여기 지을 수 있다"를 기호로 말한다. 이을 수 있는 곳은 값도 적는다
-      const gs = PX_PER_TILE * 0.5;
+      const gs = ENT_PX * 0.5;
       const ga = ok ? 0.6 : 0.18;
       g.moveTo(sx - gs, sy - gs * 0.1);
       g.lineTo(sx, sy - gs * 0.85);
@@ -930,8 +962,8 @@ export class Renderer {
     alpha: number,
     seed: number,
   ): void {
-    const gap = PX_PER_TILE * 0.55;
-    const y = sy + PX_PER_TILE * 1.15;
+    const gap = ENT_PX * 0.55;
+    const y = sy + ENT_PX * 1.15;
     const startX = sx - (gap * (MINERAL_PATCHES - 1)) / 2;
     for (let i = 0; i < count && i < MINERAL_PATCHES; i++) {
       const x = startX + gap * i;
@@ -944,6 +976,75 @@ export class Renderer {
       }
     }
   }
+
+  /**
+   * 전장의 안개 (대전 전용).
+   *
+   * 원을 파내는 마스크가 아니라 **타일 격자**로 칠한다. 이유가 둘이다.
+   * 하나, 마스크는 매 프레임 텍스처를 다시 굽지만 격자는 사각형 몇십 개다.
+   * 둘, 블록진 가장자리가 오히려 "여기부터는 모른다"를 또렷하게 말한다 —
+   * 부드러운 원은 조명처럼 보여서 정보의 경계로 안 읽힌다.
+   *
+   * 시야 반경은 시뮬(`sightCirclesOf`)에서 그대로 받아온다. 화면이 자기
+   * 숫자를 따로 가지면 "밝은데 못 때린다"가 생긴다.
+   */
+  private drawFog(input: RenderInput): void {
+    const g = this.gFog;
+    g.clear();
+    const circles = sightCirclesOf(input.state, input.myTeam);
+    if (!circles) return;
+
+    const tw = Math.round(ARENA_W / SCALE);
+    const th = Math.round(ARENA_H / SCALE);
+    if (this.fogLit.length !== tw * th) this.fogLit = new Uint8Array(tw * th);
+    const lit = this.fogLit;
+    lit.fill(0);
+
+    // 원마다 자기 사각형 안만 훑는다 — 전 타일 × 전 유닛은 프레임을 잡아먹는다
+    for (const c of circles) {
+      const r2 = c.r * c.r;
+      const tx0 = Math.max(0, Math.floor((c.x - c.r) / SCALE));
+      const tx1 = Math.min(tw - 1, Math.floor((c.x + c.r) / SCALE));
+      const ty0 = Math.max(0, Math.floor((c.y - c.r) / SCALE));
+      const ty1 = Math.min(th - 1, Math.floor((c.y + c.r) / SCALE));
+      for (let ty = ty0; ty <= ty1; ty++) {
+        const dy = c.y - (ty * SCALE + SCALE / 2);
+        const rem = r2 - dy * dy;
+        if (rem < 0) continue;
+        const row = ty * tw;
+        for (let tx = tx0; tx <= tx1; tx++) {
+          const dx = c.x - (tx * SCALE + SCALE / 2);
+          if (dx * dx <= rem) lit[row + tx] = 1;
+        }
+      }
+    }
+
+    // 어두운 타일을 가로로 이어 한 사각형으로 — 2304개를 그대로 그리지 않는다
+    const t = PX_PER_TILE;
+    const flip = input.myTeam !== 0;
+    for (let ty = 0; ty < th; ty++) {
+      const row = ty * tw;
+      const sy = flip ? th - 1 - ty : ty;
+      let run = -1;
+      for (let tx = 0; tx <= tw; tx++) {
+        const dark = tx < tw && lit[row + tx] === 0;
+        if (dark) {
+          if (run < 0) run = tx;
+          continue;
+        }
+        if (run >= 0) {
+          // 팀 1은 화면이 180° 뒤집혀 있으므로 열 구간도 뒤집어 놓는다
+          const sxTile = flip ? tw - tx : run;
+          g.rect(sxTile * t, sy * t, (tx - run) * t, t);
+          run = -1;
+        }
+      }
+    }
+    g.fill({ color: COLORS.fog, alpha: FOG_ALPHA });
+  }
+
+  /** 안개 판정용 타일 버퍼 — 프레임마다 새로 만들지 않는다 */
+  private fogLit = new Uint8Array(0);
 
   /** 배치 가능 구역 (카드를 고른 동안만) */
   private drawZone(input: RenderInput): void {
@@ -997,7 +1098,7 @@ export class Renderer {
       if (e.kind === 'building' && u.mine) {
         // 지뢰 — 묻힌 것은 작다. 내 것만 보이므로(숨은 적 지뢰는 없다)
         // 위치를 알려 주는 표식이면 충분하다
-        const mr = PX_PER_TILE * 0.22;
+        const mr = ENT_PX * 0.22;
         g.ellipse(sx, sy + mr * 0.4, mr * 1.1, mr * 0.5);
         g.fill({ color: 0x000000, alpha: 0.25 });
         g.circle(sx, sy, mr);
@@ -1016,12 +1117,12 @@ export class Renderer {
         // 둥지는 런의 결말이다 — 본진(2.4타일)보다 커야 "저걸 부순다"가
         // 목표로 읽힌다. 다른 건물은 그대로 (라운드 46)
         const boss = e.unit === 'nest';
-        const size = PX_PER_TILE * (boss ? 2.6 : 1.5);
+        const size = ENT_PX * (boss ? 2.6 : 1.5);
         if (tex) {
           g.ellipse(sx, sy + size * 0.12, size * 0.52, size * 0.22);
           g.fill({ color: 0x000000, alpha: 0.32 });
           this.groundRing(g, sx, sy, size * 0.5, teamColor);
-          this.applyHit(this.place(tex, sx, sy, PX_PER_TILE * (boss ? 4.0 : 2.0), 0.85), hit);
+          this.applyHit(this.place(tex, sx, sy, ENT_PX * (boss ? 4.0 : 2.0), 0.85), hit);
         } else {
           g.rect(sx - size / 2, sy - size / 2, size, size);
           g.fill(u.color);
@@ -1040,8 +1141,13 @@ export class Renderer {
       }
 
       // 유닛. 공중 유닛은 그림자를 지면에 남기고 본체를 위로 띄운다.
-      const r = PX_PER_TILE * 0.42;
-      const lift = e.flying ? PX_PER_TILE * 0.55 : 0;
+      //
+      // 반경은 **시뮬의 충돌 반경 그대로**다 (radiusOf). 예전에는 화면이
+      // 0.42타일, 시뮬이 0.4타일이라 대충 맞았지만 유닛마다 몸집이 갈린
+      // 지금은 한쪽만 보면 "겹쳐 보이는데 안 겹친다"가 생긴다
+      const r = this.pxLen(radiusOf(e));
+      const sizeK = radiusOf(e) / UNIT_RADIUS; // 소형 .75 · 중형 1 · 대형 1.375
+      const lift = e.flying ? ENT_PX * 0.55 : 0;
       const by = sy - lift;
 
       if (e.flying) {
@@ -1076,7 +1182,7 @@ export class Renderer {
             entryAlpha = 1 - dep * 0.85; // 워프 — 점점 실체가 된다
             entryScale = 1 + 0.35 * dep;
           } else {
-            entryDy = -PX_PER_TILE * 3.2 * dep * dep; // 낙하 — 마지막에 빨라진다
+            entryDy = -ENT_PX * 3.2 * dep * dep; // 낙하 — 마지막에 빨라진다
           }
         }
         // 영웅만 코드가 덩치를 준다 (라운드 41).
@@ -1088,7 +1194,7 @@ export class Renderer {
           tex,
           sx,
           by - bob + entryDy,
-          UNIT_SPRITE_H * (u.hero ? 1.3 : 1),
+          UNIT_SPRITE_H * sizeK * (u.hero ? 1.3 : 1),
           0.88,
           this.facingOf(e, p, myTeam),
         );
@@ -1162,7 +1268,7 @@ export class Renderer {
       // 걸렸다 — 영웅(1.3배)에서 가슴에 게이지가 얹혀 오너가 잡았다
       // (라운드 41). 이제 **그린 스프라이트의 실제 윗변**에서 잰다:
       // 앵커가 0.88이므로 윗변은 발밑에서 높이×0.88 위다
-      const spriteH = tex ? UNIT_SPRITE_H * (u.hero ? 1.3 : 1) : r * 2;
+      const spriteH = tex ? UNIT_SPRITE_H * sizeK * (u.hero ? 1.3 : 1) : r * 2;
       const barY = by - spriteH * 0.88 - 3;
       this.hpBar(d, sx, barY, PX_PER_TILE * 1.1, e);
       // 충전 스킬 게이지 — 청록 바. 만땅이면 밝게 빛나 "곧 쏜다"를 알린다
@@ -1284,7 +1390,7 @@ export class Renderer {
     state: GameState,
   ): void {
     const faction = getFaction(state.players[e.team].faction);
-    const size = e.isMain ? PX_PER_TILE * 2.4 : PX_PER_TILE * 1.8;
+    const size = e.isMain ? ENT_PX * 2.4 : ENT_PX * 1.8;
     const building = e.deploy > 0;
     const tex = art.base(state.players[e.team].faction, e.isMain);
     const hit = this.flashOf(e);
@@ -1378,8 +1484,8 @@ export class Renderer {
   private drawWorkers(g: Graphics, count: number, sx: number, sy: number): void {
     if (count <= 0) return;
     // 덩이 하나에 일꾼 둘이 붙으므로, 덩이 열에 맞춰 두 줄로 늘어놓는다
-    const gap = PX_PER_TILE * 0.55;
-    const patchY = sy + PX_PER_TILE * 1.15;
+    const gap = ENT_PX * 0.55;
+    const patchY = sy + ENT_PX * 1.15;
     const startX = sx - (gap * (MINERAL_PATCHES - 1)) / 2;
 
     for (let i = 0; i < count && i < WORKER_CAP_PER_BASE; i++) {

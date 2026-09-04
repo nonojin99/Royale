@@ -42,6 +42,7 @@ import {
   BASE_RADIUS,
   BUILDING_RADIUS,
   DEPLOY_TICKS,
+  ENTITY_SCALE,
   HIGH_GROUND_DAMAGE_PCT,
   MATCH_TICKS,
   MINERAL_MAX,
@@ -50,6 +51,8 @@ import {
   OVERTIME_TICKS,
   START_WORKERS,
   UNIT_RADIUS,
+  UNIT_RADIUS_LARGE,
+  UNIT_RADIUS_SMALL,
   UPGRADE_COSTS,
   UPGRADE_DAMAGE_PCT,
   UPGRADE_MAX,
@@ -71,6 +74,9 @@ import {
   STAGE_WALL_GRANT,
   StageDef,
   SKILL_CHARGE_TICKS,
+  SIGHT_BASE,
+  SIGHT_MARGIN,
+  SIGHT_UNIT,
   SKILL_CAST_RANGE,
   INVASION_FIRST_WAVE_TICKS,
   INVASION_WAVE_TICKS,
@@ -151,6 +157,18 @@ export interface Entity {
    */
   orderX: number;
   orderY: number;
+  /**
+   * 공격 이동인가 (A). 0이면 그냥 이동, 1이면 가는 길에 만난 적을 **쫓아가
+   * 싸운다** — 표적이 죽으면 다시 목적지로 향한다.
+   */
+  orderAttack: number;
+  /**
+   * 정지 명령을 받았는가 (S). 1이면 기본 행동(대전=적 진영으로 전진 /
+   * 침공=집결지로 행군)을 하지 않고 그 자리를 지킨다. 사거리 안의 적은
+   * 그대로 쏜다 — 정지는 "가지 마라"이지 "싸우지 마라"가 아니다.
+   * 새 이동·공격 명령이 오면 풀린다.
+   */
+  hold: number;
 
   /* ── 기지 전용 ── */
   /** 기지가 선 지점 id. 기지가 아니면 -1 */
@@ -271,7 +289,17 @@ export interface GameState {
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic' | 'rally' | 'move';
+export type CommandKind =
+  | 'unit'
+  | 'base'
+  | 'tech'
+  | 'worker'
+  | 'upgrade'
+  | 'relic'
+  | 'rally'
+  | 'move'
+  | 'attack'
+  | 'stop';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -333,6 +361,8 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     haste: 0,
     orderX: -1,
     orderY: -1,
+    orderAttack: 0,
+    hold: 0,
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -402,7 +432,12 @@ export function createState(
 
 export function radiusOf(e: Entity): number {
   if (e.kind === 'base') return BASE_RADIUS;
-  return e.kind === 'unit' ? UNIT_RADIUS : BUILDING_RADIUS;
+  if (e.kind !== 'unit') return BUILDING_RADIUS;
+  // 몸집은 유닛 테이블이 정한다 — 큰 놈이 큰 자리를 차지해야 대열이 읽힌다
+  const size = getUnit(e.unit).size;
+  if (size === 'small') return UNIT_RADIUS_SMALL;
+  if (size === 'large') return UNIT_RADIUS_LARGE;
+  return UNIT_RADIUS;
 }
 
 function statsOf(
@@ -604,17 +639,23 @@ export function canResearch(p: PlayerState, unit: string): boolean {
 
 /* ── 배치 ──────────────────────────────────────────────────────────────── */
 
-/** count마리를 겹치지 않게 배치하기 위한 고정 오프셋 (RNG를 쓰지 않는다) */
+/**
+ * count마리를 겹치지 않게 배치하기 위한 고정 오프셋 (RNG를 쓰지 않는다).
+ *
+ * 간격은 몸집을 따라간다 — 500은 반경 400 시절의 값이라, 3배로 커진 지금
+ * 그대로 두면 한 점에 뭉쳐 생성되어 밀어내기가 유닛을 사방으로 튕겨낸다.
+ */
+const FORM_GAP = 500 * ENTITY_SCALE;
 const FORMATION: readonly (readonly [number, number])[] = [
   [0, 0],
-  [-500, 0],
-  [500, 0],
-  [0, -500],
-  [0, 500],
-  [-500, -500],
-  [500, -500],
-  [-500, 500],
-  [500, 500],
+  [-FORM_GAP, 0],
+  [FORM_GAP, 0],
+  [0, -FORM_GAP],
+  [0, FORM_GAP],
+  [-FORM_GAP, -FORM_GAP],
+  [FORM_GAP, -FORM_GAP],
+  [-FORM_GAP, FORM_GAP],
+  [FORM_GAP, FORM_GAP],
 ];
 
 function formationOffset(count: number, i: number): readonly [number, number] {
@@ -654,6 +695,8 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     haste: 0,
     orderX: -1,
     orderY: -1,
+    orderAttack: 0,
+    hold: 0,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -685,7 +728,11 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
     case 'rally':
       return setRally(s, cmd);
     case 'move':
-      return orderMove(s, cmd);
+      return orderMove(s, cmd, 0);
+    case 'attack':
+      return orderMove(s, cmd, 1);
+    case 'stop':
+      return orderStop(s, cmd);
     default:
       return false;
   }
@@ -744,9 +791,21 @@ function produceUnit(s: GameState, cmd: Command): boolean {
 
   p.minerals -= cost;
   if (s.invasion && u.kind === 'building') p.wallCharges--;
+  const first = s.entities.length;
   for (let i = 0; i < u.count; i++) {
     const [ox, oy] = formationOffset(u.count, i);
     spawnUnit(s, cmd.team, u, cmd.x + ox, cmd.y + oy);
+  }
+  // 집결지(Y)가 찍혀 있으면 갓 나온 유닛은 거기로 걸어간다. 건물은 제외 —
+  // 세운 자리가 곧 그 건물의 존재 이유다
+  const rally = p.rally;
+  if (rally && !s.invasion) {
+    for (let i = first; i < s.entities.length; i++) {
+      const e = s.entities[i];
+      if (e.kind !== 'unit') continue;
+      e.orderX = rally.x;
+      e.orderY = rally.y;
+    }
   }
   return true;
 }
@@ -929,12 +988,15 @@ function offerDraft(s: GameState): void {
 }
 
 /**
- * 이동 명령 — `id`에 대상 엔티티 id를 쉼표로 잇는다.
+ * 이동(우클릭)·공격 이동(A) 명령 — `id`에 대상 엔티티 id를 쉼표로 잇는다.
  *
  * Command를 평평하게 유지하려는 선택이다(정렬·직렬화·리플레이가 그대로 산다).
  * 남의 유닛·건물·기지는 조용히 걸러지므로 위조해도 남을 조종할 수 없다.
+ *
+ * `attack`이 1이면 공격 이동이다 — 목적지로 가되 길에서 만난 적을 쫓는다.
+ * 어느 쪽이든 정지(hold)는 풀린다: 새 명령이 곧 "다시 움직여라"다.
  */
-function orderMove(s: GameState, cmd: Command): boolean {
+function orderMove(s: GameState, cmd: Command, attack: number): boolean {
   if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
   if (blockedAt(cmd.x, cmd.y)) return false;
   let moved = false;
@@ -947,22 +1009,55 @@ function orderMove(s: GameState, cmd: Command): boolean {
     if (!e || e.kind !== 'unit' || e.team !== cmd.team) continue;
     e.orderX = cmd.x;
     e.orderY = cmd.y;
+    e.orderAttack = attack;
+    e.hold = 0;
     moved = true;
   }
   return moved;
 }
 
 /**
- * 집결 지점 지정 (침공 전용).
+ * 정지 명령 (S) — 가던 길을 버리고 그 자리를 지킨다.
  *
- * 같은 자리를 다시 찍으면 해제 — 우클릭 한 번으로 "모여라/흩어져라"가 된다.
+ * 명령을 지우는 것만으로는 멈추지 않는다. 표적이 없는 유닛의 기본 행동이
+ * "적 진영으로 전진"이라, 명령만 지우면 그 즉시 다시 걸어나간다. 그래서
+ * `hold`라는 상태가 따로 필요하다 — 이게 없으면 S는 아무것도 하지 않는
+ * 버튼이 된다.
+ */
+function orderStop(s: GameState, cmd: Command): boolean {
+  let stopped = false;
+  let count = 0;
+  for (const part of cmd.id.split(',')) {
+    if (++count > ORDER_MAX_UNITS) break;
+    const id = Number(part);
+    if (!Number.isInteger(id)) continue;
+    const e = findById(s, id);
+    if (!e || e.kind !== 'unit' || e.team !== cmd.team) continue;
+    e.orderX = -1;
+    e.orderY = -1;
+    e.orderAttack = 0;
+    e.hold = 1;
+    stopped = true;
+  }
+  return stopped;
+}
+
+/**
+ * 집결 지점 지정 (Y).
+ *
+ * 같은 자리를 다시 찍으면 해제 — 한 번으로 "모여라/흩어져라"가 된다.
  * 지형 위(물·벽)는 거절: 갈 수 없는 곳에 깃발을 꽂으면 전군이 벽에 붙는다.
+ *
+ * 뜻이 모드마다 다르다. 침공에서는 **표적 없는 전군**이 깃발로 모여 주둔하고
+ * (수비 모드의 유일한 컨트롤), 대전에서는 **새로 생산된 유닛**이 깃발로
+ * 걸어간다 — 대전에서 전군을 붙박아 두면 기본 행동인 전진이 죽어버린다.
  */
 function setRally(s: GameState, cmd: Command): boolean {
-  if (!s.invasion || cmd.team !== 0) return false;
+  if (s.sandbox) return false;
+  if (s.invasion && cmd.team !== 0) return false;
   if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
   if (blockedAt(cmd.x, cmd.y)) return false;
-  const p = s.players[0];
+  const p = s.players[cmd.team];
   if (p.rally && dist2(p.rally.x, p.rally.y, cmd.x, cmd.y) <= RALLY_ARRIVE * RALLY_ARRIVE) {
     p.rally = null; // 같은 자리 재지정 = 해제
     return true;
@@ -1200,15 +1295,129 @@ function detectedBy(s: GameState, team: Team, x: number, y: number): boolean {
   return false;
 }
 
+/* ── 전장의 안개 (대전 전용, 오너 지시) ───────────────────────────────── */
+
 /**
- * viewer 팀이 target을 때릴 수 있는가 — 은신 판정.
+ * 안개가 켜지는 판인가 — **대전만**이다.
+ *
+ * 침공은 "파도가 어디서 오는가"가 화면의 전제라 진입로 화살표까지 그린다.
+ * 실험장은 상성을 눈으로 보려고 만든 화면이다. 둘 다 가리면 그 화면들이
+ * 하는 말이 통째로 사라지므로, 안개는 1v1에만 건다.
+ */
+function fogOn(s: GameState): boolean {
+  return !s.invasion && !s.sandbox;
+}
+
+/** 이 엔티티가 밝히는 반경 (밀리타일) */
+function sightOf(s: GameState, e: Entity): number {
+  if (e.kind === 'base') return SIGHT_BASE;
+  const r = statsOf(s, e).range + SIGHT_MARGIN;
+  return r > SIGHT_UNIT ? r : SIGHT_UNIT;
+}
+
+/** 팀별 "지금 보이는 적 엔티티 id" 집합. 안개가 꺼진 판에서는 null */
+type SeenSets = readonly [ReadonlySet<number>, ReadonlySet<number>];
+
+/**
+ * 시야 집합을 계산한다 — **순수 함수**다. 캐시도 상태도 건드리지 않는다.
+ *
+ * 상태에 얹지 않는 이유가 둘이다. 하나, 해시와 스냅샷은 입력에서 재현되는
+ * 것만 담아야 하는데 시야는 위치에서 파생되는 값이다. 둘, Set은 JSON 왕복을
+ * 못 넘긴다(스냅샷 리싱크가 깨진다).
+ */
+function computeSeen(s: GameState): SeenSets | null {
+  if (!fogOn(s)) return null;
+  const seen: [Set<number>, Set<number>] = [new Set<number>(), new Set<number>()];
+  for (const w of s.entities) {
+    if (w.hp <= 0) continue; // 죽은 것은 아무것도 밝히지 못한다
+    const sr = sightOf(s, w);
+    const sr2 = sr * sr;
+    const mine = seen[w.team];
+    for (const o of s.entities) {
+      if (o.team === w.team || o.hp <= 0) continue;
+      if (mine.has(o.id)) continue;
+      if (dist2(w.x, w.y, o.x, o.y) <= sr2) mine.add(o.id);
+    }
+  }
+  return seen;
+}
+
+/**
+ * viewer 팀의 시야 안에 들어와 있는가.
+ *
+ * **본진은 언제나 보인다.** 시작 지점은 맵에 그려진 공개 정보이고(양쪽
+ * 본진 자리는 처음부터 점유되어 있다), 이 게임의 유닛은 표적이 없으면
+ * 스스로 적 본진으로 향하는 것이 기본 행동이다. 본진까지 가리면 전군이
+ * 적 진영 방향으로 직진만 하다가 맵 끝에 붙어 서고, "상대 본진을 부수면
+ * 승리"라는 규칙이 조작 없이는 성립하지 않는다. 가리는 것은 **확장·병력·
+ * 건물** — 즉 상대가 그 사이에 무엇을 했는가다.
+ */
+function inSight(seen: SeenSets | null, viewer: Team, target: Entity): boolean {
+  if (!seen) return true;
+  if (target.team === viewer) return true;
+  if (target.kind === 'base' && target.isMain) return true;
+  return seen[viewer].has(target.id);
+}
+
+/**
+ * viewer 팀이 target을 때릴 수 있는가 — 안개와 은신, 두 관문이다.
  *
  * 숨은 것을 보려면 디텍터가 필요하다. 스플래시는 이 관문을 타지 않는다:
  * 위치를 모른 채 쏜 광역에 우연히 맞는 것까지 막으면 지뢰가 무적이 된다.
+ *
+ * `seen`을 **인자로 받는다**는 것이 중요하다. 예전에는 모듈 캐시를 안에서
+ * 읽었는데, 렌더러(`isHiddenFrom`)가 틱 사이에 같은 캐시를 채우는 바람에
+ * 시뮬이 한 프레임 묵은 시야로 타겟을 골랐다 — 렌더러가 없는 서버와 결과가
+ * 갈려 데스싱크가 났다. 시뮬이 쓰는 값은 시뮬이 그 틱에 직접 만든 것뿐이어야 한다.
  */
-function visibleTo(s: GameState, viewer: Team, target: Entity): boolean {
+function visibleTo(
+  s: GameState,
+  viewer: Team,
+  target: Entity,
+  seen: SeenSets | null,
+): boolean {
+  if (!inSight(seen, viewer, target)) return false;
   if (!isCloaked(s, target)) return true;
   return detectedBy(s, viewer, target.x, target.y);
+}
+
+/**
+ * 렌더 전용 시야 캐시.
+ *
+ * 화면은 한 프레임에 엔티티마다 `isHiddenFrom`을 부르므로 매번 O(n²)를 다시
+ * 돌 수 없다. 대신 이 캐시는 **시뮬이 절대 읽지 않는다** — 묵어도 그림만
+ * 한 프레임 늦을 뿐, 결정론에는 닿지 않는다.
+ */
+let renderSeen: { s: GameState; tick: number; n: number; seen: SeenSets | null } | null = null;
+
+function renderSeenOf(s: GameState): SeenSets | null {
+  const n = s.entities.length;
+  if (renderSeen && renderSeen.s === s && renderSeen.tick === s.tick && renderSeen.n === n) {
+    return renderSeen.seen;
+  }
+  const seen = computeSeen(s);
+  renderSeen = { s, tick: s.tick, n, seen };
+  return seen;
+}
+
+/**
+ * 렌더러가 안개를 그리기 위해 읽는 시야원 목록 — 내 팀이 밝히는 자리들.
+ *
+ * 화면과 시뮬이 같은 반경을 써야 "밝은데 못 때린다"가 생기지 않는다.
+ * 안개가 꺼진 판(침공·실험장)에서는 빈 배열이 아니라 `null`을 준다 —
+ * "밝힐 곳이 없다"와 "가릴 것이 없다"는 정반대이므로 구분해야 한다.
+ */
+export function sightCirclesOf(
+  s: GameState,
+  viewer: Team,
+): Array<{ x: number; y: number; r: number }> | null {
+  if (!fogOn(s)) return null;
+  const out: Array<{ x: number; y: number; r: number }> = [];
+  for (const e of s.entities) {
+    if (e.team !== viewer || e.hp <= 0) continue;
+    out.push({ x: e.x, y: e.y, r: sightOf(s, e) });
+  }
+  return out;
 }
 
 /**
@@ -1218,7 +1427,7 @@ function visibleTo(s: GameState, viewer: Team, target: Entity): boolean {
  */
 export function isHiddenFrom(s: GameState, viewer: Team, e: Entity): boolean {
   if (e.team === viewer) return false;
-  return !visibleTo(s, viewer, e);
+  return !visibleTo(s, viewer, e, renderSeenOf(s));
 }
 
 /** 내 은신 유닛인가 — 반투명으로 그려 "지금 숨어 있다"를 알린다 */
@@ -1547,7 +1756,7 @@ function canAttack(e: Entity, target: Entity): boolean {
  * 타겟을 고른다.
  * 동률일 때는 **엔티티 id가 작은 쪽**을 고른다 — 결정론을 위해 필수.
  */
-function pickTarget(s: GameState, e: Entity): number {
+function pickTarget(s: GameState, e: Entity, seen: SeenSets | null): number {
   const st = statsOf(s, e);
   const aggro = aggroRange(st.range);
   const aggro2 = aggro * aggro;
@@ -1561,7 +1770,7 @@ function pickTarget(s: GameState, e: Entity): number {
     if (o.team === e.team || o.hp <= 0) continue;
     if (!canAttack(e, o)) continue;
     // 숨은 것은 겨냥할 수 없다 — 디텍터가 있어야 표적이 된다 (4축)
-    if (!visibleTo(s, e.team, o)) continue;
+    if (!visibleTo(s, e.team, o, seen)) continue;
     const d2 = dist2(e.x, e.y, o.x, o.y);
 
     if (o.kind === 'unit') {
@@ -1796,9 +2005,11 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 5) 타겟 선정 (읽기 전용 패스)
   const n = s.entities.length;
   const targets = new Array<number>(n);
+  // 그 틱의 시야는 여기서 딱 한 번 만든다 — 타겟 선정 직전, 이동 전이다
+  const seen = computeSeen(s);
   for (let i = 0; i < n; i++) {
     const e = s.entities[i];
-    targets[i] = e.deploy > 0 ? -1 : pickTarget(s, e);
+    targets[i] = e.deploy > 0 ? -1 : pickTarget(s, e, seen);
   }
   for (let i = 0; i < n; i++) s.entities[i].target = targets[i];
 
@@ -1866,13 +2077,37 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     let gx: number;
     let gy: number;
     if (e.orderX >= 0) {
-      // 명령 이동 — 도착하면 스스로 해제하고 기본 행동으로 돌아간다
-      if (dist2(e.x, e.y, e.orderX, e.orderY) <= ORDER_ARRIVE * ORDER_ARRIVE) {
-        e.orderX = -1;
-        e.orderY = -1;
-        continue;
+      // 공격 이동(A) — 길에서 만난 적을 쫓는다. 사거리에 들면 멈춰서 쏘고,
+      // 표적이 죽으면 명령이 남아 있으므로 스스로 목적지로 다시 향한다
+      // 공격 이동(A) — **감지 범위 안의** 적만 쫓는다.
+      //
+      // 여기서 거리를 묻지 않으면 A가 "이 지점으로"가 아니라 "적 본진으로"가
+      // 된다: 본진은 안개와 무관하게 늘 보이므로 pickTarget이 언제나 무언가를
+      // 돌려주고, 그러면 목적지가 영영 쓰이지 않는다.
+      const st0 = statsOf(s, e);
+      const reach = aggroRange(st0.range);
+      let chase: Entity | undefined;
+      if (e.orderAttack === 1 && e.target >= 0) {
+        const t = findById(s, e.target);
+        if (t && dist2(e.x, e.y, t.x, t.y) <= reach * reach) chase = t;
       }
-      [gx, gy] = moveGoal(e, e.orderX, e.orderY);
+      if (chase) {
+        if (dist2(e.x, e.y, chase.x, chase.y) <= (st0.range + radiusOf(chase)) ** 2) continue;
+        [gx, gy] = moveGoal(e, chase.x, chase.y);
+      } else {
+        // 명령 이동 — 도착하면 스스로 해제하고 기본 행동으로 돌아간다
+        if (dist2(e.x, e.y, e.orderX, e.orderY) <= ORDER_ARRIVE * ORDER_ARRIVE) {
+          e.orderX = -1;
+          e.orderY = -1;
+          e.orderAttack = 0;
+          continue;
+        }
+        [gx, gy] = moveGoal(e, e.orderX, e.orderY);
+      }
+    } else if (e.hold) {
+      // 정지(S) — 명령이 없고 정지 상태면 아무 데도 가지 않는다.
+      // 사거리 안의 적을 쏘는 것은 공격 단계가 따로 하므로 여기서 막지 않는다
+      continue;
     } else if (e.target >= 0) {
       const t = findById(s, e.target);
       if (!t) continue;
@@ -2261,6 +2496,8 @@ export function hashState(s: GameState): number {
     mix(e.haste);
     mix(e.orderX);
     mix(e.orderY);
+    mix(e.orderAttack);
+    mix(e.hold);
     mix(e.x);
     mix(e.y);
     mix(e.hp);

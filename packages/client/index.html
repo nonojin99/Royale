@@ -461,7 +461,10 @@
     }
     #draft.hidden { display: none; }
     /* 드래프트 뒤 어둠막 — 없으면 뒤 카드 그리드 글자와 섞여 보인다 */
-    #draft-dim { position: fixed; inset: 0; z-index: 39; background: rgba(3, 7, 16, .6); display: none; }
+    #draft-dim {
+      position: fixed; inset: 0; z-index: 39; background: rgba(3, 7, 16, .6);
+      display: none; pointer-events: none; /* 시각 효과일 뿐 — 드래프트 중에도 시뮬은 돈다 */
+    }
     body:has(#draft:not(.hidden)) #draft-dim { display: block; }
     #draft-title {
       font: 700 13px/1 var(--font-pixel); color: #7dd3fc;

@@ -89,6 +89,13 @@ let selectedFaction = new URLSearchParams(location.search).get('faction') ?? DEF
 let selectedUnit = '';
 /** 기지 건설 모드 */
 let baseMode = false;
+/**
+ * 지점을 기다리는 명령 (A 공격 이동 / Y 집결지).
+ *
+ * 기지 모드(B)와 같은 문법이다 — 키를 눌러 모드를 켜고, 다음 좌클릭이 그
+ * 지점을 뜻한다. 즉발로 만들면 커서가 캔버스 밖에 있을 때 갈 곳이 없다.
+ */
+let pendingOrder: '' | 'attack' | 'rally' = '';
 let cursor: [number, number] | null = null;
 /** 드래그로 고른 내 유닛 id — 순수 클라 상태(시뮬은 모른다) */
 const selectedIds = new Set<number>();
@@ -335,20 +342,25 @@ async function boot(): Promise<void> {
       sound.toggleMute();
       drawMute();
     }
-    if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
-    if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
-    if (e.key === 'u' || e.key === 'ㅕ') requestUpgrade();
-    if (e.key === 'Escape') {
-      selectedUnit = '';
-      baseMode = false;
-      selectedIds.clear();
-      refreshActionButtons();
-    }
     // Ctrl+A = 전군 선택. 브라우저의 "문서 전체 선택"을 막고 가져온다
     if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A' || e.key === 'ㅁ')) {
       e.preventDefault();
       selectAllUnits();
       return;
+    }
+    if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
+    if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
+    if (e.key === 'u' || e.key === 'ㅕ') requestUpgrade();
+    // A 공격 이동 · S 정지 · Y 집결지. Ctrl+A(전군 선택)는 위에서 먼저 걸러진다
+    if (!e.ctrlKey && !e.metaKey && (e.key === 'a' || e.key === 'ㅁ')) beginAttackMove();
+    if (e.key === 's' || e.key === 'ㄴ') commandStop();
+    if (e.key === 'y' || e.key === 'ㅛ') beginRally();
+    if (e.key === 'Escape') {
+      selectedUnit = '';
+      baseMode = false;
+      pendingOrder = '';
+      selectedIds.clear();
+      refreshActionButtons();
     }
     // 숫자 = 생산 선택, Shift+숫자 = 그 칸 연구 시작 (라운드 9 피드백 #4).
     // Shift+숫자는 e.key가 '!','@' 등으로 변하므로 e.code로 읽는다
@@ -900,6 +912,7 @@ function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
 function selectUnit(unit: string): void {
   sound.play('ui');
   baseMode = false;
+  pendingOrder = ''; // 카드를 고르면 다음 클릭은 배치다 — 대기 명령과 겹치지 않는다
   // 같은 카드를 다시 누르면 해제된다(토글). **조용히** 풀리면 그다음
   // 맵 클릭이 아무 일도 안 해서 "생산이 막혔다"로 읽힌다 — 말해 준다
   const off = selectedUnit === unit;
@@ -957,7 +970,10 @@ function requestUpgrade(): void {
 
 function toggleBaseMode(): void {
   baseMode = !baseMode;
-  if (baseMode) selectedUnit = '';
+  if (baseMode) {
+    selectedUnit = '';
+    pendingOrder = '';
+  }
   refreshActionButtons();
 }
 
@@ -1122,6 +1138,23 @@ function onPointerDown(ev: PointerEvent): void {
   if (ev.button !== 0) return; // 우클릭은 contextmenu가 받는다
   const [x, y] = pointerToArena(ev);
   cursor = [x, y];
+
+  // A·Y가 기다리는 지점 클릭이 가장 먼저다 — 한 번 쓰고 모드는 꺼진다
+  if (pendingOrder === 'attack') {
+    pendingOrder = '';
+    refreshActionButtons();
+    if (selectedIds.size === 0) return;
+    net.act('attack', [...selectedIds].sort((a, b) => a - b).join(','), x, y);
+    sound.play('deploy');
+    return;
+  }
+  if (pendingOrder === 'rally') {
+    pendingOrder = '';
+    refreshActionButtons();
+    net.act('rally', '', x, y);
+    sound.play('ui');
+    return;
+  }
 
   // 카드도 기지 모드도 아니면 좌클릭은 **선택**이다 — 드래그 박스를 연다
   if (!baseMode && !selectedUnit) {
@@ -1300,6 +1333,52 @@ function commandMove(x: number, y: number): void {
   if (selectedIds.size === 0) return;
   net.act('move', [...selectedIds].sort((a, b) => a - b).join(','), x, y);
   sound.play('deploy');
+}
+
+/**
+ * 공격 이동 (A) — 목적지로 가되 길에서 만난 적을 쫓아 싸운다.
+ *
+ * 그냥 이동(우클릭)과의 차이가 이 게임에서 특히 크다. 안개가 켜진 대전에서는
+ * 상대 병력이 어디 있는지 모른 채 보내게 되는데, 이동은 적을 지나쳐 계속
+ * 걸어가고 공격 이동은 그 자리에서 붙는다.
+ */
+function beginAttackMove(): void {
+  if (!net.state) return;
+  if (selectedIds.size === 0) {
+    flash('먼저 유닛을 고르세요 — 드래그 또는 Ctrl+A');
+    return;
+  }
+  pendingOrder = 'attack';
+  selectedUnit = '';
+  baseMode = false;
+  refreshActionButtons();
+  flash(`공격 이동 — 보낼 곳을 클릭하세요 (${selectedIds.size}기)`);
+}
+
+/** 집결지 지정 (Y) — 다음 좌클릭 자리에 깃발을 꽂는다 */
+function beginRally(): void {
+  const s = net.state;
+  if (!s || s.sandbox) return;
+  pendingOrder = 'rally';
+  selectedUnit = '';
+  baseMode = false;
+  refreshActionButtons();
+  flash(
+    s.invasion
+      ? '집결지 — 찍을 곳을 클릭하세요 (같은 자리 재지정 = 해제)'
+      : '집결지 — 새로 생산된 유닛이 이곳으로 갑니다 (같은 자리 재지정 = 해제)',
+  );
+}
+
+/** 정지 (S) — 가던 길을 버리고 그 자리를 지킨다. 사거리 안의 적은 계속 쏜다 */
+function commandStop(): void {
+  if (selectedIds.size === 0) {
+    flash('먼저 유닛을 고르세요 — 드래그 또는 Ctrl+A');
+    return;
+  }
+  net.act('stop', [...selectedIds].sort((a, b) => a - b).join(','), 0, 0);
+  sound.play('ui');
+  flash(`정지 ${selectedIds.size}기 — 제자리에서 사거리 안만 공격합니다`);
 }
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
