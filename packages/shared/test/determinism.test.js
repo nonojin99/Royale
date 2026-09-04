@@ -759,7 +759,6 @@ function place(s, team, unitId, x, y) {
     orderY: -1,
     orderAttack: 0,
     hold: 0,
-    sweep: -1,
     reveal: -1,
     siteId: -1,
     isMain: false,
@@ -848,7 +847,11 @@ test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다'
 
 test('지상 유닛은 벽을 통과하지 못하고 돌아간다', () => {
   const s = createState(5, MIRROR);
-  place(s, 0, 'scoutcar', 18000, 18000);
+  const car = place(s, 0, 'scoutcar', 18000, 18000);
+  // 대전 유닛은 명령이 없으면 제자리를 지키므로 목적지를 준다.
+  // 검사하려는 것은 "지상은 지형을 못 뚫는다"이지 기본 행동이 아니다
+  const foeMain = mainBase(s, 1);
+  assert.ok(applyCommand(s, cmd(0, 0, 'move', String(car.id), foeMain.x, foeMain.y)));
 
   let moved = 0;
   let lastX = 18000;
@@ -2285,41 +2288,47 @@ test('안개는 본진도 가린다 — 시야 밖이면 무엇이든 안 보인
   assert.ok(!isHiddenFrom(s, 0, myMain), '내 것이 가려졌다');
 });
 
-test('표적이 없는 병력은 남의 기지 지점을 훑으며 바깥으로 나아간다', () => {
+test('대전에서 명령 없는 병력은 스스로 걸어나가지 않는다', () => {
   const s = createState(5, MIRROR);
   const home = mainBase(s, 0);
-  const me = place(s, 0, 'rifleman', home.x - 2000, home.y - 2000);
-  const d0 = Math.hypot(me.x - home.x, me.y - home.y);
-
-  const visited = new Set();
-  for (let i = 0; i < 1200; i++) {
-    step(s, []);
-    const m = byId(s, me.id);
-    if (!m) break;
-    if (m.sweep >= 0) visited.add(m.sweep);
-  }
+  const me = place(s, 0, 'rifleman', home.x - 4000, home.y - 4000);
+  const x0 = me.x;
+  const y0 = me.y;
+  for (let i = 0; i < 20 * TICK_RATE; i++) step(s, []);
   const m = byId(s, me.id);
   assert.ok(m, '유닛이 죽었다 — 전제가 깨졌다');
-  const d1 = Math.hypot(m.x - home.x, m.y - home.y);
-  assert.ok(d1 > d0 + 10000, `집에서 멀어지지 않았다 (${Math.round(d0)} → ${Math.round(d1)})`);
-  assert.ok(visited.size >= 2, `지점을 하나밖에 훑지 않았다 (${[...visited].join(',')})`);
+  assert.equal(m.x, x0, '명령도 표적도 없는데 움직였다');
+  assert.equal(m.y, y0);
 });
 
-test('순회는 지상으로 갈 수 없는 지점을 고르지 않는다', () => {
+test('제자리를 지켜도 사거리 안의 적은 쏜다 — 안 걷는 것이지 안 싸우는 게 아니다', () => {
   const s = createState(5, MIRROR);
-  const home = mainBase(s, 0);
-  const me = place(s, 0, 'rifleman', home.x - 2000, home.y - 2000);
-  for (let i = 0; i < 900; i++) {
-    step(s, []);
-    const m = byId(s, me.id);
-    if (!m) break;
-    if (m.sweep < 0) continue;
-    const site = BASE_SITES[m.sweep];
-    assert.ok(
-      navDistance(m.x, m.y, site.x, site.y) >= 0,
-      `지상군이 갈 수 없는 지점 ${m.sweep}을 목표로 잡았다`,
-    );
+  const me = place(s, 0, 'rifleman', 24000, 27000);
+  const foe = place(s, 1, 'gnawer', 24000, 25000); // 2타일
+  const hp0 = foe.hp;
+  for (let i = 0; i < 40; i++) step(s, []);
+  const f = byId(s, foe.id);
+  assert.ok(!f || f.hp < hp0, '코앞의 적을 쏘지 않았다');
+});
+
+test('침공 파도는 그대로 성으로 몰려온다', () => {
+  const s = createState(5, MIRROR, DEFAULT_MAP_ID, false, true);
+  // 벽 위에 놓으면 길찾기가 아니라 지형에 낀 것을 재게 된다
+  let spot = null;
+  for (let ty = 4; ty < 12 && !spot; ty++) {
+    for (let tx = 10; tx < 38; tx++) {
+      const x = tx * 1000 + 500;
+      const y = ty * 1000 + 500;
+      if (!blockedAt(x, y)) { spot = [x, y]; break; }
+    }
   }
+  assert.ok(spot, '맵 위쪽에 통행 가능한 자리가 없다');
+  const wave = place(s, 1, 'gnawer', spot[0], spot[1]);
+  const y0 = wave.y;
+  for (let i = 0; i < 60; i++) step(s, []);
+  const w = byId(s, wave.id);
+  assert.ok(w, '파도 유닛이 죽었다 — 전제가 깨졌다');
+  assert.ok(w.y > y0 + 1000, `파도가 전진하지 않았다 (${y0} → ${w.y})`);
 });
 
 /* ── 명령어 A · S · Y (오너 지시) ──────────────────────────────────────── */
@@ -2346,19 +2355,22 @@ test('공격 이동(A)은 길에서 만난 적에 붙고, 그냥 이동은 지�
   );
 });
 
-test('정지(S)는 기본 전진을 멈춘다 — 명령 해제만으로는 멈추지 않는다', () => {
-  // 기본 행동의 **방향**은 묻지 않는다 (지점 순회라 맵마다 다르다).
-  // "명령이 없으면 움직이고, 정지를 받으면 안 움직인다"만 본다
-  const run = (stop) => {
-    const s = createState(5, MIRROR);
-    const me = place(s, 0, 'rifleman', 24000, 30000);
-    if (stop) assert.ok(applyCommand(s, cmd(0, 0, 'stop', String(me.id))));
-    for (let i = 0; i < 60; i++) step(s, []);
-    const m = byId(s, me.id);
-    return Math.hypot(m.x - 24000, m.y - 30000);
-  };
-  assert.ok(run(false) > 1000, '표적 없는 유닛이 전진하지 않았다 — 전제가 깨졌다');
-  assert.equal(run(true), 0, '정지 명령을 받고도 걸어나갔다');
+test('정지(S)는 가던 명령을 버리고 그 자리에 선다', () => {
+  const s = createState(5, MIRROR);
+  const me = place(s, 0, 'rifleman', 24000, 30000);
+  assert.ok(applyCommand(s, cmd(0, 0, 'move', String(me.id), 24000, 16000)));
+  for (let i = 0; i < 20; i++) step(s, []);
+  const mid = byId(s, me.id);
+  assert.ok(mid.y < 30000, '이동 명령을 받고도 안 움직였다 — 전제가 깨졌다');
+
+  assert.ok(applyCommand(s, cmd(0, 0, 'stop', String(me.id))));
+  const stopped = { x: byId(s, me.id).x, y: byId(s, me.id).y };
+  for (let i = 0; i < 60; i++) step(s, []);
+  const after = byId(s, me.id);
+  assert.equal(after.x, stopped.x, '정지 명령을 받고도 계속 갔다');
+  assert.equal(after.y, stopped.y);
+  assert.equal(after.orderX, -1, '명령이 남아 있다');
+  assert.equal(after.hold, 1);
 });
 
 test('정지한 유닛도 사거리 안의 적은 쏜다 — 정지는 "가지 마라"이지 "싸우지 마라"가 아니다', () => {

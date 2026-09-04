@@ -44,6 +44,8 @@ import {
   siteReachable,
   step,
   workerCapacity,
+  isHiddenFrom,
+  ORDER_MAX_UNITS,
 } from '../packages/shared/dist/index.js';
 
 const args = process.argv.slice(2);
@@ -266,13 +268,76 @@ function researchToward(s, team, target) {
   return { kind: 'tech', id: target, x: 0, y: 0 };
 }
 
+/* ── 출진 지휘 ─────────────────────────────────────────────────────────────
+
+   대전에서 병력은 **명령을 받아야 움직인다** (자동 전진 제거). 예전 봇들은
+   "뽑아 두면 알아서 간다"를 전제로 짜여 있어서, 그대로 두면 전군이 집에서
+   늙어 죽는다 — 측정값이 전략이 아니라 봇의 노후를 재게 된다.
+
+   전략의 차이는 이제 "무엇을 사는가"만이 아니라 **"언제 나가는가"**다.
+   그게 이 게임의 실제 결정이기도 하다.                                  */
+
+/** 5초에 한 번만 지휘한다 — 매 판단마다 명령을 쓰면 생산이 영영 안 나간다 */
+const PUSH_EVERY = 100;
+
+/** 내 병력 id 목록 (오름차순 — 결정론) */
+function armyIds(s, team) {
+  const ids = [];
+  for (const e of s.entities) if (e.kind === 'unit' && e.team === team) ids.push(e.id);
+  return ids.sort((a, b) => a - b).slice(0, ORDER_MAX_UNITS);
+}
+
+/**
+ * 어디를 칠 것인가 — **아는 곳 중 가장 가까운 적 기지.**
+ *
+ * 정찰한 자리는 계속 알고(sim의 scouted), 시야에 든 것도 안다. 아무것도
+ * 모르면 상대 시작 자리로 간다 — 2인용 점대칭 맵에서 그건 추론되는 정보다.
+ */
+function strikeAt(s, team) {
+  const foe = team === 0 ? 1 : 0;
+  let bx = -1;
+  let by = -1;
+  let best = Infinity;
+  const mine = ownBasePositions(s, team);
+  const from = mine.length ? mine[0] : enemyMain(team);
+  for (const e of s.entities) {
+    if (e.team !== foe || e.kind !== 'base' || e.hp <= 0) continue;
+    if (isHiddenFrom(s, team, e)) continue;
+    const d = (e.x - from[0]) ** 2 + (e.y - from[1]) ** 2;
+    if (d < best) {
+      best = d;
+      bx = e.x;
+      by = e.y;
+    }
+  }
+  return bx >= 0 ? [bx, by] : enemyMain(team);
+}
+
+/**
+ * 출진 명령. `minArmy`(미네랄 환산)만큼 모였으면 공격 이동으로 내보낸다.
+ * 공격 이동이라 가는 길에 만난 것과 싸운다 — 확장을 지나치지 않는다.
+ */
+function push(s, team, minArmy) {
+  if (s.tick % PUSH_EVERY >= DECIDE_EVERY) return null;
+  if (armyCost(s, team) < minArmy) return null;
+  const ids = armyIds(s, team);
+  if (!ids.length) return null;
+  const [x, y] = strikeAt(s, team);
+  return { kind: 'attack', id: ids.join(','), x, y };
+}
+
 const STRATS = {
   // 진짜 올인도 최소한의 경제는 깐다 — 일꾼 4기까지만 (기본 2기로는
   // 2코스트 유닛 하나에 8초가 걸려 러시 자체가 성립하지 않는다)
+  // 러시는 모으지 않는다 — 나오는 족족 보낸다. 그게 러시다
   RUSH: (s, team, rng) =>
+    push(s, team, 0) ??
     (s.players[team].workers < 6 ? trainWorker(s, team) : null) ??
     produce(s, team, rng, { cheap: true }),
+  // 경제는 모아서 한 번에 나간다 — 찔끔 내보내면 헌납이고, 그 물량이
+  // 확장 값을 회수하는 순간이 이 전략의 존재 이유다
   GREED: (s, team, rng) =>
+    push(s, team, 20 * MINERAL_SCALE) ??
     trainWorker(s, team) ??
     expand(s, team) ??
     produce(s, team, rng, { reserve: BASE_BUILD_COST }),
@@ -283,6 +348,8 @@ const STRATS = {
     const f = getFaction(me.faction);
     const t2 = f.tech.some((n) => n.tier === 2 && me.unlocked.includes(n.unit));
     return (
+      // T2가 뜨고 한 무리가 모여야 나간다 — 웅크림은 수단이지 목표가 아니다
+      (t2 ? push(s, team, 24 * MINERAL_SCALE) : null) ??
       // 첫 포탑이 일꾼보다 먼저다 — 러시는 34초에 도착한다
       buildDefense(s, team, rng, 1) ??
       trainWorker(s, team) ??
@@ -316,6 +383,7 @@ const STRATS = {
     const [t1, t2] = AIR_PATH[me.faction];
     const airReady = isUnlocked(me, t2);
     return (
+      (airReady ? push(s, team, 16 * MINERAL_SCALE) : null) ??
       buildDefense(s, team, rng, 1) ??
       trainWorker(s, team) ??
       buildDefense(s, team, rng) ??
@@ -329,6 +397,7 @@ const STRATS = {
     );
   },
   BAL: (s, team, rng) =>
+    push(s, team, 12 * MINERAL_SCALE) ??
     trainWorker(s, team) ??
     expand(s, team) ??
     research(s, team) ??
@@ -351,7 +420,11 @@ const STRATS = {
       // 상대가 배를 불리거나 테크에 돈을 묻었다 → 지금 찌른다.
       // (구 조건 "상대 병력 < 내 병력"은 병력을 유지하는 새 TECH 상대로
       // 영영 안 열려 찌르기가 한 번도 안 나갔다 — REACT가 BAL과 완전 동일)
-      return produce(s, team, rng, { cheap: true }) ?? trainWorker(s, team);
+      return (
+        push(s, team, 8 * MINERAL_SCALE) ??
+        produce(s, team, rng, { cheap: true }) ??
+        trainWorker(s, team)
+      );
     }
     return STRATS.BAL(s, team, rng);
   },

@@ -38,6 +38,8 @@ import {
   ownBasePositions,
   siteReachable,
   workerCapacity,
+  isHiddenFrom,
+  ORDER_MAX_UNITS,
 } from '@royale/shared';
 
 /** 난이도 — 로비에서 고른다. 알 수 없는 값은 botLevelOf가 중급으로 떨어뜨린다 */
@@ -72,14 +74,19 @@ interface Tuning {
   maxWorkers: number;
   maxDefenses: number;
   maxBases: number;
+  /** 이만큼(미네랄 환산) 모이면 출진한다. 낮을수록 자주 찔러 본다 */
+  pushArmy: number;
   useUpgrades: boolean;
   armyDelay: number;
 }
 
+/** 출진 명령 간격 (틱) — 5초. 새로 나온 병력이 다음 출진에 합류한다 */
+const PUSH_INTERVAL = 100;
+
 const TUNINGS: Record<BotLevel, Tuning> = {
-  easy: { interval: 60, maxWorkers: 6, maxDefenses: 2, maxBases: 2, useUpgrades: false, armyDelay: 20 * 75 },
-  normal: { interval: 24, maxWorkers: 10, maxDefenses: 4, maxBases: 4, useUpgrades: true, armyDelay: 0 },
-  hard: { interval: 10, maxWorkers: 16, maxDefenses: 4, maxBases: 4, useUpgrades: true, armyDelay: 0 },
+  easy: { interval: 60, maxWorkers: 6, maxDefenses: 2, maxBases: 2, useUpgrades: false, armyDelay: 20 * 75, pushArmy: 24 * MINERAL_SCALE },
+  normal: { interval: 24, maxWorkers: 10, maxDefenses: 4, maxBases: 4, useUpgrades: true, armyDelay: 0, pushArmy: 14 * MINERAL_SCALE },
+  hard: { interval: 10, maxWorkers: 16, maxDefenses: 4, maxBases: 4, useUpgrades: true, armyDelay: 0, pushArmy: 8 * MINERAL_SCALE },
 };
 
 export interface BotMove {
@@ -106,15 +113,65 @@ export class Bot {
     const me = s.players[1];
     // 상대 병력이 더 크면 경제보다 병력이 먼저다 — 확장만 하다 죽지 않는다
     const pressured = this.armyCost(s, 0) > this.armyCost(s, 1);
-    const move = pressured
+    const move = this.push(s, tick) ?? (pressured
       ? this.produce(s, me) ?? this.train(s) ?? this.expand(s)
       : this.train(s) ??
         this.expand(s) ??
         this.research(s) ??
         this.upgradeMove(me) ??
-        this.produce(s, me);
+        this.produce(s, me));
     if (move) this.lastTick = tick;
     return move;
+  }
+
+  /** 마지막으로 출진 명령을 낸 틱 — 매 판단마다 내보내면 생산이 멈춘다 */
+  private lastPush = -999;
+
+  /**
+   * 출진 — **대전에서 병력은 명령을 받아야 움직인다**(자동 전진 제거).
+   *
+   * 이게 없으면 봇은 병력을 뽑아 놓고 집에서 늙어 죽는다. 사람 쪽만
+   * 컨트롤하는 게임이 되어 연습 상대로서 의미가 없어진다.
+   *
+   * 공격 이동이라 가는 길에 만난 것과 싸운다 — 확장을 지나치지 않는다.
+   * 목적지는 **아는 곳 중 가장 가까운 적 기지**이고, 아무것도 모르면
+   * 상대 시작 자리로 간다 (2인용 점대칭 맵에서 그건 추론되는 정보다).
+   */
+  private push(s: GameState, tick: number): BotMove | null {
+    if (s.invasion || s.sandbox) return null;
+    if (tick - this.lastPush < PUSH_INTERVAL) return null;
+    if (this.armyCost(s, 1) < this.tune.pushArmy) return null;
+
+    const ids: number[] = [];
+    for (const e of s.entities) if (e.kind === 'unit' && e.team === 1) ids.push(e.id);
+    if (ids.length === 0) return null;
+    ids.sort((a, b) => a - b);
+
+    const [tx, ty] = this.strikeAt(s);
+    this.lastPush = tick;
+    return { kind: 'attack', id: ids.slice(0, ORDER_MAX_UNITS).join(','), x: tx, y: ty };
+  }
+
+  /** 칠 곳 — 아는 적 기지 중 가장 가까운 곳, 없으면 상대 시작 자리 */
+  private strikeAt(s: GameState): [number, number] {
+    const mine = ownBasePositions(s, 1);
+    const from = mine.length ? mine[0] : [0, 0];
+    let bx = -1;
+    let by = -1;
+    let best = Infinity;
+    for (const e of s.entities) {
+      if (e.team !== 0 || e.kind !== 'base' || e.hp <= 0) continue;
+      if (isHiddenFrom(s, 1, e)) continue;
+      const d = (e.x - from[0]) ** 2 + (e.y - from[1]) ** 2;
+      if (d < best) {
+        best = d;
+        bx = e.x;
+        by = e.y;
+      }
+    }
+    if (bx >= 0) return [bx, by];
+    const start = BASE_SITES.find((b) => b.startFor === 0);
+    return start ? [start.x, start.y] : [0, 0];
   }
 
   /**

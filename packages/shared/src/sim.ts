@@ -34,8 +34,7 @@ import {
   nearestFreeSite,
   setActiveMap,
 } from './arena.js';
-import { navDistance,
-  navStep, pathExists, setBlockers, tileIndex, tileX, tileY } from './nav.js';
+import { navStep, pathExists, setBlockers, tileIndex, tileX, tileY } from './nav.js';
 import {
   BASE_BUILD_COST,
   BASE_BUILD_TICKS,
@@ -81,7 +80,6 @@ import {
   SIGHT_MARGIN,
   SIGHT_UNIT,
   SKILL_CAST_RANGE,
-  SWEEP_ARRIVE,
   INVASION_FIRST_WAVE_TICKS,
   INVASION_WAVE_TICKS,
   INVASION_WAVE_ACCEL,
@@ -171,15 +169,6 @@ export interface Entity {
    * 안개 속의 일방적 저격을 막는 장치다 — 쏘면 내 자리가 드러난다.
    */
   reveal: number;
-  /**
-   * 지금 훑고 있는 기지 지점 id (-1이면 없음).
-   *
-   * 상태 없이 해 보려다 두 번 실패했다. "가장 가까운 남의 지점"은 도착
-   * 지점과 다음 지점 사이를 앞뒤로 오가고, "나보다 깊은 지점"은 그 경계에
-   * 유닛이 올라앉는다. 둘 다 원인이 같다 — **이미 가 본 곳을 기억하지 못해서**다.
-   * 정수 하나면 끝나는 일이라 그냥 기억하게 했다.
-   */
-  sweep: number;
   /**
    * 정지 명령을 받았는가 (S). 1이면 기본 행동(대전=적 진영으로 전진 /
    * 침공=집결지로 행군)을 하지 않고 그 자리를 지킨다. 사거리 안의 적은
@@ -396,7 +385,6 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     orderY: -1,
     orderAttack: 0,
     hold: 0,
-    sweep: -1,
     reveal: -1,
     siteId: site.id,
     isMain,
@@ -732,7 +720,6 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     orderY: -1,
     orderAttack: 0,
     hold: 0,
-    sweep: -1,
     reveal: -1,
     siteId: -1,
     isMain: false,
@@ -1893,102 +1880,6 @@ function moveGoal(e: Entity, tx: number, ty: number): [number, number] {
   return navStep(e.x, e.y, tx, ty);
 }
 
-/**
- * 지점별 점유 팀 — 틱마다 한 번만 만든다 (-1은 빈 지점).
- * 유닛마다 전 엔티티를 훑으면 유휴 병력이 많을 때 그것만으로 틱을 먹는다.
- */
-function siteOwners(s: GameState): number[] {
-  const owners = new Array<number>(BASE_SITES.length).fill(-1);
-  for (const o of s.entities) {
-    if (o.kind !== 'base' || o.hp <= 0) continue;
-    if (o.siteId >= 0 && o.siteId < owners.length) owners[o.siteId] = o.team;
-  }
-  return owners;
-}
-
-/**
- * 집에서 그 지점까지의 **길이** — 지상은 길찾기 거리, 공중은 직선.
- * 갈 수 없으면 -1 (섬은 지상군의 목적지가 될 수 없다).
- */
-function depthOf(e: Entity, hx: number, hy: number, x: number, y: number): number {
-  if (e.flying) return isqrt(dist2(x, y, hx, hy));
-  return navDistance(x, y, hx, hy);
-}
-
-/**
- * 표적이 없는 병력이 향할 곳 — **남의 기지 지점을 집에서 먼 순으로 하나씩.**
- *
- * 예전에는 "적 진영 방향으로 직진"이었다. 안개가 없던 시절에는 그래도
- * 됐다: 구조물은 거리 제한 없이 표적이 되므로 병력이 알아서 적 건물로
- * 향했고, 직진은 그 전까지의 임시 방향일 뿐이었다. 안개가 그 길을 막자
- * 직진이 **유일한** 행동이 되어 전군이 한 줄로 북상하다 맵 끝에 붙어
- * 섰고, 상대 확장은 아무도 치지 않았다 — 경제 전략이 승률 27%로 죽은
- * 것이 이것 때문이다 (하네스 실측).
- *
- * 기지 지점은 맵에 그려진 공개 지형 정보다(화면에도 원으로 표시된다).
- * 그러니 "지점을 훑는다"는 안개를 뚫는 반칙이 아니라 사람이 맵을 보고
- * 하는 일 그대로다 — 어디인지는 알고, **뭐가 있는지는 가 봐야 안다.**
- *
- * 깊이는 **길찾기 거리**로 잰다. 직선으로 재면 섬(서쪽 섬 같은)처럼
- * 지상으로 갈 수 없는 지점을 골라 벽에 박힌다.
- *
- * 적이 차지한 지점에는 영영 "도착"하지 못한다 — 기지 몸집에 막혀 그 앞에
- * 서고, 사거리에 들면 타겟 선정이 넘겨받는다. 그게 이 규칙이 노리는 것이다.
- */
-function sweepGoal(e: Entity, owners: number[]): [number, number] {
-  // 내 시작 지점 — 맵 데이터라 본진이 부서져도 남는다. "바깥"의 기준점이다
-  let hx = e.x;
-  let hy = e.y;
-  for (const site of BASE_SITES) {
-    if (site.startFor === e.team) {
-      hx = site.x;
-      hy = site.y;
-      break;
-    }
-  }
-
-  // 들고 있던 목표가 아직 유효하고 아직 안 닿았으면 그대로 간다
-  if (e.sweep >= 0 && e.sweep < BASE_SITES.length && owners[e.sweep] !== e.team) {
-    const cur = BASE_SITES[e.sweep];
-    if (dist2(e.x, e.y, cur.x, cur.y) > SWEEP_ARRIVE * SWEEP_ARRIVE) return [cur.x, cur.y];
-  }
-
-  // 닿았거나(빈 지점이었다) 목표가 내 것이 됐다 — 한 걸음 더 바깥으로
-  const from = e.sweep >= 0 && e.sweep < BASE_SITES.length ? BASE_SITES[e.sweep] : null;
-  const floor = from ? depthOf(e, hx, hy, from.x, from.y) : -1;
-
-  let nextId = -1;
-  let nextDepth = Infinity;
-  let deepId = -1;
-  let deepDepth = -1;
-
-  for (let i = 0; i < BASE_SITES.length; i++) {
-    if (owners[i] === e.team) continue; // 내 땅은 훑을 이유가 없다
-    const site = BASE_SITES[i];
-    const d = depthOf(e, hx, hy, site.x, site.y);
-    if (d < 0) continue; // 지상군이 갈 수 없는 곳(섬)
-    if (d > deepDepth) {
-      deepDepth = d;
-      deepId = i;
-    }
-    if (i === e.sweep || d <= floor) continue;
-    if (d < nextDepth) {
-      nextDepth = d;
-      nextId = i;
-    }
-  }
-
-  // 더 바깥이 없다 = 맵 끝까지 훑었다. 가장 깊은 남의 지점을 붙든다
-  if (nextId < 0) nextId = deepId;
-  if (nextId < 0) {
-    // 훑을 곳이 하나도 없다 = 맵이 다 내 것이다. 예전 행동으로 떨어진다
-    e.sweep = -1;
-    return [e.x, e.team === 0 ? 0 : ARENA_H];
-  }
-  e.sweep = nextId;
-  return [BASE_SITES[nextId].x, BASE_SITES[nextId].y];
-}
-
 /* ── 틱 진행 ───────────────────────────────────────────────────────────── */
 
 /**
@@ -2230,7 +2121,6 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   }
 
   // 7) 이동 — 현재 위치 스냅샷을 읽고 전부 계산한 뒤 한꺼번에 적용
-  const owners = siteOwners(s); // 유휴 병력의 순회 목적지 계산용, 틱당 한 번
   const nx = new Array<number>(n);
   const ny = new Array<number>(n);
   for (let i = 0; i < n; i++) {
@@ -2292,8 +2182,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       const st = statsOf(s, e);
       if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
-    } else {
-      if (s.invasion && e.team === 0) {
+    } else if (s.invasion) {
+      if (e.team === 0) {
         // 침공 수비군: 집결 깃발이 있으면 거기로 행군해 주둔한다.
         // 깃발이 없으면 제자리 — 전진 본능을 되살리면 파도 소탕 후
         // 전군이 스폰 지점으로 순례를 떠난다 (라운드 24 사고)
@@ -2303,10 +2193,26 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (dist2(e.x, e.y, r.x, r.y) <= RALLY_ARRIVE * RALLY_ARRIVE) continue;
         [gx, gy] = moveGoal(e, r.x, r.y);
       } else {
-        // 타겟이 없으면 남의 기지 지점을 집에서 먼 순으로 한 걸음씩 훑는다
-        const [tx, ty] = sweepGoal(e, owners);
-        [gx, gy] = moveGoal(e, tx, ty);
+        // 파도는 성으로 몰려와야 한다 — 이게 침공이라는 게임 그 자체다
+        [gx, gy] = moveGoal(e, e.x, ARENA_H);
       }
+    } else if (s.sandbox) {
+      // 실험장은 붙어야 관찰이 된다 — 상성을 보려고 만든 화면이다
+      [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
+    } else {
+      // **대전은 여기서 아무것도 하지 않는다** (오너 결정).
+      //
+      // 표적 없는 병력이 스스로 전진하는 것은 클래시 로얄의 문법이다.
+      // 매크로 RTS에 안개까지 얹히자 그 자동 이동이 게임을 망가뜨렸다:
+      // 늘 보이는 목표가 있으면 전군이 그리로 빨려가 도중의 확장을
+      // 지나쳤고(경제 전략 27%), 목표를 가리면 갈 곳을 못 찾고 헤맸다
+      // (러시 33%). 둘 다 "누가 어디로 갈지를 코드가 정한다"가 원인이었다.
+      //
+      // 이제 그건 플레이어가 정한다. 병력은 명령을 받을 때까지 자리를
+      // 지키고, 사거리 안의 적은 그대로 쏜다 — 안 싸우는 게 아니라
+      // **안 걸어나가는** 것이다. 확장을 칠지 지킬지, 언제 나갈지가
+      // 비로소 선택이 된다.
+      continue;
     }
 
     const dx = gx - e.x;
@@ -2677,7 +2583,6 @@ export function hashState(s: GameState): number {
     mix(e.orderY);
     mix(e.orderAttack);
     mix(e.hold);
-    mix(e.sweep);
     mix(e.reveal);
     mix(e.x);
     mix(e.y);
