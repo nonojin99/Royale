@@ -39,6 +39,9 @@ import {
   getFaction,
   getUnit,
   step,
+  supplyOf,
+  MAIN_BASE_STATS,
+  EXPANSION_BASE_STATS,
 } from '../packages/shared/dist/index.js';
 
 const argv = process.argv.slice(2);
@@ -120,12 +123,46 @@ function duel(aId, bId, n, seed = 7, nB = n) {
   return fight([{ id: aId, n }], [{ id: bId, n: nB }], seed);
 }
 
-/** 부대 대 부대 — `[{id, n}, ...]`. 섞인 편성도 그대로 받는다 */
-function fight(forceA, forceB, seed = 7) {
+/**
+ * 부대 대 부대 — `[{id, n}, ...]`. 섞인 편성도 그대로 받는다.
+ *
+ * `defender`를 주면 B편 뒤에 그 편의 기지를 세운다. 벌판 싸움과 비교하면
+ * **기지를 등지고 싸우는 값어치**가 그대로 차이로 나온다.
+ */
+function fight(forceA, forceB, seed = 7, { defender = null } = {}) {
   // 실험장 모드 — 승패 판정이 없고, 표적 없는 유닛이 서로에게 전진한다
   const s = createState(seed, ['steel', 'steel'], 'coast', true);
   // 기지는 사거리와 시야를 가진 참가자다. 결투에서는 치운다
   s.entities.length = 0;
+  if (defender) {
+    const st = defender === 'main' ? MAIN_BASE_STATS : EXPANSION_BASE_STATS;
+    s.entities.push({
+      id: s.nextId++,
+      team: 1,
+      unit: '__base',
+      kind: 'base',
+      x: ARENA.cx,
+      y: ARENA.cy - FRONT - GAP, // B편 바로 뒤 — 사거리 안에 들어와야 참가한다
+      hp: st.hp,
+      maxHp: st.hp,
+      cd: 0,
+      deploy: 0,
+      life: -1,
+      target: -1,
+      flying: false,
+      charge: 0,
+      mode: 0,
+      haste: 0,
+      orderX: -1,
+      orderY: -1,
+      orderAttack: 0,
+      hold: 0,
+      reveal: -1,
+      siteId: -1,
+      isMain: defender === 'main',
+      reserve: 0,
+    });
+  }
 
   const put = (team, id, count, offset) => {
     const u = getUnit(id);
@@ -368,6 +405,193 @@ function budgetTable() {
   console.log('');
 }
 
+/* ── 2c. 공급 칸별 종합 (등공급) ───────────────────────────────────────── */
+
+/**
+ * 같은 **칸**을 붙인다 — 공급 천장이 생긴 뒤로는 이쪽이 진짜 결정이다.
+ *
+ * 등코스트는 "같은 돈으로 무엇을 살까"를 묻는다. 그건 천장에 닿기 전의
+ * 질문이다. 천장에 닿으면 돈은 남고 칸이 모자라서, 질문이 **"이 한 칸에
+ * 무엇을 세울까"**로 바뀐다. 그때부터 비싼 유닛은 비싼 게 흠이 아니라
+ * 값을 치르고 사는 밀도가 된다.
+ *
+ * 그래서 테크가 값을 하는지는 여기서 갈린다. 등코스트에서 T2가 T0에게
+ * 지더라도, 등공급에서 이기면 "천장에 닿은 뒤 돈을 질로 바꾼다"가 성립한다.
+ * 둘 다 지면 연구비는 그냥 버리는 돈이다.
+ */
+const SLOTS = (argOf('--slots') ?? '6,12,18').split(',').map(Number);
+/** 이 칸수로 살 수 있는 카드 수 (마리 수가 아니라 카드 장수 × count) */
+const cardsForSlots = (id, slots) => {
+  const per = supplyOf(getUnit(id));
+  const cards = Math.max(1, Math.floor(slots / per));
+  return Math.min(CAPACITY, cards * getUnit(id).count);
+};
+
+function supplyTable() {
+  console.log('── 2c. 공급 칸별 종합 우세도 (같은 칸으로 세울 수 있는 만큼) ──');
+  console.log(
+    `  ${pad('유닛', 12)} ${pad('칸당코', 7)} ` +
+      `${SLOTS.map((s) => pad(`${s}칸`, 9)).join('')} 적음→많음`,
+  );
+
+  const rows = [];
+  for (const a of ROSTER) {
+    if (getUnit(a).targets === 'buildings') continue;
+    const bySlots = SLOTS.map((slots) => {
+      const vals = [];
+      for (const b of ROSTER) {
+        if (a === b || !mutual(a, b)) continue;
+        const r = duel(a, b, cardsForSlots(a, slots), 7, cardsForSlots(b, slots));
+        if (r.edge !== null) vals.push(r.edge);
+      }
+      return vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null;
+    });
+    const first = bySlots[0];
+    const last = bySlots[bySlots.length - 1];
+    rows.push({ a, bySlots, drift: first !== null && last !== null ? last - first : null });
+  }
+  rows.sort((x, y) => {
+    const avg = (r) =>
+      r.bySlots.filter((v) => v !== null).reduce((p, c, _, arr) => p + c / arr.length, 0);
+    return avg(y) - avg(x);
+  });
+  for (const { a, bySlots, drift } of rows) {
+    const u = getUnit(a);
+    const perSlot = (u.cost / supplyOf(u)).toFixed(2);
+    const counts = SLOTS.map((s) => cardsForSlots(a, s)).join('/');
+    console.log(
+      `  ${pad(nameOf(a), 12)} ${pad(perSlot + '코', 7)} ` +
+        `${bySlots.map((v) => pad(fmt(v), 9)).join('')} ${drift === null ? '—' : fmt(drift)}` +
+        `   [${counts}마리]`,
+    );
+  }
+  console.log('');
+  return rows;
+}
+
+/* ── 2d. 테크 대 확장 (판의 실제 질문) ─────────────────────────────────── */
+
+/**
+ * **칸이 적지만 좋은 군대** vs **칸이 많지만 싼 군대**.
+ *
+ * 공급 천장을 기지에 묶은 순간, 판의 결정은 이 한 줄로 압축된다.
+ * 테크로 간 쪽은 칸당 값어치를 얻고(2c 표에서 T2가 +0.35~0.57),
+ * 확장으로 간 쪽은 칸 자체를 얻는다(본진 28 + 확장마다 10).
+ *
+ * 어느 쪽이 이기는지는 **칸 비율**이 정한다. 그 문턱이 어디인지 몰라서
+ * TECH이 GREED에 91%로 지는 이유를 세 번 놓쳤다 — 유닛을 의심하고,
+ * 봇을 의심하고, 지도를 의심했다. 정작 재야 할 것은 이 저울이었다.
+ */
+function tierTable() {
+  console.log('── 2d. 테크(T2) 대 확장(T0) — 칸이 적지만 좋은 군대 vs 많지만 싼 군대 ──');
+  const RATIOS = [
+    [28, 28, '1기지 : 1기지'],
+    [28, 38, '1기지 : 2기지'],
+    [28, 48, '1기지 : 3기지'],
+    [38, 58, '2기지 : 4기지'],
+    [38, 48, '2기지 : 3기지'],
+  ];
+  // 결투장이 좁으면 비율을 지키며 함께 줄인다 — 묻는 것은 절대 규모가 아니라 비율이다
+  console.log(`  ${pad('종족', 8)} ${pad('T2 편성', 22)} ${pad('T0 편성', 22)} 칸비  우세도`);
+  for (const fid of FACTION_IDS) {
+    const f = getFaction(fid);
+    const pick = (tier) =>
+      f.tech
+        .filter((n) => n.tier === tier)
+        .map((n) => n.unit)
+        .filter((id) => {
+          const u = getUnit(id);
+          return u.kind === 'unit' && u.targets !== 'buildings';
+        });
+    const t2 = pick(2);
+    const t0 = pick(0);
+    if (!t2.length || !t0.length) continue;
+    for (const [slotsA, slotsB, label] of RATIOS) {
+      // 두 편이 모두 정원에 들어가도록 같은 비율로 줄인다
+      let k = 1;
+      for (; k <= 8; k++) {
+        const a = evenSlots(t2, Math.round(slotsA / k));
+        const b = evenSlots(t0, Math.round(slotsB / k));
+        const n = (g) => g.reduce((s, x) => s + x.n, 0);
+        if (n(a) <= CAPACITY && n(b) <= CAPACITY && n(a) > 0 && n(b) > 0) break;
+      }
+      const A = evenSlots(t2, Math.round(slotsA / k));
+      const B = evenSlots(t0, Math.round(slotsB / k));
+      if (!A.length || !B.length) continue;
+      const r = fight(A, B, 7);
+      const desc = (g) => g.map((x) => `${nameOf(x.id)}×${x.n}`).join('+');
+      console.log(
+        `  ${pad(f.name, 8)} ${pad(desc(A), 22)} ${pad(desc(B), 22)}` +
+          ` ${pad(label, 12)} ${fmt(r.edge)}`,
+      );
+    }
+  }
+  console.log('');
+}
+
+/** 주어진 칸수를 종류별로 고르게 채운다 (evenForce의 공급판) */
+function evenSlots(ids, slots) {
+  const per = ids.map((id) => supplyOf(getUnit(id)));
+  const cards = ids.map(() => 0);
+  let used = 0;
+  for (;;) {
+    const order = ids.map((_, i) => i).sort((x, y) => cards[x] * per[x] - cards[y] * per[y]);
+    const pick = order.find((i) => used + per[i] <= slots);
+    if (pick === undefined) break;
+    cards[pick]++;
+    used += per[pick];
+  }
+  return ids
+    .map((id, i) => ({ id, n: cards[i] * getUnit(id).count }))
+    .filter((g) => g.n > 0);
+}
+
+/* ── 2e. 수비 이점 ─────────────────────────────────────────────────────── */
+
+/**
+ * 기지를 등지고 싸우면 얼마나 이득인가.
+ *
+ * 판에서 되풀이된 그림이 있다: 들판에서 이기는 편성이 상대 기지 앞에
+ * 가면 전멸한다. TECH이 120초에 GREED와 대등한 병력으로 나갔다가 20초
+ * 만에 다 잃은 것도, 러시가 140초 동안 준 피해가 132였던 것도 같은 일이다.
+ * 그 값을 모르면 "공격이 성립하는가"를 논할 수 없다.
+ *
+ * 같은 두 편성을 두 번 붙인다 — 벌판에서 한 번, B편이 자기 기지를 등지고
+ * 한 번. 차이가 곧 기지 한 채의 값어치다.
+ */
+function defenseTable() {
+  console.log('── 2e. 기지를 등지고 싸우면 얼마나 이득인가 ──');
+  console.log(`  ${pad('편성', 26)} ${pad('벌판', 8)} ${pad('확장 낀 수비', 12)} ${pad('본진 낀 수비', 12)} 기지값`);
+  const CASES = [];
+  for (const fid of FACTION_IDS) {
+    const f = getFaction(fid);
+    const units = f.tech
+      .map((n) => n.unit)
+      .filter((id) => {
+        const u = getUnit(id);
+        return u.kind === 'unit' && u.targets !== 'buildings';
+      });
+    if (units.length < 2) continue;
+    CASES.push([f.name, units]);
+  }
+  for (const [name, units] of CASES) {
+    const force = evenSlots(units, 18);
+    const n = force.reduce((s, g) => s + g.n, 0);
+    if (!n || n > CAPACITY) continue;
+    const flat = fight(force, force, 7).edge;
+    const exp = fight(force, force, 7, { defender: 'expansion' }).edge;
+    const main = fight(force, force, 7, { defender: 'main' }).edge;
+    // 미러 편성이므로 벌판은 0에 가까워야 한다. 수비 쪽 값이 내려간 만큼이 기지값
+    console.log(
+      `  ${pad(name + ' 미러', 26)} ${pad(fmt(flat), 8)} ${pad(fmt(exp), 12)} ${pad(fmt(main), 12)}` +
+        ` ${fmt(flat - main)}`,
+    );
+  }
+  console.log(
+    '  (우세도는 **공격하는 A편** 기준이다. 수비 쪽 숫자가 낮을수록 기지가 세다)\n',
+  );
+}
+
 /* ── 3. 이상치 짝 ──────────────────────────────────────────────────────── */
 
 function outliers() {
@@ -578,6 +802,9 @@ if (ONLY_PAIR) {
     mirrorCheck();
     scaleTable();
     budgetTable();
+    supplyTable();
+    tierTable();
+    defenseTable();
     outliers();
   }
   if (want('comp')) {

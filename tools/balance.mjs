@@ -56,7 +56,9 @@ import {
 const args = process.argv.slice(2);
 const SEEDS = Number(args[args.indexOf('--seeds') + 1] || 0) || 16;
 const MAP_ID = args.includes('--map') ? args[args.indexOf('--map') + 1] : undefined;
-const FACTIONS = ['steel', 'swarmhive', 'covenant'];
+const FACTIONS = args.includes('--faction')
+  ? [args[args.indexOf('--faction') + 1]]
+  : ['steel', 'swarmhive', 'covenant'];
 const DECIDE_EVERY = 24; // 서버 연습봇과 같은 간격
 const MAX_TICKS = 20 * 60 * 5; // 5분 안전 상한 (연장 포함 사실상 안 걸림)
 
@@ -180,21 +182,50 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, onl
   if (!bases.length) return null;
   const cap = supplyCapOf(s, team);
   const used = supplyUsedOf(s, team);
+  /**
+   * 천장이 가까우면 **칸당 밀도**로 고르고, 못 사면 기다린다.
+   *
+   * "지금 살 수 있는 것 중 가장 비싼 것"은 천장이 없던 시절의 규칙이다.
+   * 돈이 1~12에서 오르내리면 5코짜리는 한 번도 안 잡혀서, TECH이 T2를
+   * 다 연구하고도 140초까지 화염병만 뽑았다(실측). 칸이 모자란 판에서는
+   * 싼 걸 채워 넣는 것이 자리를 버리는 짓이다 — 아껴서 밀도를 산다.
+   */
+  const tight = !cheap && used * 4 >= cap * 3;
   let best = null;
   let bestCost = cheap ? Infinity : -1;
+  let bestDense = -1;
   for (const id of me.unlocked) {
     if (only && id !== only) continue;
     if (!isUnlocked(me, id)) continue;
     const u = getUnit(id);
     if (u.kind !== 'unit') continue; // 건물은 명시적 웅크림 채널로만
-    if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
+    // 건물 전용(정찰차·굴착충)은 **유닛을 아예 못 때린다** — 군대가 될 수 없다.
+    //
+    // 이걸 안 걸었더니 TECH이 연구비를 남기느라 가난해져서, "살 수 있는 것
+    // 중 가장 비싼 것"을 고를 때마다 2코짜리 정찰차만 잡혔다. 110초에
+    // 병력이 정찰차 13 + 화염병 8이었고, 싸울 수 없는 그 뭉치를 들고 나가
+    // 전멸했다. GREED에 100%로 지던 진짜 이유다.
+    if (u.targets === 'buildings') continue;
+    if (cheap && me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
     if (used + supplyOf(u) > cap) continue; // 천장을 넘는 카드는 시뮬이 거절한다
+    if (tight) {
+      // 돈이 모자라도 후보로 둔다 — 못 사면 이번 판단은 건너뛰고 모은다
+      const dense = (u.cost * 1000) / supplyOf(u);
+      if (dense > bestDense) {
+        bestDense = dense;
+        best = id;
+      }
+      continue;
+    }
+    if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
     if (cheap ? u.cost < bestCost : u.cost > bestCost) {
       bestCost = u.cost;
       best = id;
     }
   }
   if (!best) return null;
+  // 밀도로 고른 카드를 아직 못 사면 이번 판단은 쉰다 (돈이 쌓인다)
+  if (tight && me.minerals - reserve < getUnit(best).cost * MINERAL_SCALE) return null;
   let spot;
   if (defend) {
     // 본진 곁에 깐다
@@ -709,11 +740,22 @@ if (args.includes('--trace')) {
         }
         ds.sort((a, b) => a - b);
         const far = ds.length ? Math.round(ds[ds.length >> 1]) : -1;
+        // 무엇을 들고 있나 — "테크했는데 왜 지나"는 편성을 봐야 갈린다
+        const mix = new Map();
+        for (const e of s.entities) {
+          if (e.kind !== 'unit' || e.team !== t || e.hp <= 0) continue;
+          mix.set(e.unit, (mix.get(e.unit) ?? 0) + 1);
+        }
+        const comp = [...mix.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([id, n]) => `${getUnit(id).name}${n}`)
+          .join(',');
         return (
           `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers}` +
           ` 기지${bases.length}(${hp}) 돈${Math.round(p.minerals / 1000)}` +
           ` 공급${supplyUsedOf(s, t)}/${supplyCapOf(s, t)} T1:${t1} T2:${t2} 큐${q}` +
-          ` 적기지까지${far >= 0 ? far : '-'}타일`
+          ` ${far >= 0 ? far : '-'}타일 [${comp}]`
         );
       });
       console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);
