@@ -423,7 +423,14 @@ function evenForce(ids, budget) {
     const order = ids
       .map((_, i) => i)
       .sort((x, y) => ns[x] * vals[x] - ns[y] * vals[y]);
-    const pick = order.find((i) => spent + vals[i] <= budget + 1e-9 && ns[i] < CAPACITY);
+    // 결투장 정원은 **한 편 전체**의 몫이다. 종류마다 CAPACITY까지 허용하면
+    // 3종 조합이 정원의 세 배를 깔아 배치가 결투장 밖으로 나간다
+    // (지도를 손질해 결투장이 19×9에서 11×12로 줄자 바로 터졌다)
+    const total = ns.reduce((a, b) => a + b, 0);
+    const pick =
+      total >= CAPACITY
+        ? undefined
+        : order.find((i) => spent + vals[i] <= budget + 1e-9 && ns[i] < CAPACITY);
     if (pick === undefined) break;
     ns[pick]++;
     spent += vals[pick];

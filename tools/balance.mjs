@@ -695,10 +695,25 @@ if (args.includes('--trace')) {
         const t2 = f.tech.filter((n) => n.tier === 2 && p.unlocked.includes(n.unit)).length;
         const t1 = f.tech.filter((n) => n.tier === 1 && p.unlocked.includes(n.unit)).length;
         const q = s.queue.filter((o) => o.team === t).length;
+        // 병력이 적 기지에서 얼마나 떨어져 있나 — 드립 전진을 잡는 눈이다.
+        // 물량이 3배인데 기지가 안 깎이면 못 싸운 게 아니라 못 닿은 것이다
+        const foeBases = s.entities.filter(
+          (e) => e.kind === 'base' && e.team !== t && e.hp > 0,
+        );
+        const ds = [];
+        for (const e of s.entities) {
+          if (e.kind !== 'unit' || e.team !== t || e.hp <= 0) continue;
+          let best = Infinity;
+          for (const b of foeBases) best = Math.min(best, Math.hypot(e.x - b.x, e.y - b.y));
+          if (best < Infinity) ds.push(best / 1000);
+        }
+        ds.sort((a, b) => a - b);
+        const far = ds.length ? Math.round(ds[ds.length >> 1]) : -1;
         return (
           `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers}` +
           ` 기지${bases.length}(${hp}) 돈${Math.round(p.minerals / 1000)}` +
-          ` 공급${supplyUsedOf(s, t)}/${supplyCapOf(s, t)} T1:${t1} T2:${t2} 큐${q}`
+          ` 공급${supplyUsedOf(s, t)}/${supplyCapOf(s, t)} T1:${t1} T2:${t2} 큐${q}` +
+          ` 적기지까지${far >= 0 ? far : '-'}타일`
         );
       });
       console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);

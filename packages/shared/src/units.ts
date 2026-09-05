@@ -18,7 +18,7 @@
  * 오리지널이다. 특정 상용 IP의 고유명사·디자인을 가져다 쓰지 않는다.
  */
 
-import { HASTE_SPEED_PCT, NEST_HP, TICK_RATE } from './constants.js';
+import { HASTE_SPEED_PCT, MARCH_SPEED_PCT, NEST_HP, TICK_RATE } from './constants.js';
 import { seconds, tiles } from './fixed.js';
 
 export type UnitKind = 'unit' | 'building' | 'spell';
@@ -152,9 +152,13 @@ export interface UnitDef {
   color: number;
 }
 
-/** 타일/초 단위를 틱당 밀리타일로 */
+/**
+ * 타일/초 단위를 틱당 밀리타일로.
+ *
+ * 정의 시점에 한 번만 반올림하므로 시뮬은 여전히 정수만 만진다.
+ */
 function spd(tilesPerSec: number): number {
-  return Math.round((tilesPerSec * 1000) / TICK_RATE);
+  return Math.round((tilesPerSec * 1000 * MARCH_SPEED_PCT) / (TICK_RATE * 100));
 }
 
 /** 카드 정의의 반복을 줄이기 위한 기본값 */
