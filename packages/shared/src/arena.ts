@@ -283,6 +283,11 @@ const RIFT_SITES: readonly BaseSite[] = [
   { id: 3, x: tiles(26), y: tiles(17), startFor: -1, label: '북다리 어귀' },
   { id: 4, x: tiles(21), y: tiles(30), startFor: -1, label: '남다리 어귀' },
   { id: 5, x: tiles(5), y: tiles(32), startFor: -1, label: '남서 북마당' },
+  // 라운드 51에 (30,40)으로 밀어 뒤뜰을 셋에서 둘로 줄여 봤다가 **되돌렸다.**
+  // 쌍둥이 해안에서 통했던 처방(뒤뜰을 줄이면 확장이 벌을 받는다)이
+  // 여기서는 정반대였다 — GREED>TECH 58%→75%, RUSH vs TECH 40%→13%.
+  // 대협곡은 손대기 전이 이미 우리 맵 중 가장 건강했다(해안은 86%).
+  // "뒤뜰 2개"는 밸런스의 대리 지표가 아니다. 맵마다 재 보고 정할 것.
   { id: 6, x: tiles(15), y: tiles(42), startFor: -1, label: '남서 앞마당' },
   { id: 7, x: tiles(5), y: tiles(42), startFor: 0, label: '남서 본진' },
   { id: 8, x: tiles(10), y: tiles(26), startFor: -1, label: '남서 섬' },

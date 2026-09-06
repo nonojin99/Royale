@@ -96,7 +96,13 @@ for (const s of sites) {
 }
 console.log(`\n  팀별 뒤뜰 자리: 팀0 ${safeCount[0]}개 · 팀1 ${safeCount[1]}개`);
 if (safeCount[0] > 2) {
-  console.log('  ⚠️  뒤뜰이 셋 이상이면 4기지까지 안전하게 깔 수 있다 — 확장이 벌을 안 받는다');
+  console.log(
+    '  ℹ️  뒤뜰이 셋이면 4기지를 안전하게 깔 수 있다 — 다만 이건 **재 보라는 신호이지\n' +
+      '     판정이 아니다.** 쌍둥이 해안은 넷을 둘로 줄이자 GREED>TECH이 100%→85%가\n' +
+      '     됐지만, 대협곡에 같은 처방을 쓰자 58%→75%로 나빠졌다(RUSH vs TECH도\n' +
+      '     40%→13%). 뒤뜰 셋인 채로 대협곡이 우리 맵 중 가장 건강하다.\n' +
+      '     `node tools/balance.mjs --map <id>`로 A/B를 재고 정할 것 (라운드 51)',
+  );
 }
 console.log(bad ? `\n  ✗ ${bad}건 실패` : '\n  ✓ 대칭·사슬·통행 모두 통과');
 process.exit(bad ? 1 : 0);
