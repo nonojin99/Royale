@@ -483,7 +483,9 @@ function supplyTable() {
  * 봇을 의심하고, 지도를 의심했다. 정작 재야 할 것은 이 저울이었다.
  */
 function tierTable() {
-  console.log('── 2d. 테크(T2) 대 확장(T0) — 칸이 적지만 좋은 군대 vs 많지만 싼 군대 ──');
+  console.log(
+    '── 2d. 테크(T2) 대 확장(T0) — 칸이 적지만 좋은 군대 vs 많지만 싼 군대 (최선 대 최선) ──',
+  );
   const RATIOS = [
     [28, 28, '1기지 : 1기지'],
     [28, 38, '1기지 : 2기지'],
@@ -506,23 +508,52 @@ function tierTable() {
     const t2 = pick(2);
     const t0 = pick(0);
     if (!t2.length || !t0.length) continue;
+    // 고를 수 있는 편성 — 종류마다 몰빵, 그리고 고르게 섞은 것
+    const options = (ids) => [...ids.map((id) => [id]), ids].filter((g) => g.length);
     for (const [slotsA, slotsB, label] of RATIOS) {
       // 두 편이 모두 정원에 들어가도록 같은 비율로 줄인다
+      const fits = (ids, slots) => {
+        const g = evenSlots(ids, slots);
+        const n = g.reduce((s, x) => s + x.n, 0);
+        return n > 0 && n <= CAPACITY ? g : null;
+      };
       let k = 1;
       for (; k <= 8; k++) {
-        const a = evenSlots(t2, Math.round(slotsA / k));
-        const b = evenSlots(t0, Math.round(slotsB / k));
-        const n = (g) => g.reduce((s, x) => s + x.n, 0);
-        if (n(a) <= CAPACITY && n(b) <= CAPACITY && n(a) > 0 && n(b) > 0) break;
+        const ok = options(t2).every((g) => fits(g, Math.round(slotsA / k)));
+        const ok2 = options(t0).every((g) => fits(g, Math.round(slotsB / k)));
+        if (ok && ok2) break;
       }
-      const A = evenSlots(t2, Math.round(slotsA / k));
-      const B = evenSlots(t0, Math.round(slotsB / k));
-      if (!A.length || !B.length) continue;
-      const r = fight(A, B, 7);
+      // **최선 대 최선** — 균등 분할만 재면 "거대포식자만 뽑는다" 같은
+      // 실제 선택이 안 보인다. 공격하는 쪽이 최선을 고르되, 지키는 쪽도
+      // 최선으로 답한다고 보고 그 최솟값을 취한다 (max-min)
+      let bestEdge = -Infinity;
+      let bestA = null;
+      let bestB = null;
+      for (const ga of options(t2)) {
+        const A = fits(ga, Math.round(slotsA / k));
+        if (!A) continue;
+        let worst = Infinity;
+        let worstB = null;
+        for (const gb of options(t0)) {
+          const B = fits(gb, Math.round(slotsB / k));
+          if (!B) continue;
+          const e = fight(A, B, 7).edge;
+          if (e !== null && e < worst) {
+            worst = e;
+            worstB = B;
+          }
+        }
+        if (worstB && worst > bestEdge) {
+          bestEdge = worst;
+          bestA = A;
+          bestB = worstB;
+        }
+      }
+      if (!bestA) continue;
       const desc = (g) => g.map((x) => `${nameOf(x.id)}×${x.n}`).join('+');
       console.log(
-        `  ${pad(f.name, 8)} ${pad(desc(A), 22)} ${pad(desc(B), 22)}` +
-          ` ${pad(label, 12)} ${fmt(r.edge)}`,
+        `  ${pad(f.name, 8)} ${pad(desc(bestA), 22)} ${pad(desc(bestB), 22)}` +
+          ` ${pad(label, 12)} ${fmt(bestEdge)}`,
       );
     }
   }
@@ -590,6 +621,50 @@ function defenseTable() {
   console.log(
     '  (우세도는 **공격하는 A편** 기준이다. 수비 쪽 숫자가 낮을수록 기지가 세다)\n',
   );
+}
+
+/* ── 2f. 한 유닛 파고들기 (--focus) ────────────────────────────────────── */
+
+/**
+ * 한 유닛이 **누구에게** 지는지 상대별로 편다.
+ *
+ * 종합 우세도는 "약하다"까지만 말해 준다. 고치려면 체력이 모자라 먼저
+ * 죽는 건지, 화력이 모자라 못 죽이는 건지, 사거리에 밀려 붙지도 못하는
+ * 건지를 갈라야 한다. 살아남은 비율까지 같이 찍는 이유다.
+ */
+function focusTable(id) {
+  const u = getUnit(id);
+  console.log(
+    `── 2f. ${nameOf(id)} 파고들기 — ${u.cost}코 · ${u.count}마리 · ` +
+      `${u.size ?? 'medium'} · ${supplyOf(u)}칸 (칸당 ${(u.cost / supplyOf(u)).toFixed(2)}코) ──`,
+  );
+  console.log(`  ${pad('상대', 12)} ${pad('칸당코', 7)} ${SLOTS.map((s) => pad(`${s}칸`, 9)).join('')}`);
+  const rows = [];
+  for (const b of ROSTER) {
+    if (b === id || !mutual(id, b)) continue;
+    const vals = SLOTS.map((slots) => {
+      const r = duel(id, b, cardsForSlots(id, slots), 7, cardsForSlots(b, slots));
+      return r.edge;
+    });
+    const avg = vals.filter((v) => v !== null).reduce((p, c, _, a) => p + c / a.length, 0);
+    rows.push({ b, vals, avg });
+  }
+  rows.sort((x, y) => x.avg - y.avg);
+  for (const { b, vals } of rows) {
+    const ub = getUnit(b);
+    console.log(
+      `  ${pad(nameOf(b), 12)} ${pad((ub.cost / supplyOf(ub)).toFixed(2) + '코', 7)} ` +
+        vals.map((v) => pad(fmt(v), 9)).join(''),
+    );
+  }
+  const blind = ROSTER.filter((b) => b !== id && !canHit(b, id));
+  if (blind.length) {
+    console.log(
+      `\n  이 표에 안 잡히는 값어치: ${blind.length}유닛이 ${nameOf(id)}를 못 때린다 ` +
+        `(${blind.map(nameOf).join(' · ')})`,
+    );
+  }
+  console.log('');
 }
 
 /* ── 3. 이상치 짝 ──────────────────────────────────────────────────────── */
@@ -795,6 +870,8 @@ if (ONLY_PAIR) {
         `  ${(r.ticks / 20).toFixed(1)}초`,
     );
   }
+} else if (argOf('--focus')) {
+  focusTable(argOf('--focus'));
 } else {
   const MODE = argOf('--mode') ?? 'all';
   const want = (m) => MODE === 'all' || MODE === m;
