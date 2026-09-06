@@ -495,6 +495,14 @@ const STRATS = {
       push(s, team, 20 * MINERAL_SCALE) ??
       (army >= workerDebt(s, team) ? trainWorker(s, team) : null) ??
       expand(s, team, wantBases) ??
+      // **돈이 쌓이면 질로 바꾼다.** 연구를 맨 뒤에 두면 `produce`가 실패할
+      // 때(=천장이 찬 순간)에만 걸린다. 그래서 천장에 닿는 맵(쌍둥이 해안)
+      // 에서는 T2까지 가고, 안 닿는 맵(대협곡)에서는 394코를 쥔 채 T1도
+      // 없이 늙어 죽었다 — 같은 봇인데 맵이 전략을 바꿔 버린 것이다.
+      // 24코가 넘게 남으면 그건 쓸 곳을 못 찾은 돈이다
+      (s.players[team].minerals > 24 * MINERAL_SCALE
+        ? buyUpgrade(s, team) ?? research(s, team, 0)
+        : null) ??
       // 기지를 다 깔면 예비금은 죽은 돈이다 — 그대로 두면 생산이 막힌다
       produce(s, team, rng, { reserve: baseCount(s, team) < wantBases ? BASE_BUILD_COST : 0 }) ??
       // 천장이 차면 병력 카드가 안 나온다. 쌓인 돈은 질로 바꾼다 —
@@ -740,6 +748,11 @@ if (args.includes('--trace')) {
         }
         ds.sort((a, b) => a - b);
         const far = ds.length ? Math.round(ds[ds.length >> 1]) : -1;
+        // 뭉쳐 왔나 흩어져 왔나 — 사분위 간 거리. 크면 앞뒤로 늘어져
+        // 각개격파당한다는 뜻이다 (드립 전진의 지표)
+        const q1 = ds.length ? ds[Math.floor(ds.length * 0.25)] : 0;
+        const q3 = ds.length ? ds[Math.floor(ds.length * 0.75)] : 0;
+        const spread = ds.length ? Math.round(q3 - q1) : -1;
         // 무엇을 들고 있나 — "테크했는데 왜 지나"는 편성을 봐야 갈린다
         const mix = new Map();
         for (const e of s.entities) {
@@ -755,7 +768,7 @@ if (args.includes('--trace')) {
           `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers}` +
           ` 기지${bases.length}(${hp}) 돈${Math.round(p.minerals / 1000)}` +
           ` 공급${supplyUsedOf(s, t)}/${supplyCapOf(s, t)} T1:${t1} T2:${t2} 큐${q}` +
-          ` ${far >= 0 ? far : '-'}타일 [${comp}]`
+          ` ${far >= 0 ? far : '-'}타일±${spread >= 0 ? spread : '-'} [${comp}]`
         );
       });
       console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);

@@ -218,6 +218,12 @@ function buildField(gx: number, gy: number): Int32Array {
 }
 
 function fieldFor(gx: number, gy: number): Int32Array {
+  // 캐시를 보기 **전에** 지형을 맞춘다. 안 그러면 맵을 바꾼 뒤 같은 목표
+  // 타일을 물었을 때 이전 맵의 흐름장이 그대로 나온다 — `buildField` 안의
+  // `walkable()`이 syncTerrain을 부르지만 그건 캐시가 빗나간 뒤의 일이라
+  // 늦다. 실제로 이 버그 때문에 대협곡의 본진 간 경로가 쌍둥이 해안과
+  // 똑같은 56.0타일로 측정됐다 (실제로는 60.2타일)
+  syncTerrain();
   const key = gy * W + gx;
   let f = fields.get(key);
   if (!f) {

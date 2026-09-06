@@ -20,6 +20,7 @@ import {
   MAPS,
   setActiveMap,
   blockedAt,
+  navDistance,
 } from '../packages/shared/dist/index.js';
 
 const mapId = process.argv[2];
@@ -67,6 +68,56 @@ for (const main of invasionOnly ? [] : mains) {
   }
   const missed = sites.filter((s) => !seen.has(s.id)).map((s) => s.id);
   if (missed.length) fail(`본진 ${main.id}에서 사슬이 안 닿는 자리: ${missed.join(', ')}`);
+}
+
+// 3b. 병목 폭 — 본진 사이를 가르는 가장 좁은 목
+//
+// 행·열로 세면 대각 협곡을 못 잡고, 거리 띠로 세도 회랑 밖까지 같이 세어
+// 안 잡힌다. **최단경로 회랑**만 본다: 두 본진에서의 거리 합이 총거리와
+// 같은 칸이 최단경로 위의 칸이다. 그 회랑을 거리 띠로 잘라 가장 좁은
+// 곳을 재면 "군대가 지나갈 수 있는 길목이 몇 칸인가"가 나온다.
+//
+// 넉넉한 회랑(총거리 +4타일까지 돌아가는 길 포함)도 같이 잰다 — 실제
+// 군대는 최단경로만 밟지 않는다.
+{
+  const p0m = sites.find((b) => b.startFor === 0);
+  const p1m = sites.find((b) => b.startFor === 1);
+  const goal = navDistance(p1m.x, p1m.y, p0m.x, p0m.y);
+  const tight = new Map();
+  const loose = new Map();
+  for (let ty = 0; ty < W; ty++) {
+    for (let tx = 0; tx < W; tx++) {
+      const px = tx * T + 500;
+      const py = ty * T + 500;
+      if (blockedAt(px, py)) continue;
+      const dA = navDistance(px, py, p0m.x, p0m.y);
+      const dB = navDistance(px, py, p1m.x, p1m.y);
+      if (dA < 0 || dB < 0) continue;
+      const slack = dA + dB - goal;
+      if (slack > 40) continue; // 4타일 넘게 돌아가면 회랑 밖
+      const k = Math.round(dA / 20) * 20;
+      loose.set(k, (loose.get(k) ?? 0) + 1);
+      if (slack === 0) tight.set(k, (tight.get(k) ?? 0) + 1);
+    }
+  }
+  const narrowest = (m) => {
+    let n = Infinity;
+    let at = 0;
+    for (const [k, v] of m) {
+      if (k < goal * 0.2 || k > goal * 0.8) continue;
+      if (v < n) {
+        n = v;
+        at = k;
+      }
+    }
+    return [n === Infinity ? 0 : n, at];
+  };
+  const [tn, ta] = narrowest(tight);
+  const [ln] = narrowest(loose);
+  console.log(
+    `  본진 간 경로 ${(goal / 10).toFixed(1)}타일 · 최단 회랑 최소 폭 **${tn}칸** ` +
+      `(본진에서 ${(ta / 10).toFixed(0)}타일) · 넉넉한 회랑 ${ln}칸\n`,
+  );
 }
 
 // 4. 다툼도
