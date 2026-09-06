@@ -121,13 +121,16 @@ function forwardSpot(s, team, rng) {
   const dx = ex - front[0];
   const dy = ey - front[1];
   const len = Math.max(1, Math.abs(dx) + Math.abs(dy));
-  for (let k = 8; k >= 3; k--) {
+  // 앞쪽부터 훑되 **뒤까지** 훑는다. 앞으로만 밀고 막히면 포기하게 두면
+  // 전선이 막히는 순간 생산 판단이 통째로 버려진다 — 사람이라면 기지
+  // 반대편에 깐다
+  for (let k = 8; k >= -8; k--) {
     const r = (DEPLOY_RADIUS * k) / 10;
     const x = front[0] + Math.trunc((dx / len) * r) + nextInt(rng, 600) - 300;
     const y = front[1] + Math.trunc((dy / len) * r) + nextInt(rng, 600) - 300;
     if (canDeployAt(x, y, bases)) return [x, y];
   }
-  return [front[0], front[1]];
+  return null;
 }
 
 /** 첫 기지 몫을 넘은 일꾼이 요구하는 최소 병력 — 일꾼 하나당 1코 */
@@ -230,8 +233,12 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, onl
   if (defend) {
     // 본진 곁에 깐다
     const main = bases[0];
-    spot = [main[0] + nextInt(rng, 1200) - 600, main[1] + nextInt(rng, 1200) - 600];
-    if (!canDeployAt(spot[0], spot[1], bases)) spot = main;
+    spot = null;
+    for (let k = 0; k < 8 && !spot; k++) {
+      const px = main[0] + nextInt(rng, 2400) - 1200;
+      const py = main[1] + nextInt(rng, 2400) - 1200;
+      if (canDeployAt(px, py, bases)) spot = [px, py];
+    }
   } else {
     spot = forwardSpot(s, team, rng);
   }
