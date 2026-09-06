@@ -263,7 +263,7 @@ export const PRODUCE_QUEUE_MAX = 5;
  */
 export const MARCH_SPEED_PCT = 135;
 
-export const SUPPLY_MAIN = 28;
+export const SUPPLY_MAIN = 56;
 
 /**
  * 확장 하나가 더하는 칸 — **본진보다 적다**.
@@ -273,7 +273,7 @@ export const SUPPLY_MAIN = 28;
  * 크게 깔고 확장이 조금씩 더해야, 1기지 병력도 위협이 되면서 확장한 쪽이
  * 그만큼만 앞선다.
  */
-export const SUPPLY_PER_EXPANSION = 10;
+export const SUPPLY_PER_EXPANSION = 20;
 
 /**
  * 몸집 등급이 그대로 공급 칸이다 — 이미 충돌 반경으로 쓰던 축을 재활용한다.
@@ -283,7 +283,25 @@ export const SUPPLY_PER_EXPANSION = 10;
  * 살아남는다. 그러면서도 칸당 값은 T0가 0.75~1.0코, T2가 1.67~2.0코라
  * **천장이 차면 테크가 유일한 성장 수단**이 된다.
  */
-export const SUPPLY_BY_SIZE = { small: 1, medium: 2, large: 3 } as const;
+export const SUPPLY_BY_SIZE = { small: 2, medium: 4, large: 6 } as const;
+
+/**
+ * 몸집 등급보다 **더 잘게** 값을 매겨야 하는 유닛의 칸수 (몸 하나당).
+ *
+ * 눈금이 1·2·3이던 시절, 가장 작은 칸이 한 칸이라 그 아래가 없었다.
+ * 그래서 물어뜯는것(2코에 4마리, 몸 하나 0.5코)이 소총병 몸(1.0코)과
+ * 똑같이 한 칸을 먹었다 — 값이 절반인데 자리는 같으니 칸당 우세도가
+ * -0.97, 게임 최악이었다. **공급 천장이 "싼 물량"이라는 정체성을
+ * 구조적으로 벌준 것**이지 스탯 문제가 아니었다.
+ *
+ * 눈금을 통째로 두 배(작은 2·보통 4·큰 6)로 늘려 그 아래 반 칸을
+ * 만들었다. 스타의 저글링 0.5 공급과 같은 처방이다. 캡도 같은 비율로
+ * 올렸으니 다른 유닛의 셈은 하나도 안 바뀐다.
+ *
+ * 몸집(충돌 반경)과는 따로 둔다 — 물어뜯는것을 물리적으로 더 작게 만들면
+ * 충돌·렌더까지 바뀌는데, 여기서 고치려는 것은 공급뿐이다.
+ */
+export const SUPPLY_OVERRIDE: Readonly<Record<string, number>> = { gnawer: 1 };
 
 /* ── 넷코드 ────────────────────────────────────────────────────────────── */
 

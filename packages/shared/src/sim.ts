@@ -46,6 +46,7 @@ import {
   PRODUCE_QUEUE_MAX,
   PRODUCE_TICKS_PER_COST,
   SUPPLY_BY_SIZE,
+  SUPPLY_OVERRIDE,
   SUPPLY_MAIN,
   SUPPLY_PER_EXPANSION,
   ENTITY_SCALE,
@@ -597,9 +598,14 @@ export function workerCapacity(s: GameState, team: Team): number {
  * 건물·주문은 0이다. 건물은 수명이 있어 스스로 사라지고, 주문은 남지 않는다 —
  * 천장이 묶어야 하는 것은 **필드에 남는 병력**이다.
  */
+/** 몸 하나가 먹는 칸 — 표에 따로 적힌 값이 있으면 그것, 없으면 몸집 등급 */
+function supplyPerBody(u: UnitDef): number {
+  return SUPPLY_OVERRIDE[u.id] ?? SUPPLY_BY_SIZE[u.size ?? 'medium'];
+}
+
 export function supplyOf(u: UnitDef): number {
   if (u.kind !== 'unit') return 0;
-  return SUPPLY_BY_SIZE[u.size ?? 'medium'] * u.count;
+  return supplyPerBody(u) * u.count;
 }
 
 /** 팀의 공급 천장 — 다 지어진 살아 있는 기지 × 기지당 칸 */
@@ -622,7 +628,7 @@ export function supplyUsedOf(s: GameState, team: Team): number {
   let n = 0;
   for (const e of s.entities) {
     if (e.kind !== 'unit' || e.team !== team || e.hp <= 0) continue;
-    n += SUPPLY_BY_SIZE[getUnit(e.unit).size ?? 'medium'];
+    n += supplyPerBody(getUnit(e.unit));
   }
   for (const q of s.queue) {
     if (q.team === team) n += supplyOf(getUnit(q.unit));

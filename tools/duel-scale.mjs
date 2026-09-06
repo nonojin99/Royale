@@ -40,6 +40,8 @@ import {
   getUnit,
   step,
   supplyOf,
+  SUPPLY_MAIN,
+  SUPPLY_PER_EXPANSION,
   MAIN_BASE_STATS,
   EXPANSION_BASE_STATS,
 } from '../packages/shared/dist/index.js';
@@ -67,7 +69,11 @@ const unitValue = (id) => {
  * 맵이 바뀌어도 도구가 스스로 다시 찾는다.
  */
 function findArena() {
-  const far = (cx, cy) => BASE_SITES.every((b) => Math.hypot(b.x - cx, b.y - cy) > 15000);
+  // 기지 자리에서 조금만 떨어지면 된다. `fight()`가 엔티티를 통째로 지우므로
+  // 기지가 싸움에 끼지 않고, 고지/물/벽은 아래 평지 검사가 이미 거른다.
+  // 15타일을 요구했더니 지도의 확장 자리를 안쪽으로 옮긴 뒤 결투장이
+  // 19×9에서 11×12로 줄어, 정원 18이 병목이 되어 물량 유닛을 잘라 먹었다
+  const far = (cx, cy) => BASE_SITES.every((b) => Math.hypot(b.x - cx, b.y - cy) > 8000);
   const flat = (tx, ty, e0) => {
     const px = tx * 1000 + 500;
     const py = ty * 1000 + 500;
@@ -78,8 +84,8 @@ function findArena() {
     for (let tx = 1; tx < ARENA_W_TILES - 1; tx++) {
       const e0 = elevAt(tx * 1000 + 500, ty * 1000 + 500);
       if (!flat(tx, ty, e0)) continue;
-      for (let h = 6; h < 24; h++) {
-        for (let w = 5; w < 20; w++) {
+      for (let h = 6; h < 28; h++) {
+        for (let w = 5; w < 28; w++) {
           if (tx + w >= ARENA_W_TILES || ty + h >= ARENA_H_TILES) continue;
           let good = true;
           for (let y = ty; y < ty + h && good; y++) {
@@ -419,7 +425,7 @@ function budgetTable() {
  * 지더라도, 등공급에서 이기면 "천장에 닿은 뒤 돈을 질로 바꾼다"가 성립한다.
  * 둘 다 지면 연구비는 그냥 버리는 돈이다.
  */
-const SLOTS = (argOf('--slots') ?? '6,12,18').split(',').map(Number);
+const SLOTS = (argOf('--slots') ?? '12,24,36').split(',').map(Number);
 /** 이 칸수로 살 수 있는 카드 수 (마리 수가 아니라 카드 장수 × count) */
 const cardsForSlots = (id, slots) => {
   const per = supplyOf(getUnit(id));
@@ -486,12 +492,15 @@ function tierTable() {
   console.log(
     '── 2d. 테크(T2) 대 확장(T0) — 칸이 적지만 좋은 군대 vs 많지만 싼 군대 (최선 대 최선) ──',
   );
+  // 칸수는 실제 천장에서 가져온다 — 눈금이 바뀌면 표도 따라가야 한다
+  const B1 = SUPPLY_MAIN;
+  const B = (n) => SUPPLY_MAIN + (n - 1) * SUPPLY_PER_EXPANSION;
   const RATIOS = [
-    [28, 28, '1기지 : 1기지'],
-    [28, 38, '1기지 : 2기지'],
-    [28, 48, '1기지 : 3기지'],
-    [38, 58, '2기지 : 4기지'],
-    [38, 48, '2기지 : 3기지'],
+    [B1, B(1), '1기지 : 1기지'],
+    [B1, B(2), '1기지 : 2기지'],
+    [B1, B(3), '1기지 : 3기지'],
+    [B(2), B(4), '2기지 : 4기지'],
+    [B(2), B(3), '2기지 : 3기지'],
   ];
   // 결투장이 좁으면 비율을 지키며 함께 줄인다 — 묻는 것은 절대 규모가 아니라 비율이다
   console.log(`  ${pad('종족', 8)} ${pad('T2 편성', 22)} ${pad('T0 편성', 22)} 칸비  우세도`);
