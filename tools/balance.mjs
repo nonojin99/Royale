@@ -48,6 +48,7 @@ import {
   blockedAt,
   ORDER_MAX_UNITS,
   PRODUCE_QUEUE_MAX,
+  hurtLocked,
   supplyOf,
   supplyCapOf,
   supplyUsedOf,
@@ -99,6 +100,15 @@ function queueAt(s, team, pos) {
   return n;
 }
 
+/** 이 기지 자리가 방금 맞아 새 예약을 못 받는 상태인가 */
+function lockedAt(s, team, pos) {
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0) continue;
+    if (Math.abs(e.x - pos[0]) < 500 && Math.abs(e.y - pos[1]) < 500) return hurtLocked(s, e);
+  }
+  return false;
+}
+
 function forwardSpot(s, team, rng) {
   const bases = ownBasePositions(s, team);
   if (!bases.length) return null;
@@ -113,7 +123,7 @@ function forwardSpot(s, team, rng) {
     .sort((p, q) => p[1] - q[1]);
   let front = order[0][0];
   for (const [b] of order) {
-    if (queueAt(s, team, b) < PRODUCE_QUEUE_MAX) {
+    if (queueAt(s, team, b) < PRODUCE_QUEUE_MAX && !lockedAt(s, team, b)) {
       front = b;
       break;
     }

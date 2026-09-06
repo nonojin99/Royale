@@ -37,6 +37,7 @@ import {
   ownBasePositions,
   canDeployAt,
   isUnlocked,
+  hurtLocked,
   step,
   supplyOf,
   supplyCapOf,
@@ -187,19 +188,32 @@ function scene(fid, bases, bank, atk, def, seed) {
         // **위협받는 기지에서 뽑는다.** 아무 기지에서나 뽑게 했더니 기지가
         // 넷일 때 셋은 엉뚱한 데서 나와 도착도 못 했고, 4기지가 2기지보다
         // 못 막는 표가 나왔다 (전진 배치의 요점이 바로 이것이다)
+        // 위협받는 기지부터 쓰되, **맞고 있어 잠긴 기지는 건너뛴다**.
+        // 사람도 그렇게 한다 — 다만 뒤 기지에서 뽑으면 걸어와야 한다
         const mine = ownBasePositions(s, 1);
-        const near = mine
+        const order = mine
           .slice()
           .sort(
             (a, b) =>
               Math.hypot(a[0] - seen[0].x, a[1] - seen[0].y) -
               Math.hypot(b[0] - seen[0].x, b[1] - seen[0].y),
-          )[0];
+          )
+          .filter((b) => {
+            const base = s.entities.find(
+              (e) =>
+                e.kind === 'base' && e.team === 1 && e.hp > 0 &&
+                Math.abs(e.x - b[0]) < 500 && Math.abs(e.y - b[1]) < 500,
+            );
+            return base ? !hurtLocked(s, base) : true;
+          });
         let spot = null;
-        for (let k = 0; k < 8 && !spot; k++) {
-          const px = near[0] + nextInt(rng, 2400) - 1200;
-          const py = near[1] + nextInt(rng, 2400) - 1200;
-          if (canDeployAt(px, py, mine)) spot = [px, py];
+        for (const near of order) {
+          for (let k = 0; k < 8 && !spot; k++) {
+            const px = near[0] + nextInt(rng, 2400) - 1200;
+            const py = near[1] + nextInt(rng, 2400) - 1200;
+            if (canDeployAt(px, py, mine)) spot = [px, py];
+          }
+          if (spot) break;
         }
         if (spot) {
           cmds.push({ execTick: s.tick, team: 1, kind: 'unit', id: pick, x: spot[0], y: spot[1] });

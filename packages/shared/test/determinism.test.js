@@ -19,6 +19,8 @@ import {
   BASE_SITES,
   SUPPLY_MAIN,
   SUPPLY_PER_EXPANSION,
+  HURT_PRODUCE_LOCK,
+  hurtLocked,
   supplyOf,
   supplyCapOf,
   supplyUsedOf,
@@ -2927,4 +2929,60 @@ test('기지를 잃으면 천장이 내려간다 — 초과분은 그대로 남�
   const wide = supplyCapOf(s, 0);
   exp.hp = 0;
   assert.equal(supplyCapOf(s, 0), wide - SUPPLY_PER_EXPANSION, '확장을 잃었는데 천장이 그대로다');
+});
+
+/* ── 피격 생산 정지 (라운드 52) ────────────────────────────────────────── */
+
+test('맞고 있는 기지는 새 예약을 못 받는다', () => {
+  const s = createState(31, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  home.hurt = s.tick; // 방금 맞았다
+  assert.ok(hurtLocked(s, home), '잠기지 않았다');
+  assert.equal(
+    applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)),
+    false,
+    '맞고 있는데 새 예약이 걸렸다',
+  );
+});
+
+test('이미 건 예약은 맞아도 그대로 나온다 — 준비한 것은 나온다', () => {
+  const s = createState(32, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.equal(s.queue.length, 1);
+  const before = s.entities.filter((e) => e.kind === 'unit' && e.team === 0).length;
+  for (let i = 0; i < 200 && s.queue.length; i++) {
+    mainBase(s, 0).hurt = s.tick; // 내내 맞고 있다
+    step(s, []);
+  }
+  assert.equal(s.queue.length, 0, '예약이 안 구워졌다');
+  assert.ok(
+    s.entities.filter((e) => e.kind === 'unit' && e.team === 0).length > before,
+    '맞는 동안 걸어 둔 예약이 사라졌다',
+  );
+});
+
+test('잠금은 시간이 지나면 풀린다', () => {
+  const s = createState(33, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  home.hurt = s.tick;
+  assert.ok(hurtLocked(s, home));
+  for (let i = 0; i < HURT_PRODUCE_LOCK + 1; i++) step(s, []);
+  assert.ok(!hurtLocked(s, mainBase(s, 0)), '잠금이 안 풀렸다');
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+});
+
+test('침공·실험장에는 피격 잠금이 없다', () => {
+  for (const [sandbox, invasion] of [[true, false], [false, true]]) {
+    const s = createState(34, MIRROR, DEFAULT_MAP_ID, sandbox, invasion);
+    s.players[0].minerals = RICH;
+    const home = mainBase(s, 0);
+    home.hurt = s.tick;
+    assert.ok(!hurtLocked(s, home), `${sandbox ? '실험장' : '침공'}에 잠금이 걸렸다`);
+    assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  }
 });

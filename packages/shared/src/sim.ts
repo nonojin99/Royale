@@ -43,6 +43,7 @@ import {
   BUILDING_RADIUS,
   DEPLOY_RADIUS,
   DEPLOY_TICKS,
+  HURT_PRODUCE_LOCK,
   PRODUCE_QUEUE_MAX,
   PRODUCE_TICKS_PER_COST,
   SUPPLY_BY_SIZE,
@@ -176,6 +177,16 @@ export interface Entity {
    * 안개 속의 일방적 저격을 막는 장치다 — 쏘면 내 자리가 드러난다.
    */
   reveal: number;
+  /**
+   * 마지막으로 피해를 입은 틱 (-1 = 아직 안 맞음).
+   *
+   * 0을 "안 맞음"으로 두면 0틱이 실제 틱이라 첫 순간이 영영 안 잠긴다.
+   *
+   * 기지는 이 값으로 잠시 **새 예약을 못 받는다**(HURT_PRODUCE_LOCK).
+   * 이미 걸어 둔 예약은 그대로 나온다 — 미리 준비한 것은 나오고 즉석
+   * 대응만 막힌다.
+   */
+  hurt: number;
   /**
    * 정지 명령을 받았는가 (S). 1이면 기본 행동(대전=적 진영으로 전진 /
    * 침공=집결지로 행군)을 하지 않고 그 자리를 지킨다. 사거리 안의 적은
@@ -423,6 +434,7 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     orderAttack: 0,
     hold: 0,
     reveal: -1,
+    hurt: -1,
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -815,6 +827,7 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     orderAttack: 0,
     hold: 0,
     reveal: -1,
+    hurt: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -879,6 +892,12 @@ function queueLenOf(s: GameState, baseId: number): number {
 }
 
 /** 이 자리를 배치 구역에 품는 내 기지 중 가장 가까운 것 */
+/** 이 기지가 방금 맞아서 새 예약을 못 받는 상태인가 (대전 전용) */
+export function hurtLocked(s: GameState, e: Entity): boolean {
+  if (!queueOn(s) || e.kind !== 'base') return false;
+  return e.hurt >= 0 && s.tick - e.hurt < HURT_PRODUCE_LOCK;
+}
+
 function hostBase(s: GameState, team: Team, x: number, y: number): Entity | null {
   let best: Entity | null = null;
   let bestD2 = Infinity;
@@ -976,6 +995,8 @@ function produceUnit(s: GameState, cmd: Command): boolean {
   if (queueOn(s) && u.kind === 'unit') {
     if (!host) return false;
     if (queueLenOf(s, host.id) >= PRODUCE_QUEUE_MAX) return false;
+    // 맞고 있는 기지는 새 예약을 못 받는다 — 이미 건 것은 그대로 나온다
+    if (hurtLocked(s, host)) return false;
   }
   // 공급 천장 — 대전에서만. 침공은 파도를 막는 손이고 실험장은 상성을
   // 보는 화면이라, 둘 다 천장을 끼우면 못 쓰게 된다
@@ -2473,6 +2494,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       const p = s.players[e.team];
       p.workers = Math.max(0, p.workers - Math.max(0, after - before));
     }
+    // 맞은 시각을 남긴다 — 기지는 이걸로 잠시 새 예약을 못 받는다
+    if (dmg[i] > 0) e.hurt = s.tick;
     e.hp -= dmg[i];
   }
   resolveDeaths(s);
@@ -2799,6 +2822,7 @@ export function hashState(s: GameState): number {
     mix(e.orderAttack);
     mix(e.hold);
     mix(e.reveal);
+    mix(e.hurt);
     mix(e.x);
     mix(e.y);
     mix(e.hp);

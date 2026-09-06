@@ -30,6 +30,9 @@ import {
   supplyOf,
   supplyCapOf,
   supplyUsedOf,
+  hurtLocked,
+  DEPLOY_RADIUS,
+  type Entity,
   OVERTIME_TICKS,
   TICK_RATE,
   WORKER_COST,
@@ -1003,6 +1006,22 @@ function setPanel(baseId: number): void {
   fitCanvas();
 }
 
+/** 이 배치 지점을 품는 내 기지 (시뮬의 hostBase와 같은 규칙) */
+function hostBaseNear(s: GameState, x: number, y: number): Entity | null {
+  let best: Entity | null = null;
+  let bestD2 = Infinity;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== net.myTeam || e.hp <= 0 || e.deploy > 0) continue;
+    const d2 = (e.x - x) ** 2 + (e.y - y) ** 2;
+    if (d2 > DEPLOY_RADIUS * DEPLOY_RADIUS) continue;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = e;
+    }
+  }
+  return best;
+}
+
 /** 이 지점이 내 유닛의 **몸 안**인가 — 기지 위에 선 병력을 집으려는 클릭인지 가른다 */
 function ownUnitBodyAt(s: GameState, x: number, y: number): boolean {
   for (const e of s.entities) {
@@ -1068,7 +1087,9 @@ function updateBaseBar(s: GameState): void {
     const q = s.queue.filter((x) => x.base === b.id);
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = 'bchip' + (b.id === selectedBase ? ' sel' : '');
+    const locked = hurtLocked(s, b);
+    el.className =
+      'bchip' + (b.id === selectedBase ? ' sel' : '') + (locked ? ' hurt' : '');
     const slots: string[] = [];
     for (let i = 0; i < PRODUCE_QUEUE_MAX; i++) {
       const item = q[i];
@@ -1080,7 +1101,7 @@ function updateBaseBar(s: GameState): void {
     }
     const wait = q.length ? `${Math.ceil(q[0].left / TICK_RATE)}초` : '—';
     el.innerHTML =
-      `<span class="bname">${b.isMain ? '본진' : '확장'}</span>` +
+      `<span class="bname">${locked ? '⚔' : ''}${b.isMain ? '본진' : '확장'}</span>` +
       `<span class="bq">${slots.join('')}</span>` +
       `<span class="btime">${wait}</span>`;
     el.addEventListener('click', () => {
@@ -1319,6 +1340,14 @@ function onPointerDown(ev: PointerEvent): void {
   if (getUnit(selectedUnit).kind !== 'spell' && !deployable(s, x, y)) {
     warn('기지 반경(초록 원) 안에만 배치할 수 있습니다');
     return;
+  }
+  // 맞고 있는 기지는 새 예약을 못 받는다 — 조용히 거절되면 버그로 읽힌다
+  if (!s.invasion && !s.sandbox && getUnit(selectedUnit).kind === 'unit') {
+    const host = hostBaseNear(s, x, y);
+    if (host && hurtLocked(s, host)) {
+      warn('공격받는 기지는 새 생산을 받지 못합니다 — 다른 기지에서 뽑으세요');
+      return;
+    }
   }
   // 공급 천장 — 시뮬이 조용히 거절하면 "생산이 막혔다"로 읽힌다.
   // 무엇이 막았고 어떻게 푸는지(확장)까지 말해 준다
