@@ -63,7 +63,20 @@
      */
     :root { --sidebar-w: 0px; }
     @media (min-width: 900px) {
-      :root { --sidebar-w: 380px; }
+      /*
+       * 생산 화면은 **늘 떠 있지 않는다** (라운드 50).
+       *
+       * 기지를 눌러야 열리고, 닫혀 있는 동안 사이드바는 자원·행동만 남긴
+       * 폭으로 줄어든다. 맵이 48×48 정사각이라 넓은 창에서 전장은 가로에
+       * 묶여 있어서, 사이드바 172px가 그대로 전장이 된다(1280×980에서 실측
+       * 876 → 926px).
+       *
+       * 클래스는 `body`가 아니라 **`html`**에 붙는다 — `fitCanvas`가
+       * `documentElement`에서 이 변수를 읽기 때문에, body에 걸면 값이 바뀌어도
+       * 캔버스는 못 본다.
+       */
+      :root { --sidebar-w: 208px; }
+      :root.panel-open { --sidebar-w: 380px; }
       body {
         display: grid;
         grid-template-columns: 1fr var(--sidebar-w);
@@ -125,8 +138,7 @@
       right: 6px;
       font-size: 10px;
       font-weight: 700;
-      color: var(--muted);
-      opacity: .8;
+      color: #cbd5e1; /* muted(#94a3b8)는 패널 위에서 3:1 — 4.5:1을 넘기는 값 */
     }
     #over-actions {
       display: flex;
@@ -228,6 +240,12 @@
     #income { font-size: 11px; color: var(--mineral); font-weight: 700; white-space: nowrap; }
     #workers { font-size: 11px; color: var(--base); font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
     #workers.full { color: #f87171; }
+    /* 공급 — 정원과 같은 문법. 천장에 닿으면 붉어진다 */
+    #supply { font-size: 11px; color: #a78bfa; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #supply.full { color: #f87171; }
+    /* 공격받는 기지 — 새 생산을 못 받는 동안 붉게 */
+    .bchip.hurt { border-color: #f87171; }
+    .bchip.hurt .bname { color: #f87171; }
 
     /* 액션 행 */
     #actions { display: flex; gap: 6px; margin-top: 8px; }
@@ -305,6 +323,39 @@
     #tech-panel.hidden { display: none; }
     /* ── 통합 테크트리 — 연구와 생산이 한 판이다 ── */
     #palette { position: relative; display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+    /*
+     * 닫으면 **카드판만** 사라진다. 기지 줄은 남는다 —
+     * 갓 뽑은 병력이 기지 위에 서 있으면 지도에서 기지를 짚기가 어려워서,
+     * 이 줄이 "지금 어디서 뭐가 나오나"이자 다시 여는 손잡이 노릇을 한다.
+     */
+    :root:not(.panel-open) #palette { display: none; }
+    /* 208px에 세 버튼을 나란히 두면 "기지 건/설 (12)"로 잘린다 — 세로로 쌓는다 */
+    :root:not(.panel-open) #actions { flex-direction: column; }
+
+    /* ── 기지 줄 — 내 기지 전부의 큐를 한눈에, 고른 기지는 강조 ── */
+    #basebar { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+    #basebar-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      font-size: 11px; color: #cbd5e1; letter-spacing: .04em;
+    }
+    #basebar-head b { font: 700 11px/1.2 var(--font-pixel); color: var(--mineral); }
+    .bchip {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 6px; cursor: pointer;
+      background: #0f172a; border: 1px solid #1e293b;
+      font-size: 11px; color: var(--muted); text-align: left; width: 100%;
+    }
+    .bchip:hover { border-color: #334155; }
+    .bchip.sel { border-color: var(--mineral); background: #0b2b33; color: #e2e8f0; }
+    .bchip .bname { font-weight: 700; white-space: nowrap; }
+    .bchip .bq { display: flex; gap: 3px; flex: 1; }
+    .qslot {
+      width: 16px; height: 16px; border-radius: 3px;
+      background: #1e293b; border: 1px solid #334155;
+      display: grid; place-items: center; font-size: 9px; color: #94a3b8;
+    }
+    .qslot.busy { background: var(--mineral); border-color: var(--mineral); color: #06232b; font-weight: 800; }
+    .bchip .btime { font-variant-numeric: tabular-nums; white-space: nowrap; }
     #tree-links { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
     #tree-legend {
       flex-basis: 100%; font-size: 11px; color: var(--muted);
@@ -318,7 +369,7 @@
     .tnode.worker-node { --unit-color: var(--mineral); }
     .tcol { display: flex; flex-direction: column; gap: 8px; flex: 1; z-index: 1; }
     .tcol-head {
-      font-size: 10px; font-weight: 700; color: var(--muted);
+      font: 700 11px/1.2 var(--font-pixel); color: #cbd5e1;
       letter-spacing: .08em; text-align: center; margin-bottom: 2px;
     }
     .tnode {
@@ -345,12 +396,16 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 18px; font-weight: 800; color: var(--unit-color);
     }
-    .tnode .nname { font-size: 10.5px; font-weight: 700; letter-spacing: -.3px; }
+    .tnode .nname { font: 700 11px/1.2 var(--font-pixel); letter-spacing: 0; }
     .tnode .ncost {
       position: absolute; right: 4px; bottom: 4px;
       font-size: 10px; font-weight: 800;
       background: var(--mineral); color: #06232b;
       border-radius: 999px; padding: 1px 5px;
+    }
+    .tnode .ncost.loot {
+      background: transparent; color: #c4b5fd;
+      box-shadow: inset 0 0 0 1px #7c3aed; font-weight: 700;
     }
     .tnode .ukey { position: absolute; top: 3px; left: 5px; right: auto; }
     .tnode .nlock {
@@ -365,8 +420,9 @@
     .tnode .nprog i { display: block; height: 100%; width: 0; background: var(--deploy, #facc15); }
     .tnode.selected { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
     .tnode.unaffordable { opacity: .45; }
-    .tnode.locked { opacity: .5; }
-    .tnode.locked .nicon { filter: grayscale(.85) brightness(.7); }
+    .tnode.locked { opacity: .72; }
+    /* 실루엣은 남긴다 — 무슨 유닛인지 안 보이면 "다음에 뭘 열지"를 계획할 수 없다 */
+    .tnode.locked .nicon { filter: grayscale(.9) brightness(.85) contrast(.9); }
     .tnode.researchable { opacity: .95; border-style: dashed; border-color: #a78bfa; }
     .tnode.researchable .ncost { background: #a78bfa; color: #1e1533; }
     .tnode.researching { opacity: 1; border-color: #facc15; }
@@ -456,6 +512,12 @@
       box-shadow: inset 0 0 0 1.5px #38bdf8, 0 0 24px rgba(56, 189, 248, .25);
     }
     #draft.hidden { display: none; }
+    /* 드래프트 뒤 어둠막 — 없으면 뒤 카드 그리드 글자와 섞여 보인다 */
+    #draft-dim {
+      position: fixed; inset: 0; z-index: 39; background: rgba(3, 7, 16, .6);
+      display: none; pointer-events: none; /* 시각 효과일 뿐 — 드래프트 중에도 시뮬은 돈다 */
+    }
+    body:has(#draft:not(.hidden)) #draft-dim { display: block; }
     #draft-title {
       font: 700 13px/1 var(--font-pixel); color: #7dd3fc;
       letter-spacing: 1px; text-align: center; margin-bottom: 10px;
@@ -712,6 +774,7 @@
         <div id="mineral-num">8</div>
       </div>
       <span id="workers">⛏ 2/8</span>
+      <span id="supply">⛨ 0/56</span>
       <span id="income">+0.0/s</span>
     </div>
 
@@ -721,6 +784,7 @@
       <button id="btn-selectall" type="button">▣ 전군</button>
     </div>
 
+    <div id="basebar"></div>
     <div id="palette"></div>
 
     <div id="meta">
@@ -794,6 +858,7 @@
     <div id="status"></div>
   </div>
 
+  <div id="draft-dim"></div>
   <div id="draft" class="hidden">
     <div id="draft-title">파도 소탕 — 전리품을 골라라</div>
     <div id="draft-cards"></div>

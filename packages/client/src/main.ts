@@ -16,7 +16,6 @@ import {
   MAPS,
   GameState,
   MATCH_TICKS,
-  MINERAL_MAX,
   RELIC_BY_ID,
   pathExists,
   tileIndex,
@@ -25,6 +24,15 @@ import {
   waveTypeOf,
   RUN_STAGES,
   MINERAL_SCALE,
+  PRODUCE_QUEUE_MAX,
+  BASE_RADIUS,
+  radiusOf,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
+  hurtLocked,
+  DEPLOY_RADIUS,
+  type Entity,
   OVERTIME_TICKS,
   TICK_RATE,
   WORKER_COST,
@@ -89,6 +97,23 @@ let selectedFaction = new URLSearchParams(location.search).get('faction') ?? DEF
 let selectedUnit = '';
 /** 기지 건설 모드 */
 let baseMode = false;
+/**
+ * 지점을 기다리는 명령 (A 공격 이동 / Y 집결지).
+ *
+ * 기지 모드(B)와 같은 문법이다 — 키를 눌러 모드를 켜고, 다음 좌클릭이 그
+ * 지점을 뜻한다. 즉발로 만들면 커서가 캔버스 밖에 있을 때 갈 곳이 없다.
+ */
+let pendingOrder: '' | 'attack' | 'rally' = '';
+/**
+ * 지금 들여다보는 기지 (엔티티 id). -1이면 패널이 닫혀 있다.
+ *
+ * **생산처를 고르는 값이 아니다.** 어느 기지가 굽는지는 배치 좌표가 정한다
+ * (전진 배치 유지). 이 값은 "어느 기지의 큐를 강조해 볼 것인가"와
+ * "패널이 열려 있는가"만 뜻한다.
+ */
+let selectedBase = -1;
+/** 판이 시작될 때 본진 창을 한 번 열어 준다 — 그 뒤로는 플레이어가 정한다 */
+let panelInit = false;
 let cursor: [number, number] | null = null;
 /** 드래그로 고른 내 유닛 id — 순수 클라 상태(시뮬은 모른다) */
 const selectedIds = new Set<number>();
@@ -335,20 +360,25 @@ async function boot(): Promise<void> {
       sound.toggleMute();
       drawMute();
     }
-    if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
-    if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
-    if (e.key === 'u' || e.key === 'ㅕ') requestUpgrade();
-    if (e.key === 'Escape') {
-      selectedUnit = '';
-      baseMode = false;
-      selectedIds.clear();
-      refreshActionButtons();
-    }
     // Ctrl+A = 전군 선택. 브라우저의 "문서 전체 선택"을 막고 가져온다
     if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A' || e.key === 'ㅁ')) {
       e.preventDefault();
       selectAllUnits();
       return;
+    }
+    if (e.key === 'b' || e.key === 'ㅠ') toggleBaseMode();
+    if (e.key === 'w' || e.key === 'ㅈ') requestWorker();
+    if (e.key === 'u' || e.key === 'ㅕ') requestUpgrade();
+    // A 공격 이동 · S 정지 · Y 집결지. Ctrl+A(전군 선택)는 위에서 먼저 걸러진다
+    if (!e.ctrlKey && !e.metaKey && (e.key === 'a' || e.key === 'ㅁ')) beginAttackMove();
+    if (e.key === 's' || e.key === 'ㄴ') commandStop();
+    if (e.key === 'y' || e.key === 'ㅛ') beginRally();
+    if (e.key === 'Escape') {
+      selectedUnit = '';
+      baseMode = false;
+      pendingOrder = '';
+      selectedIds.clear();
+      refreshActionButtons();
     }
     // 숫자 = 생산 선택, Shift+숫자 = 그 칸 연구 시작 (라운드 9 피드백 #4).
     // Shift+숫자는 e.key가 '!','@' 등으로 변하므로 e.code로 읽는다
@@ -543,6 +573,7 @@ let selectedMap =
 /** 맵 선택 — 종족 픽커와 같은 문법의 카드 줄 */
 /** 솔로 봇 난이도 (대전 전용) */
 let selectedLevel = new URLSearchParams(location.search).get('level') ?? 'normal';
+const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
 /**
  * 게임 모드 — 모드가 맵 목록과 난이도 줄 표시를 결정한다 (라운드 26 분리).
  *
@@ -790,14 +821,6 @@ function buildPalette(): void {
   workerNode = wEl;
   cols.get(0)!.appendChild(wEl);
 
-  // 읽는 법 한 줄 — "잠긴 유닛은 어떻게 뽑나"라는 질문이 나오지 않게
-  const legend = document.createElement('div');
-  legend.id = 'tree-legend';
-  legend.innerHTML =
-    '🔒 잠김 카드는 클릭(또는 <kbd>Shift</kbd>+숫자)하면 연구 시작 — ' +
-    '연구가 끝나면 바로 생산할 수 있고, 선행 유닛을 뽑을 필요는 없습니다';
-  root.appendChild(legend);
-
   let key = 0;
   for (const node of factionOfMe().tech) {
     const u = getUnit(node.unit);
@@ -893,8 +916,10 @@ function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
     const x2 = b.left - base.left;
     const y2 = b.top + b.height / 2 - base.top;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const mx = (x1 + x2) / 2;
-    path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    // 직각 커넥터 — 열 사이 거터 안에서만 꺾인다. 곡선은 카드 위를 가로질러
+    // 국수처럼 보였다 (디자인 크리틱)
+    const mx = Math.round((x1 + x2) / 2);
+    path.setAttribute('d', `M ${x1} ${y1} H ${mx} V ${y2} H ${x2}`);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', '#334155');
     path.setAttribute('stroke-width', '2');
@@ -905,6 +930,14 @@ function drawTreeLinks(root: HTMLElement, svg: SVGSVGElement): void {
 function selectUnit(unit: string): void {
   sound.play('ui');
   baseMode = false;
+  // 숫자키로 카드를 골랐는데 패널이 닫혀 있으면 무엇을 골랐는지 안 보인다.
+  // 아직 기지를 고르지 않았다면 본진을 기본으로 연다
+  if (selectedBase < 0) {
+    const s = net.state;
+    const home = s?.entities.find((e) => e.kind === 'base' && e.team === net.myTeam && e.isMain);
+    setPanel(home ? home.id : -1);
+  }
+  pendingOrder = ''; // 카드를 고르면 다음 클릭은 배치다 — 대기 명령과 겹치지 않는다
   // 같은 카드를 다시 누르면 해제된다(토글). **조용히** 풀리면 그다음
   // 맵 클릭이 아무 일도 안 해서 "생산이 막혔다"로 읽힌다 — 말해 준다
   const off = selectedUnit === unit;
@@ -960,10 +993,124 @@ function requestUpgrade(): void {
   sound.play('tech');
 }
 
+/**
+ * 생산 패널을 연다/닫는다.
+ *
+ * 사이드바 폭이 CSS 변수로 바뀌므로 캔버스를 다시 맞춰야 한다 — 닫는 것만
+ * 으로 전장이 넓어지는 것이 이 화면 개편의 목적이다 (라운드 50).
+ */
+function setPanel(baseId: number): void {
+  selectedBase = baseId;
+  // `body`가 아니라 `html`이다 — fitCanvas가 documentElement에서 --sidebar-w를 읽는다
+  document.documentElement.classList.toggle('panel-open', baseId >= 0);
+  fitCanvas();
+}
+
+/** 이 배치 지점을 품는 내 기지 (시뮬의 hostBase와 같은 규칙) */
+function hostBaseNear(s: GameState, x: number, y: number): Entity | null {
+  let best: Entity | null = null;
+  let bestD2 = Infinity;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== net.myTeam || e.hp <= 0 || e.deploy > 0) continue;
+    const d2 = (e.x - x) ** 2 + (e.y - y) ** 2;
+    if (d2 > DEPLOY_RADIUS * DEPLOY_RADIUS) continue;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = e;
+    }
+  }
+  return best;
+}
+
+/** 이 지점이 내 유닛의 **몸 안**인가 — 기지 위에 선 병력을 집으려는 클릭인지 가른다 */
+function ownUnitBodyAt(s: GameState, x: number, y: number): boolean {
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== net.myTeam) continue;
+    const r = radiusOf(e);
+    if ((e.x - x) ** 2 + (e.y - y) ** 2 <= r * r) return true;
+  }
+  return false;
+}
+
+/** 이 자리에 있는 내 기지 — 몸집 안을 짚으면 잡힌다 */
+function baseAt(s: GameState, x: number, y: number): number {
+  const reach = BASE_RADIUS + 1500;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== net.myTeam) continue;
+    if ((e.x - x) ** 2 + (e.y - y) ** 2 <= reach * reach) return e.id;
+  }
+  return -1;
+}
+
 function toggleBaseMode(): void {
   baseMode = !baseMode;
-  if (baseMode) selectedUnit = '';
+  if (baseMode) {
+    selectedUnit = '';
+    pendingOrder = '';
+  }
   refreshActionButtons();
+}
+
+/**
+ * 기지 줄 — **내 기지 전부의 큐**를 줄지어 보이고, 고른 기지를 강조한다.
+ *
+ * 고른 기지만 보여 주는 쪽이 화면은 깨끗하지만 "지금 전체 생산이 어떻게
+ * 돌아가나"를 놓친다 (오너 결정). 기지가 넷이면 넷의 큐가 한눈에 보여야
+ * 다음에 무엇을 어디서 뽑을지 고를 수 있다.
+ *
+ * 패널을 닫아도 이 줄은 남는다 — 카드판만 접힌다.
+ */
+function updateBaseBar(s: GameState): void {
+  const root = $('basebar');
+  // 첫 판 시작 — 예전처럼 생산 창이 열린 상태로 출발한다. 닫는 것은 선택이다
+  if (!panelInit) {
+    panelInit = true;
+    const home = s.entities.find((e) => e.kind === 'base' && e.team === net.myTeam && e.isMain);
+    if (home) setPanel(home.id);
+  }
+  const mine = s.entities.filter((e) => e.kind === 'base' && e.team === net.myTeam);
+  // 고른 기지가 부서졌으면 패널을 닫는다 — 빈 창이 떠 있으면 거짓말이다
+  if (selectedBase >= 0 && !mine.some((e) => e.id === selectedBase)) setPanel(-1);
+  if (mine.length === 0) {
+    root.replaceChildren();
+    return;
+  }
+
+  const rows: HTMLElement[] = [];
+  const head = document.createElement('div');
+  head.id = 'basebar-head';
+  const total = s.queue.filter((q) => q.team === net.myTeam).length;
+  head.innerHTML = `<span>생산 거점 ${mine.length}</span><b>예약 ${total}</b>`;
+  rows.push(head);
+
+  for (const b of mine) {
+    const q = s.queue.filter((x) => x.base === b.id);
+    const el = document.createElement('button');
+    el.type = 'button';
+    const locked = hurtLocked(s, b);
+    el.className =
+      'bchip' + (b.id === selectedBase ? ' sel' : '') + (locked ? ' hurt' : '');
+    const slots: string[] = [];
+    for (let i = 0; i < PRODUCE_QUEUE_MAX; i++) {
+      const item = q[i];
+      slots.push(
+        item
+          ? `<span class="qslot busy" title="${getUnit(item.unit).name}">${getUnit(item.unit).name[0]}</span>`
+          : '<span class="qslot"></span>',
+      );
+    }
+    const wait = q.length ? `${Math.ceil(q[0].left / TICK_RATE)}초` : '—';
+    el.innerHTML =
+      `<span class="bname">${locked ? '⚔' : ''}${b.isMain ? '본진' : '확장'}</span>` +
+      `<span class="bq">${slots.join('')}</span>` +
+      `<span class="btime">${wait}</span>`;
+    el.addEventListener('click', () => {
+      setPanel(b.id);
+      sound.play('ui');
+    });
+    rows.push(el);
+  }
+  root.replaceChildren(...rows);
 }
 
 function refreshActionButtons(): void {
@@ -1058,7 +1205,9 @@ function unitTipHtml(id: string): string {
   const st = net.state;
   const viewer = st ? st.players[net.myTeam] : null;
   const node = factionOfMe().tech.find((n) => n.unit === id);
-  if (viewer && node && !isUnlocked(viewer, id)) {
+  if (viewer && node && !isUnlocked(viewer, id) && st?.invasion) {
+    rows.push(`<span class="tt-warn">🎁 파도를 소탕하고 전리품에서 골라 해금</span>`);
+  } else if (viewer && node && !isUnlocked(viewer, id)) {
     rows.push(
       node.requires
         ? `<span class="tt-warn">🔒 ${getUnit(node.requires).name} 연구 후 → 연구 ${node.cost}로 해금</span>`
@@ -1126,6 +1275,23 @@ function onPointerDown(ev: PointerEvent): void {
   const [x, y] = pointerToArena(ev);
   cursor = [x, y];
 
+  // A·Y가 기다리는 지점 클릭이 가장 먼저다 — 한 번 쓰고 모드는 꺼진다
+  if (pendingOrder === 'attack') {
+    pendingOrder = '';
+    refreshActionButtons();
+    if (selectedIds.size === 0) return;
+    net.act('attack', [...selectedIds].sort((a, b) => a - b).join(','), x, y);
+    sound.play('deploy');
+    return;
+  }
+  if (pendingOrder === 'rally') {
+    pendingOrder = '';
+    refreshActionButtons();
+    net.act('rally', '', x, y);
+    sound.play('ui');
+    return;
+  }
+
   // 카드도 기지 모드도 아니면 좌클릭은 **선택**이다 — 드래그 박스를 연다
   if (!baseMode && !selectedUnit) {
     dragBox = { x0: x, y0: y, x1: x, y1: y };
@@ -1174,6 +1340,24 @@ function onPointerDown(ev: PointerEvent): void {
   if (getUnit(selectedUnit).kind !== 'spell' && !deployable(s, x, y)) {
     warn('기지 반경(초록 원) 안에만 배치할 수 있습니다');
     return;
+  }
+  // 맞고 있는 기지는 새 예약을 못 받는다 — 조용히 거절되면 버그로 읽힌다
+  if (!s.invasion && !s.sandbox && getUnit(selectedUnit).kind === 'unit') {
+    const host = hostBaseNear(s, x, y);
+    if (host && hurtLocked(s, host)) {
+      warn('공격받는 기지는 새 생산을 받지 못합니다 — 다른 기지에서 뽑으세요');
+      return;
+    }
+  }
+  // 공급 천장 — 시뮬이 조용히 거절하면 "생산이 막혔다"로 읽힌다.
+  // 무엇이 막았고 어떻게 푸는지(확장)까지 말해 준다
+  if (!s.invasion && !s.sandbox) {
+    const need = supplyOf(getUnit(selectedUnit));
+    const scap = supplyCapOf(s, net.myTeam);
+    if (need > 0 && supplyUsedOf(s, net.myTeam) + need > scap) {
+      warn(`공급 부족 — ${getUnit(selectedUnit).name}은(는) ${need}칸 필요 · 확장하면 늘어납니다`);
+      return;
+    }
   }
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 시뮬이 거절하므로,
   // 전송 전에 같은 판정을 미리 해 즉시 알린다 (라운드 29)
@@ -1228,6 +1412,20 @@ function onPointerUp(ev: PointerEvent): void {
   if (tap && isTouch(ev) && selectedIds.size > 0 && nearestOwnUnit(s, x, y) < 0) {
     commandMove(x, y);
     return;
+  }
+
+  // 내 기지를 짚었으면 그 기지의 창을 연다 (라운드 50).
+  //
+  // 유닛과 기지 중 무엇을 짚었는지는 **몸 안에 들어왔는가**로 가른다.
+  // 처음엔 "근처에 내 유닛이 있으면 유닛이 이긴다"로 짰는데, 갓 뽑은 병력이
+  // 늘 기지 위에 서 있어서 기지를 영영 못 누르게 됐다(스모크로 확인).
+  if (tap && !ownUnitBodyAt(s, x, y)) {
+    const hit = baseAt(s, x, y);
+    if (hit >= 0) {
+      setPanel(hit === selectedBase ? -1 : hit); // 같은 기지 재클릭 = 닫기
+      sound.play('ui');
+      return;
+    }
   }
 
   if (!ev.shiftKey) selectedIds.clear();
@@ -1303,6 +1501,52 @@ function commandMove(x: number, y: number): void {
   if (selectedIds.size === 0) return;
   net.act('move', [...selectedIds].sort((a, b) => a - b).join(','), x, y);
   sound.play('deploy');
+}
+
+/**
+ * 공격 이동 (A) — 목적지로 가되 길에서 만난 적을 쫓아 싸운다.
+ *
+ * 그냥 이동(우클릭)과의 차이가 이 게임에서 특히 크다. 안개가 켜진 대전에서는
+ * 상대 병력이 어디 있는지 모른 채 보내게 되는데, 이동은 적을 지나쳐 계속
+ * 걸어가고 공격 이동은 그 자리에서 붙는다.
+ */
+function beginAttackMove(): void {
+  if (!net.state) return;
+  if (selectedIds.size === 0) {
+    flash('먼저 유닛을 고르세요 — 드래그 또는 Ctrl+A');
+    return;
+  }
+  pendingOrder = 'attack';
+  selectedUnit = '';
+  baseMode = false;
+  refreshActionButtons();
+  flash(`공격 이동 — 보낼 곳을 클릭하세요 (${selectedIds.size}기)`);
+}
+
+/** 집결지 지정 (Y) — 다음 좌클릭 자리에 깃발을 꽂는다 */
+function beginRally(): void {
+  const s = net.state;
+  if (!s || s.sandbox) return;
+  pendingOrder = 'rally';
+  selectedUnit = '';
+  baseMode = false;
+  refreshActionButtons();
+  flash(
+    s.invasion
+      ? '집결지 — 찍을 곳을 클릭하세요 (같은 자리 재지정 = 해제)'
+      : '집결지 — 새로 생산된 유닛이 이곳으로 갑니다 (같은 자리 재지정 = 해제)',
+  );
+}
+
+/** 정지 (S) — 가던 길을 버리고 그 자리를 지킨다. 사거리 안의 적은 계속 쏜다 */
+function commandStop(): void {
+  if (selectedIds.size === 0) {
+    flash('먼저 유닛을 고르세요 — 드래그 또는 Ctrl+A');
+    return;
+  }
+  net.act('stop', [...selectedIds].sort((a, b) => a - b).join(','), 0, 0);
+  sound.play('ui');
+  flash(`정지 ${selectedIds.size}기 — 제자리에서 사거리 안만 공격합니다`);
 }
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1510,9 +1754,17 @@ function updateHud(s: GameState): void {
   const me = s.players[net.myTeam];
   const foe = net.myTeam === 0 ? 1 : 0;
 
+  // 보유 상한이 없어졌으므로(라운드 50) 막대가 "상한까지 얼마"를 뜻할 수
+  // 없다. 대신 **지금 무엇을 살 수 있나**를 뜻하게 한다 — 기준은 확장비와
+  // 내가 해금한 가장 비싼 카드 중 큰 쪽이고, 꽉 차면 "뭐든 살 수 있다"다
   const minerals = me.minerals / MINERAL_SCALE;
-  $('mineral-fill').style.width = `${(me.minerals / MINERAL_MAX) * 100}%`;
-  $('mineral-num').textContent = `${Math.floor(minerals)} / ${MINERAL_MAX / MINERAL_SCALE}`;
+  let priciest = BASE_BUILD_COST;
+  for (const id of me.unlocked) {
+    const c = getUnit(id).cost * MINERAL_SCALE;
+    if (c > priciest) priciest = c;
+  }
+  $('mineral-fill').style.width = `${Math.min(100, (me.minerals / priciest) * 100)}%`;
+  $('mineral-num').textContent = String(Math.floor(minerals));
 
   // 초당 수입 = 실제로 일하는 일꾼 수 × 일꾼당 채굴 × 틱레이트
   const working = activeWorkers(s, net.myTeam);
@@ -1522,6 +1774,18 @@ function updateHud(s: GameState): void {
   // 정원이 찼다는 것은 곧 확장 신호다 — 색으로 알린다
   $('workers').textContent = `⛏ ${me.workers}/${cap}`;
   $('workers').classList.toggle('full', cap > 0 && me.workers >= cap);
+
+  // 공급 — 대전에만 있다. 천장에 닿으면 더 뽑을 수 없으니 눈에 띄어야 한다
+  const sup = $('supply');
+  if (s.invasion || s.sandbox) {
+    sup.hidden = true;
+  } else {
+    const used = supplyUsedOf(s, net.myTeam);
+    const scap = supplyCapOf(s, net.myTeam);
+    sup.hidden = false;
+    sup.textContent = `⛨ ${used}/${scap}`;
+    sup.classList.toggle('full', scap > 0 && used >= scap);
+  }
 
   $('score').textContent = `🏠 ${baseCount(s, net.myTeam)} : ${baseCount(s, foe)}`;
 
@@ -1558,15 +1822,15 @@ function updateHud(s: GameState): void {
     let heroTag = '';
     if (me.hero) {
       heroTag = me.heroRespawn > 0
-        ? ` · ⚔ 재기 ${Math.ceil(me.heroRespawn / TICK_RATE)}초`
-        : ` · ⚔ Lv${me.heroLevel}`;
+        ? ` · ⚔ 영웅 재기 ${Math.ceil(me.heroRespawn / TICK_RATE)}초`
+        : ` · ⚔ 영웅 Lv${me.heroLevel}`;
     }
     // 목표를 채운 뒤에는 파도가 더 오지 않는다 — 카운트다운도 거짓말하면 안 된다
     const noMore = !st.nest && s.wave >= goal;
     $('timer').textContent =
-      `${stageTag} · 🌊 ${s.wave}` +
+      `${stageTag} · 🌊 파도 ${s.wave}` +
       (noMore ? ' · 전장 소탕 중' : ` · 다음${nextLabel ? ' ' + nextLabel : ''} ${untilNext}초`) +
-      ` · 🧱 ${me.wallCharges}${heroTag}`;
+      ` · 🧱 방벽 ${me.wallCharges}${heroTag}`;
     updateDraft(s);
   } else if (s.sandbox) {
     const el = Math.floor(s.tick / TICK_RATE);
@@ -1574,9 +1838,25 @@ function updateHud(s: GameState): void {
   } else {
     const limit = s.overtime ? MATCH_TICKS + OVERTIME_TICKS : MATCH_TICKS;
     const left = Math.max(0, Math.ceil((limit - s.tick) / TICK_RATE));
+    // 생산이 예약제가 된 이상(라운드 50) 예약이 화면에 보여야 한다 — 안 그러면
+    // 카드를 눌러도 아무 일이 없는 것처럼 읽힌다. 가장 급한 하나의 남은 시간과
+    // 전체 예약 수를 함께 보인다
+    let queued = 0;
+    let soonest = Infinity;
+    for (const q of s.queue) {
+      if (q.team !== net.myTeam) continue;
+      queued++;
+      if (q.left < soonest) soonest = q.left;
+    }
+    const queueTag = queued
+      ? ` · 🏭 ${queued}${soonest < Infinity ? ` (${Math.ceil(soonest / TICK_RATE)}초)` : ''}`
+      : '';
     $('timer').textContent =
-      `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+      `${s.overtime ? '연장 ' : ''}${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` +
+      queueTag;
   }
+
+  updateBaseBar(s);
 
   // 통합 트리 — 해금 노드는 생산 카드, 잠긴 노드는 연구 카드로 갱신한다
   const f = factionOfMe();
@@ -1612,6 +1892,8 @@ function updateHud(s: GameState): void {
     cost.textContent = unlocked
       ? String(u.cost)
       : s.invasion ? '전리품' : `🔬${node?.cost ?? '?'}`;
+    // 전리품은 값이 아니다 — 비용 배지와 같은 색이면 "전리품 = 가격"으로 읽힌다
+    cost.classList.toggle('loot', !unlocked && !!s.invasion);
 
     if (researching && me.research && node) {
       const frac = 1 - me.research.ticks / node.researchTicks;
@@ -1658,8 +1940,13 @@ function updateHud(s: GameState): void {
     ? `연구 중: ${getUnit(me.research.unit).name} ${Math.ceil(me.research.ticks / TICK_RATE)}초`
     : '';
 
+  // 넷 계기판은 개발자 도구다 — 기본은 숨기고 ?debug=1 이거나 데스싱크가
+  // 났을 때만 보인다 (데스싱크는 조용히 넘어가면 안 되는 것이므로 예외)
   const st = net.stats();
-  $('netinfo').textContent = `${st.rttMs}ms · tick ${st.simTick}/${st.leadTick} · desync ${st.desyncs}`;
+  const showNet = DEBUG || st.desyncs > 0;
+  $('netinfo').textContent = showNet
+    ? `${st.rttMs}ms · tick ${st.simTick}/${st.leadTick} · desync ${st.desyncs}`
+    : '';
   $('netinfo').classList.toggle('bad', st.desyncs > 0);
 }
 

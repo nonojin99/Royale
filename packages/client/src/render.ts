@@ -16,14 +16,19 @@ import { art } from './art.js';
 import {
   ARENA_H,
   ARENA_W,
+  BASE_BUILD_COST,
   BASE_BUILD_TICKS,
   BASE_MINERAL_RESERVE,
   BASE_SITES,
   DEPLOY_RADIUS,
   DEPLOY_TICKS,
+  ENTITY_SCALE,
   Entity,
   GameState,
   MINERAL_PATCHES,
+  MINERAL_SCALE,
+  UNIT_RADIUS,
+  radiusOf,
   SCALE,
   SKILL_CHARGE_TICKS,
   SKILL_CAST_RANGE,
@@ -43,6 +48,7 @@ import {
   getUnit,
   inSiegeMode,
   isCloakedNow,
+  sightCirclesOf,
   isHiddenFrom,
   siteReachable,
   waveAnchorOf,
@@ -66,15 +72,25 @@ const PX_PER_TILE = 15;
  * §3.3) 이 값 하나로 소형 ~26px, 대형 ~42px가 나온다. 도형일 때의 지름 25px과
  * 소형이 맞아떨어지도록 잡은 값이다.
  */
-const UNIT_SPRITE_H = PX_PER_TILE * 2.0;
+/**
+ * 엔티티(유닛·건물·기지와 그 부속물)를 그릴 때 쓰는 타일 크기.
+ *
+ * 지형은 `PX_PER_TILE` 그대로 그리고 **엔티티만** 이 값으로 그린다 —
+ * 몸집을 키우는 것은 "맵을 확대한다"가 아니라 "말이 판보다 커진다"이기 때문이다.
+ * 시뮬의 충돌 반경도 같은 배율(constants.ts의 ENTITY_SCALE)로 커져 있어서,
+ * 보이는 크기와 차지하는 자리가 어긋나지 않는다.
+ */
+const ENT_PX = PX_PER_TILE * ENTITY_SCALE;
+
+const UNIT_SPRITE_H = ENT_PX * 2.0;
 /**
  * 미네랄 덩이와 일꾼.
  *
  * 기지 하나에 덩이 4개와 일꾼 8기가 폭 1.65타일 안에 들어간다. 유닛 규격을
  * 그대로 쓰면 서로 뭉개지므로 훨씬 작게 잡는다 — 읽히기만 하면 되는 배경 요소다.
  */
-const MINERAL_SPRITE_H = PX_PER_TILE * 0.85;
-const WORKER_SPRITE_H = PX_PER_TILE * 0.7;
+const MINERAL_SPRITE_H = ENT_PX * 0.85;
+const WORKER_SPRITE_H = ENT_PX * 0.7;
 
 /**
  * 이펙트 시트(`fx.png`)의 칸 번호 — 4행 6열을 행 우선으로 편 24칸.
@@ -146,7 +162,18 @@ const COLORS = {
   siteMarker: 0x94a3b8,
   mineral: 0x67e8f9,
   worker: 0xfde68a,
+  fog: 0x030712,
 } as const;
+
+/**
+ * 안개 짙기.
+ *
+ * 완전히 검게 덮지 않는 것이 중요하다. 지형(강·다리·언덕)은 양쪽이 처음부터
+ * 아는 공개 정보이고, 그마저 가리면 "어디로 보낼지"를 못 고른다. 가려야 하는
+ * 것은 **상대가 그 사이에 무엇을 했는가** — 병력·확장·건물이고, 그것들은
+ * 애초에 그려지지 않는다(시뮬의 시야 판정이 렌더까지 그대로 흐른다).
+ */
+const FOG_ALPHA = 0.72;
 
 export interface RenderInput {
   state: GameState;
@@ -185,6 +212,11 @@ export class Renderer {
   private readonly sprites = new Container();
   /** 체력바처럼 스프라이트 **위에** 떠야 하는 것 */
   private readonly gDecor = new Graphics();
+  /**
+   * 전장의 안개 — 시야 밖 타일을 덮는다. 엔티티 위, UI 오버레이 아래다:
+   * 시야 밖 지형은 어두워야 하지만 배치 구역 안내선까지 삼키면 안 된다.
+   */
+  private readonly gFog = new Graphics();
   private readonly gOverlay = new Graphics();
   private readonly labels = new Container();
   private readonly labelPool: Text[] = [];
@@ -219,6 +251,7 @@ export class Renderer {
       this.gEntities,
       this.sprites,
       this.gDecor,
+      this.gFog,
       this.gOverlay,
       this.labels,
     );
@@ -276,9 +309,12 @@ export class Renderer {
     }
     // 미네랄·일꾼도 스프라이트를 쓰므로 풀 반납은 첫 사용처보다 앞에서 한 번에 한다
     this.resetSprites();
+    // 라벨도 같은 이유로 첫 사용처(drawFields의 확장 지점 표기)보다 앞에서 반납한다
+    this.resetLabels();
     this.drawFields(input);
     this.drawZone(input);
     this.drawEntities(input);
+    this.drawFog(input);
     this.drawOverlay(input);
   }
 
@@ -770,7 +806,7 @@ export class Renderer {
           const [wx, wy] = worldTile(sx, sy);
           if (blockedTile(wx, wy)) continue;
           const d = noise(wx * 3 + 17, wy * 3 - 11);
-          if (d > 0.09) continue; // 9%쯤만 — 빽빽하면 전장이 안 읽힌다
+          if (d > 0.06) continue; // 6%쯤만 — 빽빽하면 전장이 안 읽힌다
           // 기지 반경 2타일은 비운다
           let nearSite = false;
           for (const site of BASE_SITES) {
@@ -793,6 +829,8 @@ export class Renderer {
           sp.height = size;
           sp.anchor.set(0.5, 0.85); // 발밑 기준
           sp.position.set(sx * t + t / 2, sy * t + t * 0.9);
+          // 소품은 유닛보다 눌려 있어야 한다 — 반투명으로 지면에 묻힌다
+          sp.alpha = 0.6;
           this.gTiles.addChild(sp);
         }
       }
@@ -864,9 +902,17 @@ export class Renderer {
     const g = this.gField;
     g.clear();
 
-    // 아직 비어 있는 지점은 옅은 표식으로 남겨 "여기 지을 수 있다"를 알린다
+    // 아직 비어 있는 지점은 옅은 표식으로 남겨 "여기 지을 수 있다"를 알린다.
+    //
+    // **안 보이는 기지는 없는 것으로 친다.** 안개에 가린 적 기지의 지점만
+    // 표식이 사라지면, 그 빈자리가 곧 "여기 뭔가 있다"는 신호가 된다 —
+    // 가려 놓고 위치를 알려주는 셈이다.
     const taken = new Set<number>();
-    for (const e of state.entities) if (e.kind === 'base') taken.add(e.siteId);
+    for (const e of state.entities) {
+      if (e.kind !== 'base') continue;
+      if (isHiddenFrom(state, myTeam, e)) continue;
+      taken.add(e.siteId);
+    }
 
     for (const site of BASE_SITES) {
       if (taken.has(site.id)) continue;
@@ -874,13 +920,29 @@ export class Renderer {
       // 이을 수 있는 지점(내 기지에서 11타일 안)은 또렷하게 — 다음 확장의
       // 후보가 한눈에 보여야 "출진해서 땅을 넓힌다"가 계획이 된다
       const ok = siteReachable(state, myTeam, site);
-      g.circle(sx, sy, this.pxLen(1200));
+      const cr = this.pxLen(1200);
+      g.circle(sx, sy, cr);
       g.stroke({ width: ok ? 2.5 : 1.5, color: COLORS.siteMarker, alpha: ok ? 0.55 : 0.15 });
+      // 빈 원은 장식과 구분이 안 된다 — 안에 기지 실루엣(지붕+몸통)을 넣어
+      // "여기 지을 수 있다"를 기호로 말한다. 이을 수 있는 곳은 값도 적는다
+      const gs = ENT_PX * 0.5;
+      const ga = ok ? 0.6 : 0.18;
+      g.moveTo(sx - gs, sy - gs * 0.1);
+      g.lineTo(sx, sy - gs * 0.85);
+      g.lineTo(sx + gs, sy - gs * 0.1);
+      g.closePath();
+      g.fill({ color: COLORS.siteMarker, alpha: ga });
+      g.rect(sx - gs * 0.7, sy - gs * 0.1, gs * 1.4, gs * 0.75);
+      g.fill({ color: COLORS.siteMarker, alpha: ga });
+      if (ok) this.label(`확장 ${BASE_BUILD_COST / MINERAL_SCALE}`, sx, sy - cr - 7, 9);
       this.drawMineralPatches(g, sx, sy, 1, ok ? 0.3 : 0.12, site.id);
     }
 
     for (const e of state.entities) {
       if (e.kind !== 'base') continue;
+      // 종족 필드는 반경 9타일짜리 색 원이다 — 가린 기지에까지 그리면
+      // 스프라이트만 숨기고 자리는 대놓고 알려주는 꼴이 된다
+      if (isHiddenFrom(state, myTeam, e)) continue;
       const faction = getFaction(state.players[e.team].faction);
       const [sx, sy] = this.toScreen(e.x, e.y, myTeam);
       const r = this.pxLen(DEPLOY_RADIUS);
@@ -911,8 +973,8 @@ export class Renderer {
     alpha: number,
     seed: number,
   ): void {
-    const gap = PX_PER_TILE * 0.55;
-    const y = sy + PX_PER_TILE * 1.15;
+    const gap = ENT_PX * 0.55;
+    const y = sy + ENT_PX * 1.15;
     const startX = sx - (gap * (MINERAL_PATCHES - 1)) / 2;
     for (let i = 0; i < count && i < MINERAL_PATCHES; i++) {
       const x = startX + gap * i;
@@ -925,6 +987,75 @@ export class Renderer {
       }
     }
   }
+
+  /**
+   * 전장의 안개 (대전 전용).
+   *
+   * 원을 파내는 마스크가 아니라 **타일 격자**로 칠한다. 이유가 둘이다.
+   * 하나, 마스크는 매 프레임 텍스처를 다시 굽지만 격자는 사각형 몇십 개다.
+   * 둘, 블록진 가장자리가 오히려 "여기부터는 모른다"를 또렷하게 말한다 —
+   * 부드러운 원은 조명처럼 보여서 정보의 경계로 안 읽힌다.
+   *
+   * 시야 반경은 시뮬(`sightCirclesOf`)에서 그대로 받아온다. 화면이 자기
+   * 숫자를 따로 가지면 "밝은데 못 때린다"가 생긴다.
+   */
+  private drawFog(input: RenderInput): void {
+    const g = this.gFog;
+    g.clear();
+    const circles = sightCirclesOf(input.state, input.myTeam);
+    if (!circles) return;
+
+    const tw = Math.round(ARENA_W / SCALE);
+    const th = Math.round(ARENA_H / SCALE);
+    if (this.fogLit.length !== tw * th) this.fogLit = new Uint8Array(tw * th);
+    const lit = this.fogLit;
+    lit.fill(0);
+
+    // 원마다 자기 사각형 안만 훑는다 — 전 타일 × 전 유닛은 프레임을 잡아먹는다
+    for (const c of circles) {
+      const r2 = c.r * c.r;
+      const tx0 = Math.max(0, Math.floor((c.x - c.r) / SCALE));
+      const tx1 = Math.min(tw - 1, Math.floor((c.x + c.r) / SCALE));
+      const ty0 = Math.max(0, Math.floor((c.y - c.r) / SCALE));
+      const ty1 = Math.min(th - 1, Math.floor((c.y + c.r) / SCALE));
+      for (let ty = ty0; ty <= ty1; ty++) {
+        const dy = c.y - (ty * SCALE + SCALE / 2);
+        const rem = r2 - dy * dy;
+        if (rem < 0) continue;
+        const row = ty * tw;
+        for (let tx = tx0; tx <= tx1; tx++) {
+          const dx = c.x - (tx * SCALE + SCALE / 2);
+          if (dx * dx <= rem) lit[row + tx] = 1;
+        }
+      }
+    }
+
+    // 어두운 타일을 가로로 이어 한 사각형으로 — 2304개를 그대로 그리지 않는다
+    const t = PX_PER_TILE;
+    const flip = input.myTeam !== 0;
+    for (let ty = 0; ty < th; ty++) {
+      const row = ty * tw;
+      const sy = flip ? th - 1 - ty : ty;
+      let run = -1;
+      for (let tx = 0; tx <= tw; tx++) {
+        const dark = tx < tw && lit[row + tx] === 0;
+        if (dark) {
+          if (run < 0) run = tx;
+          continue;
+        }
+        if (run >= 0) {
+          // 팀 1은 화면이 180° 뒤집혀 있으므로 열 구간도 뒤집어 놓는다
+          const sxTile = flip ? tw - tx : run;
+          g.rect(sxTile * t, sy * t, (tx - run) * t, t);
+          run = -1;
+        }
+      }
+    }
+    g.fill({ color: COLORS.fog, alpha: FOG_ALPHA });
+  }
+
+  /** 안개 판정용 타일 버퍼 — 프레임마다 새로 만들지 않는다 */
+  private fogLit = new Uint8Array(0);
 
   /** 배치 가능 구역 (카드를 고른 동안만) */
   private drawZone(input: RenderInput): void {
@@ -946,7 +1077,6 @@ export class Renderer {
     const d = this.gDecor;
     g.clear();
     d.clear();
-    this.resetLabels();
     this.pruneAnimState(state);
     this.drawDecals(g); // 유닛보다 먼저 = 유닛 아래 — 데칼은 땅의 일부다
 
@@ -979,7 +1109,7 @@ export class Renderer {
       if (e.kind === 'building' && u.mine) {
         // 지뢰 — 묻힌 것은 작다. 내 것만 보이므로(숨은 적 지뢰는 없다)
         // 위치를 알려 주는 표식이면 충분하다
-        const mr = PX_PER_TILE * 0.22;
+        const mr = ENT_PX * 0.22;
         g.ellipse(sx, sy + mr * 0.4, mr * 1.1, mr * 0.5);
         g.fill({ color: 0x000000, alpha: 0.25 });
         g.circle(sx, sy, mr);
@@ -998,12 +1128,12 @@ export class Renderer {
         // 둥지는 런의 결말이다 — 본진(2.4타일)보다 커야 "저걸 부순다"가
         // 목표로 읽힌다. 다른 건물은 그대로 (라운드 46)
         const boss = e.unit === 'nest';
-        const size = PX_PER_TILE * (boss ? 2.6 : 1.5);
+        const size = ENT_PX * (boss ? 2.6 : 1.5);
         if (tex) {
           g.ellipse(sx, sy + size * 0.12, size * 0.52, size * 0.22);
-          g.fill({ color: 0x000000, alpha: 0.22 });
+          g.fill({ color: 0x000000, alpha: 0.32 });
           this.groundRing(g, sx, sy, size * 0.5, teamColor);
-          this.applyHit(this.place(tex, sx, sy, PX_PER_TILE * (boss ? 4.0 : 2.0), 0.85), hit);
+          this.applyHit(this.place(tex, sx, sy, ENT_PX * (boss ? 4.0 : 2.0), 0.85), hit);
         } else {
           g.rect(sx - size / 2, sy - size / 2, size, size);
           g.fill(u.color);
@@ -1022,8 +1152,16 @@ export class Renderer {
       }
 
       // 유닛. 공중 유닛은 그림자를 지면에 남기고 본체를 위로 띄운다.
-      const r = PX_PER_TILE * 0.42;
-      const lift = e.flying ? PX_PER_TILE * 0.55 : 0;
+      //
+      // 반경은 **시뮬의 충돌 반경 그대로**다 (radiusOf). 예전에는 화면이
+      // 0.42타일, 시뮬이 0.4타일이라 대충 맞았지만 유닛마다 몸집이 갈린
+      // 지금은 한쪽만 보면 "겹쳐 보이는데 안 겹친다"가 생긴다
+      const r = this.pxLen(radiusOf(e));
+      const sizeK = radiusOf(e) / UNIT_RADIUS; // 소형 .75 · 중형 1 · 대형 1.375
+      const lift = e.flying ? ENT_PX * 0.55 : 0;
+      // 피격 밀림은 **몸에만** 얹는다. 아래에서 그림자와 발밑 링은 sx, sy를
+      // 그대로 쓰므로 발이 땅에 남고 상체만 뒤로 밀린 것으로 읽힌다
+      const [kx, ky] = this.knockOf(e.id);
       const by = sy - lift;
 
       if (e.flying) {
@@ -1035,8 +1173,8 @@ export class Renderer {
         // 접지 그림자 — 이게 없으면 스프라이트가 바닥에 붙은 스티커로 보인다.
         // 공중 유닛의 "그림자가 떨어져 있음"도 지상 그림자가 있어야 대비가 산다
         if (!e.flying) {
-          g.ellipse(sx, sy + r * 0.18, r * 0.95, r * 0.4);
-          g.fill({ color: 0x000000, alpha: 0.22 });
+          g.ellipse(sx, sy + r * 0.18, r * 1.05, r * 0.45);
+          g.fill({ color: 0x000000, alpha: 0.32 });
         }
         // 팀 구분은 발밑 링으로 한다 — 이미지 위에 외곽선을 두르면 그림을 가린다
         if (!e.flying) this.groundRing(g, sx, sy, r, teamColor);
@@ -1058,7 +1196,7 @@ export class Renderer {
             entryAlpha = 1 - dep * 0.85; // 워프 — 점점 실체가 된다
             entryScale = 1 + 0.35 * dep;
           } else {
-            entryDy = -PX_PER_TILE * 3.2 * dep * dep; // 낙하 — 마지막에 빨라진다
+            entryDy = -ENT_PX * 3.2 * dep * dep; // 낙하 — 마지막에 빨라진다
           }
         }
         // 영웅만 코드가 덩치를 준다 (라운드 41).
@@ -1068,9 +1206,9 @@ export class Renderer {
         // 같은 키가 된다. 전장에 하나뿐인 유닛은 실루엣만으로 구분돼야 한다
         const sp2 = this.place(
           tex,
-          sx,
-          by - bob + entryDy,
-          UNIT_SPRITE_H * (u.hero ? 1.3 : 1),
+          sx + kx,
+          by - bob + entryDy + ky,
+          UNIT_SPRITE_H * sizeK * (u.hero ? 1.3 : 1),
           0.88,
           this.facingOf(e, p, myTeam),
         );
@@ -1094,12 +1232,12 @@ export class Renderer {
         if (isCloakedNow(state, e)) sp2.alpha *= 0.5;
         this.applyHit(sp2, hit);
       } else {
-        g.circle(sx, by, r);
+        g.circle(sx + kx, by + ky, r);
         g.fill(u.color);
-        g.circle(sx, by, r);
+        g.circle(sx + kx, by + ky, r);
         g.stroke({ width: 2.5, color: teamColor });
         if (hit > 0) {
-          g.circle(sx, by, r);
+          g.circle(sx + kx, by + ky, r);
           g.fill({ color: 0xffffff, alpha: 0.5 * hit });
         }
       }
@@ -1144,7 +1282,7 @@ export class Renderer {
       // 걸렸다 — 영웅(1.3배)에서 가슴에 게이지가 얹혀 오너가 잡았다
       // (라운드 41). 이제 **그린 스프라이트의 실제 윗변**에서 잰다:
       // 앵커가 0.88이므로 윗변은 발밑에서 높이×0.88 위다
-      const spriteH = tex ? UNIT_SPRITE_H * (u.hero ? 1.3 : 1) : r * 2;
+      const spriteH = tex ? UNIT_SPRITE_H * sizeK * (u.hero ? 1.3 : 1) : r * 2;
       const barY = by - spriteH * 0.88 - 3;
       this.hpBar(d, sx, barY, PX_PER_TILE * 1.1, e);
       // 충전 스킬 게이지 — 청록 바. 만땅이면 밝게 빛나 "곧 쏜다"를 알린다
@@ -1240,6 +1378,26 @@ export class Renderer {
     return (until - this.nowMs) / 90;
   }
 
+  /**
+   * 이 유닛의 지금 밀림 오프셋 (px). 140ms에 걸쳐 빠르게 나갔다 되돌아온다.
+   *
+   * 되돌아오는 것이 중요하다 — 밀린 채로 두면 스프라이트가 제 좌표에서
+   * 영영 어긋나 보인다. 나갔다 돌아오는 반동이라야 "맞았다"로 읽힌다.
+   */
+  private knockOf(id: number): [number, number] {
+    const k = this.knocks.get(id);
+    if (!k) return [0, 0];
+    const t = (this.nowMs - k.startMs) / 140;
+    if (t >= 1) {
+      this.knocks.delete(id);
+      return [0, 0];
+    }
+    // 0→1→0 (앞의 1/3에 나가고 나머지에 돌아온다)
+    const e = t < 0.33 ? t / 0.33 : 1 - (t - 0.33) / 0.67;
+    const amp = ENT_PX * 0.16 * e;
+    return [k.dx * amp, k.dy * amp];
+  }
+
   /** 플래시 세기를 스프라이트에 적용 — 붉은 틴트 + 6% 스케일 범프 */
   private applyHit(sp: Sprite, f: number): void {
     if (f <= 0) return;
@@ -1266,7 +1424,7 @@ export class Renderer {
     state: GameState,
   ): void {
     const faction = getFaction(state.players[e.team].faction);
-    const size = e.isMain ? PX_PER_TILE * 2.4 : PX_PER_TILE * 1.8;
+    const size = e.isMain ? ENT_PX * 2.4 : ENT_PX * 1.8;
     const building = e.deploy > 0;
     const tex = art.base(state.players[e.team].faction, e.isMain);
     const hit = this.flashOf(e);
@@ -1360,8 +1518,8 @@ export class Renderer {
   private drawWorkers(g: Graphics, count: number, sx: number, sy: number): void {
     if (count <= 0) return;
     // 덩이 하나에 일꾼 둘이 붙으므로, 덩이 열에 맞춰 두 줄로 늘어놓는다
-    const gap = PX_PER_TILE * 0.55;
-    const patchY = sy + PX_PER_TILE * 1.15;
+    const gap = ENT_PX * 0.55;
+    const patchY = sy + ENT_PX * 1.15;
     const startX = sx - (gap * (MINERAL_PATCHES - 1)) / 2;
 
     for (let i = 0; i < count && i < WORKER_CAP_PER_BASE; i++) {
@@ -1545,6 +1703,21 @@ export class Renderer {
     color: number;
     startMs: number;
   }> = [];
+  /**
+   * 총구 섬광 — 쏘는 쪽에 90ms 짧게 터진다.
+   *
+   * 트레이서는 **맞는 쪽**에서만 읽힌다. 대군 교전에서 "누가 쐈나"가 안
+   * 보이는 이유가 그것이다: 사선은 있는데 시작점에 아무 일도 안 일어난다.
+   */
+  private readonly muzzles: Array<{ x: number; y: number; color: number; r: number; startMs: number }> = [];
+  /**
+   * 피격 밀림 — 맞은 유닛의 **몸만** 잠깐 뒤로 밀린다 (140ms).
+   *
+   * 그림자와 발밑 링은 지면에 남는다. 몸이 밀리고 발이 남아야 "맞고
+   * 버텼다"로 읽히지, 통째로 움직이면 그냥 순간이동이다. 렌더 전용이라
+   * 시뮬 좌표는 건드리지 않는다.
+   */
+  private readonly knocks = new Map<number, { dx: number; dy: number; startMs: number }>();
   /** 죽음 데칼 — 지상 유닛이 쓰러진 자리의 그을음. 8초에 걸쳐 스며 사라진다 */
   private readonly decals: Array<{ sx: number; sy: number; startMs: number }> = [];
   /**
@@ -1623,7 +1796,7 @@ export class Renderer {
         }
         const [tx, ty] = this.toScreen(bx, by2, myTeam);
         const faction = state.players[e.team].faction;
-        this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], tx, ty, 650, PX_PER_TILE * 3.2);
+        this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], tx, ty, 650, ENT_PX * 3.2);
         this.onFx?.('impact', faction, tx);
       }
       const prev = this.fxPrevCd.get(e.id);
@@ -1633,8 +1806,8 @@ export class Renderer {
       if (!victim) continue;
       const faction = state.players[e.team].faction;
       const [sx, sy] = this.toScreen(victim.x, victim.y, myTeam);
-      const lift = victim.flying ? PX_PER_TILE * 0.55 : 0;
-      this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, PX_PER_TILE * 1.1);
+      const lift = victim.flying ? ENT_PX * 0.55 : 0;
+      this.pushFx(FX_IMPACT[faction], FX_COLOR[faction], sx, sy - lift, 300, ENT_PX * 1.1);
       this.onFx?.('impact', faction, sx);
 
       // 곡사 — 광역이 크거나 사거리가 긴 지상 유닛은 포물선으로 던진다
@@ -1645,7 +1818,7 @@ export class Renderer {
         if (this.arcs.length >= 30) this.arcs.shift();
         this.arcs.push({
           ax: ax2,
-          ay: ay2 - PX_PER_TILE * 0.35,
+          ay: ay2 - ENT_PX * 0.35,
           bx: sx,
           by: sy - lift,
           color: FX_COLOR[faction] ?? 0xffffff,
@@ -1655,10 +1828,23 @@ export class Renderer {
       // 원거리 사격은 히트스캔 트레이서 한 줄 — 데미지가 즉시 들어가는
       // 시뮬과 어긋나지 않는 유일한 '투사체'다 (비행 투사체는 거짓말이 된다)
       const [ax, ay0] = this.toScreen(e.x, e.y, myTeam);
-      const ay = ay0 - (e.flying ? PX_PER_TILE * 0.55 : 0) - PX_PER_TILE * 0.3;
+      const ay = ay0 - (e.flying ? ENT_PX * 0.55 : 0) - ENT_PX * 0.3;
       const ddx = sx - ax;
       const ddy = sy - lift - ay;
-      if (!lobs && ddx * ddx + ddy * ddy > PX_PER_TILE * 1.8 * (PX_PER_TILE * 1.8)) {
+
+      // 총구 섬광 — 사선의 시작점을 표시한다
+      if (this.muzzles.length >= 40) this.muzzles.shift();
+      this.muzzles.push({
+        x: ax,
+        y: ay,
+        color: FX_COLOR[faction] ?? 0xffffff,
+        r: ENT_PX * (lobs ? 0.3 : 0.22),
+        startMs: this.nowMs,
+      });
+      // 피격 밀림 — 사선 방향으로 맞은 몸을 민다
+      const kd = Math.hypot(ddx, ddy) || 1;
+      this.knocks.set(victim.id, { dx: ddx / kd, dy: ddy / kd, startMs: this.nowMs });
+      if (!lobs && ddx * ddx + ddy * ddy > ENT_PX * 1.8 * (ENT_PX * 1.8)) {
         if (this.tracers.length >= 40) this.tracers.shift();
         this.tracers.push({
           ax,
@@ -1683,7 +1869,7 @@ export class Renderer {
         seen.sx,
         seen.sy,
         550,
-        PX_PER_TILE * 1.3,
+        ENT_PX * 1.3,
       );
       this.onFx?.('death', seen.faction, seen.sx);
       // 히트스톱 — 4코스트 이상 대형 유닛·구조물의 죽음만. 소형 유닛까지
@@ -1764,12 +1950,19 @@ export class Renderer {
         continue;
       }
       // 살짝 번지며 옅어진다 — 처음부터 흐릿해야 시체가 아니라 흔적으로 읽힌다
-      const r = PX_PER_TILE * (0.45 + 0.15 * t);
+      const r = ENT_PX * (0.45 + 0.15 * t);
       g.ellipse(dc.sx, dc.sy + 2, r, r * 0.45);
       g.fill({ color: 0x120d08, alpha: 0.26 * (1 - t) });
     }
   }
 
+  /**
+   * 타격 이펙트는 **엔티티 배율(ENT_PX)** 을 쓴다.
+   *
+   * 지형 타일(PX_PER_TILE)을 기준으로 잡으면 유닛만 커졌을 때 착탄이
+   * 유닛 발치의 점이 되고, 공중 유닛은 본체와 착탄 높이가 어긋난다.
+   * 이펙트는 지면이 아니라 **맞은 것**에 붙는다.
+   */
   private drawFx(d: Graphics): void {
     // 곡사 궤적 — 포물선을 따라 나아가는 포탄과 옅은 잔상
     for (let i = this.arcs.length - 1; i >= 0; i--) {
@@ -1779,7 +1972,7 @@ export class Renderer {
         this.arcs.splice(i, 1);
         continue;
       }
-      const lift = PX_PER_TILE * 2.2;
+      const lift = ENT_PX * 2.2;
       const at = (k: number): [number, number] => [
         a.ax + (a.bx - a.ax) * k,
         a.ay + (a.by - a.ay) * k - lift * 4 * k * (1 - k), // 포물선
@@ -1823,6 +2016,20 @@ export class Renderer {
       d.moveTo(x0, y0);
       d.lineTo(tr.bx, tr.by);
       d.stroke({ width: 1.5, color: tr.color, alpha: 0.65 * (1 - t) });
+    }
+
+    // 총구 섬광 — 짧고 밝게, 링이 아니라 채운 원이다 (착탄과 구분된다)
+    for (let i = this.muzzles.length - 1; i >= 0; i--) {
+      const m = this.muzzles[i];
+      const t = (this.nowMs - m.startMs) / 90;
+      if (t >= 1) {
+        this.muzzles.splice(i, 1);
+        continue;
+      }
+      d.circle(m.x, m.y, m.r * (1 + 0.8 * t));
+      d.fill({ color: m.color, alpha: 0.85 * (1 - t) });
+      d.circle(m.x, m.y, m.r * (0.45 + 0.4 * t));
+      d.fill({ color: 0xffffff, alpha: 0.7 * (1 - t) });
     }
 
     for (let i = this.fxList.length - 1; i >= 0; i--) {
@@ -1883,6 +2090,7 @@ export class Renderer {
     for (const id of this.facing.keys()) if (!live.has(id)) this.facing.delete(id);
     for (const id of this.lastHp.keys()) if (!live.has(id)) this.lastHp.delete(id);
     for (const id of this.flashUntil.keys()) if (!live.has(id)) this.flashUntil.delete(id);
+    for (const id of this.knocks.keys()) if (!live.has(id)) this.knocks.delete(id);
   }
 
   /** 건설·배치 진행 게이지 — 노란 바가 차오른다 */
@@ -1994,15 +2202,25 @@ export class Renderer {
     if (left > 30) return; // 30초 넘게 남았으면 아직 소음이다
     const urgency = left <= 0 ? 1 : 1 - left / 30;
     const pulse = 1 + 0.14 * Math.sin(this.nowMs / (420 - 260 * urgency));
+    const nextAnchor = waveAnchorOf(s, s.wave + 1);
+    const weight = 0.9 + 1.5 * urgency;
     this.waveArrow(
       g,
       input,
-      waveAnchorOf(s, s.wave + 1),
+      nextAnchor,
       home,
       waveTypeOf(s.wave + 1) === 'boss' ? 0xa855f7 : 0xef4444,
       (0.35 + 0.5 * urgency) * pulse,
-      0.9 + 1.5 * urgency,
+      weight,
     );
+    // 화살표만으로는 "언제"가 없다 — 상단 바의 카운트다운을 진입로에 붙여
+    // 방향과 시간이 한 자리에서 읽히게 한다. 가장자리 앵커는 화면 안으로 민다
+    const [ax, ay] = this.toScreen(nextAnchor[0], nextAnchor[1], input.myTeam);
+    const ring = PX_PER_TILE * 1.1 * weight;
+    const lx = Math.min(VIEW_W - 24, Math.max(24, ax));
+    const ly = Math.min(VIEW_H - 8, Math.max(8, ay - ring - 8));
+    const boss = waveTypeOf(s.wave + 1) === 'boss';
+    this.label(`${boss ? '보스' : '침공'} ${Math.max(0, Math.ceil(left))}초`, lx, ly, 10);
   }
 
   /** 앵커에서 본진 쪽으로 굵은 화살표 하나. `weight`는 굵기 배율 */

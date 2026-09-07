@@ -41,15 +41,26 @@ import {
   BASE_MINERAL_RESERVE,
   BASE_RADIUS,
   BUILDING_RADIUS,
+  DEPLOY_RADIUS,
   DEPLOY_TICKS,
+  HURT_PRODUCE_LOCK,
+  PRODUCE_QUEUE_MAX,
+  PRODUCE_TICKS_PER_COST,
+  SUPPLY_BY_SIZE,
+  SUPPLY_OVERRIDE,
+  SUPPLY_MAIN,
+  SUPPLY_PER_EXPANSION,
+  ENTITY_SCALE,
   HIGH_GROUND_DAMAGE_PCT,
   MATCH_TICKS,
-  MINERAL_MAX,
+  MINERAL_SANDBOX,
   MINERAL_SCALE,
   MINERAL_START,
   OVERTIME_TICKS,
   START_WORKERS,
   UNIT_RADIUS,
+  UNIT_RADIUS_LARGE,
+  UNIT_RADIUS_SMALL,
   UPGRADE_COSTS,
   UPGRADE_DAMAGE_PCT,
   UPGRADE_MAX,
@@ -71,6 +82,11 @@ import {
   STAGE_WALL_GRANT,
   StageDef,
   SKILL_CHARGE_TICKS,
+  HIGH_GROUND_SIGHT_PCT,
+  REVEAL_TICKS,
+  SIGHT_BASE,
+  SIGHT_MARGIN,
+  SIGHT_UNIT,
   SKILL_CAST_RANGE,
   INVASION_FIRST_WAVE_TICKS,
   INVASION_WAVE_TICKS,
@@ -151,6 +167,33 @@ export interface Entity {
    */
   orderX: number;
   orderY: number;
+  /**
+   * 공격 이동인가 (A). 0이면 그냥 이동, 1이면 가는 길에 만난 적을 **쫓아가
+   * 싸운다** — 표적이 죽으면 다시 목적지로 향한다.
+   */
+  orderAttack: number;
+  /**
+   * 이 틱까지는 적에게 드러난다 (틱). 공격하거나 맞으면 갱신된다.
+   * 안개 속의 일방적 저격을 막는 장치다 — 쏘면 내 자리가 드러난다.
+   */
+  reveal: number;
+  /**
+   * 마지막으로 피해를 입은 틱 (-1 = 아직 안 맞음).
+   *
+   * 0을 "안 맞음"으로 두면 0틱이 실제 틱이라 첫 순간이 영영 안 잠긴다.
+   *
+   * 기지는 이 값으로 잠시 **새 예약을 못 받는다**(HURT_PRODUCE_LOCK).
+   * 이미 걸어 둔 예약은 그대로 나온다 — 미리 준비한 것은 나오고 즉석
+   * 대응만 막힌다.
+   */
+  hurt: number;
+  /**
+   * 정지 명령을 받았는가 (S). 1이면 기본 행동(대전=적 진영으로 전진 /
+   * 침공=집결지로 행군)을 하지 않고 그 자리를 지킨다. 사거리 안의 적은
+   * 그대로 쏜다 — 정지는 "가지 마라"이지 "싸우지 마라"가 아니다.
+   * 새 이동·공격 명령이 오면 풀린다.
+   */
+  hold: number;
 
   /* ── 기지 전용 ── */
   /** 기지가 선 지점 id. 기지가 아니면 -1 */
@@ -196,6 +239,20 @@ export interface PlayerState {
    * null이면 제자리 대기. 우클릭으로 옮긴다 — 수비 모드의 유일한 컨트롤.
    */
   rally: { x: number; y: number } | null;
+  /**
+   * 정찰한 기지 지점 — 지점 id를 비트로 세운 마스크 (대전 안개 전용).
+   *
+   * **기지는 움직이지 않는다.** 그래서 한 번 본 자리는 계속 아는 것이
+   * 맞고, 그 성질 덕에 기억을 정수 하나로 적을 수 있다 — 해시도 스냅샷도
+   * 그대로다(Set이었으면 JSON 왕복에서 깨진다).
+   *
+   * 이게 없으면 본진을 가린 순간 게임에 목표가 사라진다: 병력이 지점을
+   * 훑다 적 본진을 찾아도 시야를 벗어나면 곧바로 잊어버려, 찾은 것이
+   * 아무 소용이 없다 (실측: 경기가 5분 상한까지 안 끝났다).
+   *
+   * 정찰에 값이 붙는 것도 여기다 — 먼저 찾은 쪽이 먼저 노린다.
+   */
+  scouted: number;
   /** 해금된 유닛 id. **항상 오름차순 정렬** (해시 결정론) */
   unlocked: string[];
   /** 연구 중인 유닛과 남은 틱. 동시에 하나만 */
@@ -206,12 +263,42 @@ export interface PlayerState {
   upgrading: { ticks: number } | null;
 }
 
+/**
+ * 생산 예약 한 건.
+ *
+ * `x, y`를 들고 다니는 것이 핵심이다 — **전진 배치를 유지하기 위해서**다.
+ * 예약할 때 찍은 자리에 그대로 나온다. 큐가 위치를 잊으면 유닛이 기지에서만
+ * 나오게 되고, 그러면 "배치 구역 앞쪽 끝에 뽑아 한 박자 빠르게 붙인다"는
+ * 전술이 사라진다.
+ */
+export interface ProduceOrder {
+  /** 이 예약을 굽는 기지의 엔티티 id */
+  base: number;
+  team: Team;
+  unit: string;
+  x: number;
+  y: number;
+  /** 남은 틱 */
+  left: number;
+}
+
 export interface GameState {
   /** 이 경기의 맵 id — step()이 매 틱 활성 맵을 이걸로 맞춘다 */
   mapId: string;
   tick: number;
   rng: Rng;
   nextId: number;
+  /**
+   * 생산 예약 — **대전 전용** (라운드 50).
+   *
+   * 기지마다 큐 하나. 앞에서부터 하나씩만 진행되므로 기지 수가 곧
+   * 돈→병력 전환 속도가 된다. 배열 하나로 두는 이유는 스냅샷·해시가
+   * 그대로 살기 때문이다 — 엔티티 안에 배열을 넣으면 둘 다 복잡해진다.
+   *
+   * 삽입 순서가 곧 처리 순서라 정렬이 필요 없다(커맨드가 이미 정규화된
+   * 순서로 들어온다).
+   */
+  queue: ProduceOrder[];
   /** 항상 id 오름차순 정렬 유지 */
   entities: Entity[];
   players: [PlayerState, PlayerState];
@@ -271,7 +358,17 @@ export interface GameState {
 }
 
 /** 커맨드 종류 */
-export type CommandKind = 'unit' | 'base' | 'tech' | 'worker' | 'upgrade' | 'relic' | 'rally' | 'move';
+export type CommandKind =
+  | 'unit'
+  | 'base'
+  | 'tech'
+  | 'worker'
+  | 'upgrade'
+  | 'relic'
+  | 'rally'
+  | 'move'
+  | 'attack'
+  | 'stop';
 
 /**
  * 플레이어 입력. 세 종류를 한 모양에 담는다 —
@@ -302,6 +399,7 @@ function makePlayer(factionId: string): PlayerState {
     heroLevel: 0,
     heroRespawn: 0,
     rally: null,
+    scouted: 0,
     unlocked: startingUnlocks(f),
     research: null,
     upgrade: 0,
@@ -333,6 +431,10 @@ function makeBase(s: GameState, team: Team, site: BaseSite, ready: boolean): Ent
     haste: 0,
     orderX: -1,
     orderY: -1,
+    orderAttack: 0,
+    hold: 0,
+    reveal: -1,
+    hurt: -1,
     siteId: site.id,
     isMain,
     reserve: BASE_MINERAL_RESERVE,
@@ -352,6 +454,7 @@ export function createState(
     tick: 0,
     rng: createRng(seed),
     nextId: 1,
+    queue: [],
     entities: [],
     players: [makePlayer(factions[0]), makePlayer(factions[1])],
     overtime: false,
@@ -379,7 +482,7 @@ export function createState(
         if (!p.unlocked.includes(id)) p.unlocked.push(id);
       }
       p.unlocked.sort();
-      p.minerals = MINERAL_MAX;
+      p.minerals = MINERAL_SANDBOX;
     }
   }
 
@@ -400,9 +503,31 @@ export function createState(
 
 /* ── 조회 헬퍼 ─────────────────────────────────────────────────────────── */
 
+/**
+ * 공격이 닿는 거리 — **몸통 끝에서 몸통 끝까지**로 잰다.
+ *
+ * 예전에는 `사거리 + 표적 반경`이었다. 전 유닛 반경이 400이던 시절에는
+ * 그래도 됐지만, 몸집을 키우자(ENTITY_SCALE) 근접 유닛이 **표적에 영영
+ * 닿지 못하게** 됐다: 밀어내기는 두 반경의 합만큼 떼어 놓는데 사거리 계산은
+ * 한쪽 반경만 더했기 때문이다. 거대포식자(반경 1100)와 소총병(600)은
+ * 1700 떨어져 서는데 포식자의 닿는 거리는 900+600=1500이었다 — 90초를
+ * 마주 보고도 서로 한 대도 못 때렸다 (결투 하네스 실측).
+ *
+ * 내 반경까지 더하면 `닿는 거리 = 사거리 + rA + rB ≥ 밀어내기 거리`가
+ * 항상 성립한다. 사거리 0이 아닌 이상 근접은 반드시 닿는다.
+ */
+export function reachOf(e: Entity, target: Entity, range: number): number {
+  return range + radiusOf(e) + radiusOf(target);
+}
+
 export function radiusOf(e: Entity): number {
   if (e.kind === 'base') return BASE_RADIUS;
-  return e.kind === 'unit' ? UNIT_RADIUS : BUILDING_RADIUS;
+  if (e.kind !== 'unit') return BUILDING_RADIUS;
+  // 몸집은 유닛 테이블이 정한다 — 큰 놈이 큰 자리를 차지해야 대열이 읽힌다
+  const size = getUnit(e.unit).size;
+  if (size === 'small') return UNIT_RADIUS_SMALL;
+  if (size === 'large') return UNIT_RADIUS_LARGE;
+  return UNIT_RADIUS;
 }
 
 function statsOf(
@@ -479,6 +604,50 @@ export function workerCapacity(s: GameState, team: Team): number {
   return cap;
 }
 
+/**
+ * 이 유닛 카드 한 장이 먹는 공급 칸 — 몸집 × 마리 수.
+ *
+ * 건물·주문은 0이다. 건물은 수명이 있어 스스로 사라지고, 주문은 남지 않는다 —
+ * 천장이 묶어야 하는 것은 **필드에 남는 병력**이다.
+ */
+/** 몸 하나가 먹는 칸 — 표에 따로 적힌 값이 있으면 그것, 없으면 몸집 등급 */
+function supplyPerBody(u: UnitDef): number {
+  return SUPPLY_OVERRIDE[u.id] ?? SUPPLY_BY_SIZE[u.size ?? 'medium'];
+}
+
+export function supplyOf(u: UnitDef): number {
+  if (u.kind !== 'unit') return 0;
+  return supplyPerBody(u) * u.count;
+}
+
+/** 팀의 공급 천장 — 다 지어진 살아 있는 기지 × 기지당 칸 */
+export function supplyCapOf(s: GameState, team: Team): number {
+  let cap = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0 || e.deploy !== 0) continue;
+    cap += e.isMain ? SUPPLY_MAIN : SUPPLY_PER_EXPANSION;
+  }
+  return cap;
+}
+
+/**
+ * 지금 물고 있는 칸 — 필드의 병력 **더하기 큐에 걸린 예약**.
+ *
+ * 예약을 빼고 세면 천장 앞에서 큐를 가득 채워 두는 것으로 천장을 넘길 수
+ * 있다. 예약은 이미 값을 치른 병력이므로 자리도 미리 잡아야 한다.
+ */
+export function supplyUsedOf(s: GameState, team: Team): number {
+  let n = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== team || e.hp <= 0) continue;
+    n += supplyPerBody(getUnit(e.unit));
+  }
+  for (const q of s.queue) {
+    if (q.team === team) n += supplyOf(getUnit(q.unit));
+  }
+  return n;
+}
+
 /** 실제로 일하고 있는 일꾼 수 (정원을 넘는 분은 놀고 있다) */
 export function activeWorkers(s: GameState, team: Team): number {
   const cap = workerCapacity(s, team);
@@ -537,14 +706,9 @@ function mine(s: GameState): void {
       const take = e.reserve < want ? e.reserve : want;
       e.reserve -= take;
       p.mined += take;
-      // 상한은 **채굴로 도달할 수 있는 천장**이지 절대 상한이 아니다.
-      // 철수 정산(라운드 48)은 이 천장을 넘겨 들어오는데, 매 틱 깎아 버리면
-      // 정산금이 다음 틱에 증발한다. 이미 천장 위에 있으면 채굴이 손대지
-      // 않는다 — 천장 아래일 때의 동작은 예전과 완전히 같다
-      if (p.minerals < MINERAL_MAX) {
-        p.minerals += take;
-        if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
-      }
+      // 보유 상한은 없다 (라운드 50) — 캔 만큼 쌓인다. 매장량이 유한하므로
+      // 무한 축적이 아니라 "언제 쓰느냐"의 문제가 된다
+      p.minerals += take;
     }
   }
 }
@@ -604,17 +768,23 @@ export function canResearch(p: PlayerState, unit: string): boolean {
 
 /* ── 배치 ──────────────────────────────────────────────────────────────── */
 
-/** count마리를 겹치지 않게 배치하기 위한 고정 오프셋 (RNG를 쓰지 않는다) */
+/**
+ * count마리를 겹치지 않게 배치하기 위한 고정 오프셋 (RNG를 쓰지 않는다).
+ *
+ * 간격은 몸집을 따라간다 — 500은 ENTITY_SCALE이 없던 시절의 값이라, 커진 지금
+ * 그대로 두면 한 점에 뭉쳐 생성되어 밀어내기가 유닛을 사방으로 튕겨낸다.
+ */
+const FORM_GAP = 500 * ENTITY_SCALE;
 const FORMATION: readonly (readonly [number, number])[] = [
   [0, 0],
-  [-500, 0],
-  [500, 0],
-  [0, -500],
-  [0, 500],
-  [-500, -500],
-  [500, -500],
-  [-500, 500],
-  [500, 500],
+  [-FORM_GAP, 0],
+  [FORM_GAP, 0],
+  [0, -FORM_GAP],
+  [0, FORM_GAP],
+  [-FORM_GAP, -FORM_GAP],
+  [FORM_GAP, -FORM_GAP],
+  [-FORM_GAP, FORM_GAP],
+  [FORM_GAP, FORM_GAP],
 ];
 
 function formationOffset(count: number, i: number): readonly [number, number] {
@@ -649,11 +819,15 @@ function spawnUnit(s: GameState, team: Team, u: UnitDef, x: number, y: number): 
     life: u.lifetime > 0 ? u.lifetime * lifeMul : u.lifetime,
     target: -1,
     flying: u.flying,
-    charge: 0,
+    charge: u.chargeStart ?? 0,
     mode: 0,
     haste: 0,
     orderX: -1,
     orderY: -1,
+    orderAttack: 0,
+    hold: 0,
+    reveal: -1,
+    hurt: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -685,7 +859,11 @@ export function applyCommand(s: GameState, cmd: Command): boolean {
     case 'rally':
       return setRally(s, cmd);
     case 'move':
-      return orderMove(s, cmd);
+      return orderMove(s, cmd, 0);
+    case 'attack':
+      return orderMove(s, cmd, 1);
+    case 'stop':
+      return orderStop(s, cmd);
     default:
       return false;
   }
@@ -699,6 +877,87 @@ function startUpgrade(s: GameState, cmd: Command): boolean {
   p.minerals -= cost;
   p.upgrading = { ticks: UPGRADE_TICKS[p.upgrade] };
   return true;
+}
+
+/** 생산 예약이 켜지는 판인가 — 대전만이다 */
+function queueOn(s: GameState): boolean {
+  return !s.invasion && !s.sandbox;
+}
+
+/** 그 기지에 걸린 예약 수 */
+function queueLenOf(s: GameState, baseId: number): number {
+  let n = 0;
+  for (const q of s.queue) if (q.base === baseId) n++;
+  return n;
+}
+
+/** 이 자리를 배치 구역에 품는 내 기지 중 가장 가까운 것 */
+/** 이 기지가 방금 맞아서 새 예약을 못 받는 상태인가 (대전 전용) */
+export function hurtLocked(s: GameState, e: Entity): boolean {
+  if (!queueOn(s) || e.kind !== 'base') return false;
+  return e.hurt >= 0 && s.tick - e.hurt < HURT_PRODUCE_LOCK;
+}
+
+function hostBase(s: GameState, team: Team, x: number, y: number): Entity | null {
+  let best: Entity | null = null;
+  let bestD2 = Infinity;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0 || e.deploy > 0) continue;
+    const d2 = dist2(e.x, e.y, x, y);
+    if (d2 > DEPLOY_RADIUS * DEPLOY_RADIUS) continue;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = e;
+    }
+  }
+  return best;
+}
+
+/**
+ * 예약을 굽는다 — 기지마다 **맨 앞 하나만** 진행된다.
+ *
+ * 굽던 기지가 부서지면 그 기지의 예약은 사라진다(환불 없음). 전진 기지에서
+ * 뽑는 것이 빠른 만큼, 그 기지를 잃으면 굽던 것도 잃는다.
+ */
+function tickQueue(s: GameState): void {
+  if (s.queue.length === 0) return;
+  const alive = new Set<number>();
+  for (const e of s.entities) {
+    if (e.kind === 'base' && e.hp > 0 && e.deploy <= 0) alive.add(e.id);
+  }
+  const busy = new Set<number>();
+  const done: ProduceOrder[] = [];
+  const keep: ProduceOrder[] = [];
+  for (const q of s.queue) {
+    if (!alive.has(q.base)) continue; // 기지를 잃으면 예약도 잃는다
+    if (busy.has(q.base)) {
+      keep.push(q); // 이 기지는 이미 하나 굽는 중이다
+      continue;
+    }
+    busy.add(q.base);
+    q.left--;
+    if (q.left <= 0) done.push(q);
+    else keep.push(q);
+  }
+  s.queue = keep;
+  for (const q of done) {
+    const u = getUnit(q.unit);
+    for (let i = 0; i < u.count; i++) {
+      const [ox, oy] = formationOffset(u.count, i);
+      spawnUnit(s, q.team, u, q.x + ox, q.y + oy);
+    }
+    // 집결지가 있으면 갓 나온 유닛은 거기로 (생산 즉시 배치와 같은 규칙)
+    const rally = s.players[q.team].rally;
+    if (rally) {
+      for (let i = s.entities.length - u.count; i < s.entities.length; i++) {
+        const e = s.entities[i];
+        if (e && e.kind === 'unit') {
+          e.orderX = rally.x;
+          e.orderY = rally.y;
+        }
+      }
+    }
+  }
 }
 
 function produceUnit(s: GameState, cmd: Command): boolean {
@@ -730,6 +989,21 @@ function produceUnit(s: GameState, cmd: Command): boolean {
   const zone = s.sandbox ? ([[cmd.x, cmd.y]] as const) : ownBasePositions(s, cmd.team);
   if (!canDeployAt(cmd.x, cmd.y, zone)) return false;
 
+  // 찍은 자리를 품는 내 기지가 이 예약을 굽는다 — 클릭 한 번이 위치와
+  // 생산처를 동시에 정하므로 조작이 늘지 않는다
+  const host = hostBase(s, cmd.team, cmd.x, cmd.y);
+  if (queueOn(s) && u.kind === 'unit') {
+    if (!host) return false;
+    if (queueLenOf(s, host.id) >= PRODUCE_QUEUE_MAX) return false;
+    // 맞고 있는 기지는 새 예약을 못 받는다 — 이미 건 것은 그대로 나온다
+    if (hurtLocked(s, host)) return false;
+  }
+  // 공급 천장 — 대전에서만. 침공은 파도를 막는 손이고 실험장은 상성을
+  // 보는 화면이라, 둘 다 천장을 끼우면 못 쓰게 된다
+  if (queueOn(s) && u.kind === 'unit') {
+    if (supplyUsedOf(s, cmd.team) + supplyOf(u) > supplyCapOf(s, cmd.team)) return false;
+  }
+
   // 방벽은 지형이 된다 — 완전 봉쇄가 되는 자리는 거절한다 (라운드 29, 침공 전용)
   if (s.invasion && u.kind === 'building') {
     // 설치권이 없으면 미네랄이 넘쳐도 못 세운다 (라운드 30)
@@ -744,9 +1018,36 @@ function produceUnit(s: GameState, cmd: Command): boolean {
 
   p.minerals -= cost;
   if (s.invasion && u.kind === 'building') p.wallCharges--;
+  // 대전은 **예약**이다 (라운드 50). 돈이 있다고 즉시 병력이 되면 상한을
+  // 없앤 경제가 그대로 병력으로 쏟아진다. 침공·실험장은 즉시 그대로 —
+  // 파도를 막는 손과 상성을 보는 화면에 큐를 끼우면 둘 다 못 쓰게 된다
+  if (queueOn(s) && u.kind === 'unit' && host) {
+    s.queue.push({
+      base: host.id,
+      team: cmd.team,
+      unit: u.id,
+      x: cmd.x,
+      y: cmd.y,
+      left: Math.max(1, u.cost * PRODUCE_TICKS_PER_COST),
+    });
+    return true;
+  }
+
+  const first = s.entities.length;
   for (let i = 0; i < u.count; i++) {
     const [ox, oy] = formationOffset(u.count, i);
     spawnUnit(s, cmd.team, u, cmd.x + ox, cmd.y + oy);
+  }
+  // 집결지(Y)가 찍혀 있으면 갓 나온 유닛은 거기로 걸어간다. 건물은 제외 —
+  // 세운 자리가 곧 그 건물의 존재 이유다
+  const rally = p.rally;
+  if (rally && !s.invasion) {
+    for (let i = first; i < s.entities.length; i++) {
+      const e = s.entities[i];
+      if (e.kind !== 'unit') continue;
+      e.orderX = rally.x;
+      e.orderY = rally.y;
+    }
   }
   return true;
 }
@@ -929,12 +1230,15 @@ function offerDraft(s: GameState): void {
 }
 
 /**
- * 이동 명령 — `id`에 대상 엔티티 id를 쉼표로 잇는다.
+ * 이동(우클릭)·공격 이동(A) 명령 — `id`에 대상 엔티티 id를 쉼표로 잇는다.
  *
  * Command를 평평하게 유지하려는 선택이다(정렬·직렬화·리플레이가 그대로 산다).
  * 남의 유닛·건물·기지는 조용히 걸러지므로 위조해도 남을 조종할 수 없다.
+ *
+ * `attack`이 1이면 공격 이동이다 — 목적지로 가되 길에서 만난 적을 쫓는다.
+ * 어느 쪽이든 정지(hold)는 풀린다: 새 명령이 곧 "다시 움직여라"다.
  */
-function orderMove(s: GameState, cmd: Command): boolean {
+function orderMove(s: GameState, cmd: Command, attack: number): boolean {
   if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
   if (blockedAt(cmd.x, cmd.y)) return false;
   let moved = false;
@@ -947,22 +1251,55 @@ function orderMove(s: GameState, cmd: Command): boolean {
     if (!e || e.kind !== 'unit' || e.team !== cmd.team) continue;
     e.orderX = cmd.x;
     e.orderY = cmd.y;
+    e.orderAttack = attack;
+    e.hold = 0;
     moved = true;
   }
   return moved;
 }
 
 /**
- * 집결 지점 지정 (침공 전용).
+ * 정지 명령 (S) — 가던 길을 버리고 그 자리를 지킨다.
  *
- * 같은 자리를 다시 찍으면 해제 — 우클릭 한 번으로 "모여라/흩어져라"가 된다.
+ * 명령을 지우는 것만으로는 멈추지 않는다. 표적이 없는 유닛의 기본 행동이
+ * "적 진영으로 전진"이라, 명령만 지우면 그 즉시 다시 걸어나간다. 그래서
+ * `hold`라는 상태가 따로 필요하다 — 이게 없으면 S는 아무것도 하지 않는
+ * 버튼이 된다.
+ */
+function orderStop(s: GameState, cmd: Command): boolean {
+  let stopped = false;
+  let count = 0;
+  for (const part of cmd.id.split(',')) {
+    if (++count > ORDER_MAX_UNITS) break;
+    const id = Number(part);
+    if (!Number.isInteger(id)) continue;
+    const e = findById(s, id);
+    if (!e || e.kind !== 'unit' || e.team !== cmd.team) continue;
+    e.orderX = -1;
+    e.orderY = -1;
+    e.orderAttack = 0;
+    e.hold = 1;
+    stopped = true;
+  }
+  return stopped;
+}
+
+/**
+ * 집결 지점 지정 (Y).
+ *
+ * 같은 자리를 다시 찍으면 해제 — 한 번으로 "모여라/흩어져라"가 된다.
  * 지형 위(물·벽)는 거절: 갈 수 없는 곳에 깃발을 꽂으면 전군이 벽에 붙는다.
+ *
+ * 뜻이 모드마다 다르다. 침공에서는 **표적 없는 전군**이 깃발로 모여 주둔하고
+ * (수비 모드의 유일한 컨트롤), 대전에서는 **새로 생산된 유닛**이 깃발로
+ * 걸어간다 — 대전에서 전군을 붙박아 두면 기본 행동인 전진이 죽어버린다.
  */
 function setRally(s: GameState, cmd: Command): boolean {
-  if (!s.invasion || cmd.team !== 0) return false;
+  if (s.sandbox) return false;
+  if (s.invasion && cmd.team !== 0) return false;
   if (cmd.x < 0 || cmd.y < 0 || cmd.x >= ARENA_W || cmd.y >= ARENA_H) return false;
   if (blockedAt(cmd.x, cmd.y)) return false;
-  const p = s.players[0];
+  const p = s.players[cmd.team];
   if (p.rally && dist2(p.rally.x, p.rally.y, cmd.x, cmd.y) <= RALLY_ARRIVE * RALLY_ARRIVE) {
     p.rally = null; // 같은 자리 재지정 = 해제
     return true;
@@ -1200,15 +1537,174 @@ function detectedBy(s: GameState, team: Team, x: number, y: number): boolean {
   return false;
 }
 
+/* ── 전장의 안개 (대전 전용, 오너 지시) ───────────────────────────────── */
+
 /**
- * viewer 팀이 target을 때릴 수 있는가 — 은신 판정.
+ * 안개가 켜지는 판인가 — **대전만**이다.
+ *
+ * 침공은 "파도가 어디서 오는가"가 화면의 전제라 진입로 화살표까지 그린다.
+ * 실험장은 상성을 눈으로 보려고 만든 화면이다. 둘 다 가리면 그 화면들이
+ * 하는 말이 통째로 사라지므로, 안개는 1v1에만 건다.
+ */
+function fogOn(s: GameState): boolean {
+  return !s.invasion && !s.sandbox;
+}
+
+/** 이 엔티티가 밝히는 반경 (밀리타일) */
+function sightOf(s: GameState, e: Entity): number {
+  if (e.kind === 'base') return SIGHT_BASE;
+  const r = statsOf(s, e).range + SIGHT_MARGIN;
+  let sight = r > SIGHT_UNIT ? r : SIGHT_UNIT;
+  // 공중은 늘 고지에서 내려다본다 (오너 지시) — 지형이 시야를 막지 못하므로
+  // 언덕에 선 것과 같은 이점을 항상 받는다. 이게 공중의 지형 이점이다:
+  // 절벽도 강도 넘어 보고, 그래서 안개 속 정찰은 공중의 일이 된다
+  if (e.flying) sight = Math.trunc((sight * (100 + HIGH_GROUND_SIGHT_PCT)) / 100);
+  return sight;
+}
+
+/** 팀별 "지금 보이는 적 엔티티 id" 집합. 안개가 꺼진 판에서는 null */
+type SeenSets = readonly [ReadonlySet<number>, ReadonlySet<number>];
+
+/**
+ * 시야 집합을 계산한다 — **순수 함수**다. 캐시도 상태도 건드리지 않는다.
+ *
+ * 상태에 얹지 않는 이유가 둘이다. 하나, 해시와 스냅샷은 입력에서 재현되는
+ * 것만 담아야 하는데 시야는 위치에서 파생되는 값이다. 둘, Set은 JSON 왕복을
+ * 못 넘긴다(스냅샷 리싱크가 깨진다).
+ */
+function computeSeen(s: GameState): SeenSets | null {
+  if (!fogOn(s)) return null;
+  const seen: [Set<number>, Set<number>] = [new Set<number>(), new Set<number>()];
+  const n = s.entities.length;
+  // 고도는 쌍마다 다시 묻지 않는다 — n²번 부르면 그것만으로 틱을 먹는다
+  const high = new Array<boolean>(n);
+  for (let i = 0; i < n; i++) {
+    const e = s.entities[i];
+    high[i] = !e.flying && elevAt(e.x, e.y) === 1;
+  }
+
+  for (let i = 0; i < n; i++) {
+    const w = s.entities[i];
+    if (w.hp <= 0) continue; // 죽은 것은 아무것도 밝히지 못한다
+    const sr = sightOf(s, w);
+    const mine = seen[w.team];
+    for (let j = 0; j < n; j++) {
+      const o = s.entities[j];
+      if (o.team === w.team || o.hp <= 0) continue;
+      if (mine.has(o.id)) continue;
+      // 공격한 것·맞은 것은 고도와 무관하게 잠시 드러난다
+      if (o.reveal >= s.tick) {
+        mine.add(o.id);
+        continue;
+      }
+      let r = sr;
+      if (high[i] !== high[j] && !w.flying && !o.flying) {
+        r = high[i]
+          ? Math.trunc((r * (100 + HIGH_GROUND_SIGHT_PCT)) / 100)
+          : Math.trunc((r * (100 - HIGH_GROUND_SIGHT_PCT)) / 100);
+      }
+      if (dist2(w.x, w.y, o.x, o.y) <= r * r) mine.add(o.id);
+    }
+  }
+  return seen;
+}
+
+/**
+ * 시야에 든 적 기지를 정찰 기록에 남긴다 — **시뮬 안에서만 부른다.**
+ *
+ * `computeSeen`은 렌더러도 부르므로 순수해야 한다. 상태를 바꾸는 일은
+ * 여기로 떼어 두었다: 화면을 한 번 더 그렸다고 정찰이 되면 서버와
+ * 클라이언트가 갈린다.
+ */
+function recordScouting(s: GameState, seen: SeenSets): void {
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.siteId < 0 || e.hp <= 0) continue;
+    const foe: Team = e.team === 0 ? 1 : 0;
+    if (seen[foe].has(e.id)) s.players[foe].scouted |= 1 << e.siteId;
+  }
+}
+
+/**
+ * viewer 팀의 시야 안에 들어와 있는가.
+ *
+ * **본진도 가린다** (오너 결정 — 4인용 맵을 염두에 둔다: 적이 어느
+ * 모서리에서 시작했는지를 모르는 것 자체가 전략이 된다).
+ *
+ * 이게 성립하려면 표적 없는 병력이 갈 곳이 있어야 한다. 그 답이
+ * `sweepGoal`이다 — 기지 지점은 맵에 그려진 공개 정보이므로, 병력은
+ * 지점을 훑으며 **거기 무엇이 있는지 가서 확인한다.** 둘은 한 쌍이라
+ * 한쪽만 넣으면 게임이 서지 않는다.
+ */
+function inSight(s: GameState, seen: SeenSets | null, viewer: Team, target: Entity): boolean {
+  if (!seen) return true;
+  if (target.team === viewer) return true;
+  if (seen[viewer].has(target.id)) return true;
+  // 한 번 정찰한 기지 자리는 계속 안다 — 기지는 움직이지 않으므로 거짓이 아니다
+  if (target.kind === 'base' && target.siteId >= 0) {
+    return (s.players[viewer].scouted & (1 << target.siteId)) !== 0;
+  }
+  return false;
+}
+
+/**
+ * viewer 팀이 target을 때릴 수 있는가 — 안개와 은신, 두 관문이다.
  *
  * 숨은 것을 보려면 디텍터가 필요하다. 스플래시는 이 관문을 타지 않는다:
  * 위치를 모른 채 쏜 광역에 우연히 맞는 것까지 막으면 지뢰가 무적이 된다.
+ *
+ * `seen`을 **인자로 받는다**는 것이 중요하다. 예전에는 모듈 캐시를 안에서
+ * 읽었는데, 렌더러(`isHiddenFrom`)가 틱 사이에 같은 캐시를 채우는 바람에
+ * 시뮬이 한 프레임 묵은 시야로 타겟을 골랐다 — 렌더러가 없는 서버와 결과가
+ * 갈려 데스싱크가 났다. 시뮬이 쓰는 값은 시뮬이 그 틱에 직접 만든 것뿐이어야 한다.
  */
-function visibleTo(s: GameState, viewer: Team, target: Entity): boolean {
+function visibleTo(
+  s: GameState,
+  viewer: Team,
+  target: Entity,
+  seen: SeenSets | null,
+): boolean {
+  if (!inSight(s, seen, viewer, target)) return false;
   if (!isCloaked(s, target)) return true;
   return detectedBy(s, viewer, target.x, target.y);
+}
+
+/**
+ * 렌더 전용 시야 캐시.
+ *
+ * 화면은 한 프레임에 엔티티마다 `isHiddenFrom`을 부르므로 매번 O(n²)를 다시
+ * 돌 수 없다. 대신 이 캐시는 **시뮬이 절대 읽지 않는다** — 묵어도 그림만
+ * 한 프레임 늦을 뿐, 결정론에는 닿지 않는다.
+ */
+let renderSeen: { s: GameState; tick: number; n: number; seen: SeenSets | null } | null = null;
+
+function renderSeenOf(s: GameState): SeenSets | null {
+  const n = s.entities.length;
+  if (renderSeen && renderSeen.s === s && renderSeen.tick === s.tick && renderSeen.n === n) {
+    return renderSeen.seen;
+  }
+  const seen = computeSeen(s);
+  renderSeen = { s, tick: s.tick, n, seen };
+  return seen;
+}
+
+/**
+ * 렌더러가 안개를 그리기 위해 읽는 시야원 목록 — 내 팀이 밝히는 자리들.
+ *
+ * 화면과 시뮬이 같은 반경을 써야 "밝은데 못 때린다"가 생기지 않는다.
+ * 안개가 꺼진 판(침공·실험장)에서는 빈 배열이 아니라 `null`을 준다 —
+ * "밝힐 곳이 없다"와 "가릴 것이 없다"는 정반대이므로 구분해야 한다.
+ */
+export function sightCirclesOf(
+  s: GameState,
+  viewer: Team,
+): Array<{ x: number; y: number; r: number }> | null {
+  if (!fogOn(s)) return null;
+  const out: Array<{ x: number; y: number; r: number }> = [];
+  for (const e of s.entities) {
+    if (e.team !== viewer || e.hp <= 0) continue;
+    out.push({ x: e.x, y: e.y, r: sightOf(s, e) });
+  }
+  return out;
 }
 
 /**
@@ -1218,7 +1714,7 @@ function visibleTo(s: GameState, viewer: Team, target: Entity): boolean {
  */
 export function isHiddenFrom(s: GameState, viewer: Team, e: Entity): boolean {
   if (e.team === viewer) return false;
-  return !visibleTo(s, viewer, e);
+  return !visibleTo(s, viewer, e, renderSeenOf(s));
 }
 
 /** 내 은신 유닛인가 — 반투명으로 그려 "지금 숨어 있다"를 알린다 */
@@ -1547,7 +2043,7 @@ function canAttack(e: Entity, target: Entity): boolean {
  * 타겟을 고른다.
  * 동률일 때는 **엔티티 id가 작은 쪽**을 고른다 — 결정론을 위해 필수.
  */
-function pickTarget(s: GameState, e: Entity): number {
+function pickTarget(s: GameState, e: Entity, seen: SeenSets | null): number {
   const st = statsOf(s, e);
   const aggro = aggroRange(st.range);
   const aggro2 = aggro * aggro;
@@ -1561,7 +2057,7 @@ function pickTarget(s: GameState, e: Entity): number {
     if (o.team === e.team || o.hp <= 0) continue;
     if (!canAttack(e, o)) continue;
     // 숨은 것은 겨냥할 수 없다 — 디텍터가 있어야 표적이 된다 (4축)
-    if (!visibleTo(s, e.team, o)) continue;
+    if (!visibleTo(s, e.team, o, seen)) continue;
     const d2 = dist2(e.x, e.y, o.x, o.y);
 
     if (o.kind === 'unit') {
@@ -1637,7 +2133,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 2) 채굴
   mine(s);
   // 실험장 — 자원 걱정 없이 아무거나 계속 배치할 수 있게 상시 보충
-  if (s.sandbox) for (const p of s.players) p.minerals = MINERAL_MAX;
+  if (s.sandbox) for (const p of s.players) p.minerals = MINERAL_SANDBOX;
 
   // 3) 연구·강화 진행
   for (const p of s.players) {
@@ -1667,17 +2163,21 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (e.cd > 0) e.cd--;
   }
   reap(s);
+  // 생산 예약 — 기지마다 하나씩 굽는다 (대전 전용)
+  tickQueue(s);
 
   // 4.5) 충전 스킬 — 게이지가 차면 사거리 안 가장 가까운 적에게 자동 발사.
   // 읽기 패스로 발사 목록을 모은 뒤 한꺼번에 적용한다 (reap이 배열을 바꾸므로)
   const casts: Array<{ team: Team; spell: UnitDef; x: number; y: number; caster: Entity }> = [];
   for (const e of s.entities) {
     if (e.kind !== 'unit' || e.deploy > 0) continue;
-    const spellId = getUnit(e.unit).charges;
+    const caster = getUnit(e.unit);
+    const spellId = caster.charges;
     if (!spellId) continue;
-    if (e.charge < SKILL_CHARGE_TICKS) {
+    const full = caster.chargeTicks ?? SKILL_CHARGE_TICKS;
+    if (e.charge < full) {
       e.charge += hasRelic(s.players[e.team], 'focus') ? 2 : 1;
-      if (e.charge > SKILL_CHARGE_TICKS) e.charge = SKILL_CHARGE_TICKS;
+      if (e.charge > full) e.charge = full;
       continue;
     }
     const spell = getUnit(spellId);
@@ -1796,9 +2296,12 @@ export function step(s: GameState, cmds: readonly Command[]): void {
   // 5) 타겟 선정 (읽기 전용 패스)
   const n = s.entities.length;
   const targets = new Array<number>(n);
+  // 그 틱의 시야는 여기서 딱 한 번 만든다 — 타겟 선정 직전, 이동 전이다
+  const seen = computeSeen(s);
+  if (seen) recordScouting(s, seen);
   for (let i = 0; i < n; i++) {
     const e = s.entities[i];
-    targets[i] = e.deploy > 0 ? -1 : pickTarget(s, e);
+    targets[i] = e.deploy > 0 ? -1 : pickTarget(s, e, seen);
   }
   for (let i = 0; i < n; i++) s.entities[i].target = targets[i];
 
@@ -1814,11 +2317,15 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     if (ti === undefined) continue;
     const t = s.entities[ti];
     const st = statsOf(s, e);
-    const reach = st.range + radiusOf(t);
+    const reach = reachOf(e, t, st.range);
     if (dist2(e.x, e.y, t.x, t.y) > reach * reach) continue;
     if (e.cd > 0) continue;
 
     e.cd = st.hitSpeed;
+    // 쏘면 내 자리가 드러난다. 맞은 쪽도 함께 — 광역에 스친 것까지 포함해
+    // "여기서 뭔가 일어났다"는 양쪽이 같이 알아야 공평하다
+    e.reveal = s.tick + REVEAL_TICKS;
+    t.reveal = s.tick + REVEAL_TICKS;
     // 은신은 때리는 순간 풀리고(게이지 0), 지뢰는 밟히는 순간 함께 사라진다.
     // 여기 한 줄이 "은신 상대에게는 손도 못 쓴다"를 막는 안전판이다 (4축)
     const ab = abilityOf(s, e);
@@ -1832,6 +2339,7 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (!canAttack(e, o)) continue;
         if (dist2(o.x, o.y, t.x, t.y) <= sp2) {
           dmg[j] += withRally(s, e, damageTo(e, st, o, effUpgrade(s.players[e.team])));
+          o.reveal = s.tick + REVEAL_TICKS;
         }
       }
     } else {
@@ -1866,21 +2374,43 @@ export function step(s: GameState, cmds: readonly Command[]): void {
     let gx: number;
     let gy: number;
     if (e.orderX >= 0) {
-      // 명령 이동 — 도착하면 스스로 해제하고 기본 행동으로 돌아간다
-      if (dist2(e.x, e.y, e.orderX, e.orderY) <= ORDER_ARRIVE * ORDER_ARRIVE) {
-        e.orderX = -1;
-        e.orderY = -1;
-        continue;
+      // 공격 이동(A) — **감지 범위 안의** 적만 쫓는다.
+      //
+      // 여기서 거리를 묻지 않으면 A가 "이 지점으로"가 아니라 "적 본진으로"가
+      // 된다: 본진은 안개와 무관하게 늘 보이므로 pickTarget이 언제나 무언가를
+      // 돌려주고, 그러면 목적지가 영영 쓰이지 않는다.
+      const st0 = statsOf(s, e);
+      const reach = aggroRange(st0.range);
+      let chase: Entity | undefined;
+      if (e.orderAttack === 1 && e.target >= 0) {
+        const t = findById(s, e.target);
+        if (t && dist2(e.x, e.y, t.x, t.y) <= reach * reach) chase = t;
       }
-      [gx, gy] = moveGoal(e, e.orderX, e.orderY);
+      if (chase) {
+        if (dist2(e.x, e.y, chase.x, chase.y) <= reachOf(e, chase, st0.range) ** 2) continue;
+        [gx, gy] = moveGoal(e, chase.x, chase.y);
+      } else {
+        // 명령 이동 — 도착하면 스스로 해제하고 기본 행동으로 돌아간다
+        if (dist2(e.x, e.y, e.orderX, e.orderY) <= ORDER_ARRIVE * ORDER_ARRIVE) {
+          e.orderX = -1;
+          e.orderY = -1;
+          e.orderAttack = 0;
+          continue;
+        }
+        [gx, gy] = moveGoal(e, e.orderX, e.orderY);
+      }
+    } else if (e.hold) {
+      // 정지(S) — 명령이 없고 정지 상태면 아무 데도 가지 않는다.
+      // 사거리 안의 적을 쏘는 것은 공격 단계가 따로 하므로 여기서 막지 않는다
+      continue;
     } else if (e.target >= 0) {
       const t = findById(s, e.target);
       if (!t) continue;
       const st = statsOf(s, e);
-      if (dist2(e.x, e.y, t.x, t.y) <= (st.range + radiusOf(t)) ** 2) continue;
+      if (dist2(e.x, e.y, t.x, t.y) <= reachOf(e, t, st.range) ** 2) continue;
       [gx, gy] = moveGoal(e, t.x, t.y);
-    } else {
-      if (s.invasion && e.team === 0) {
+    } else if (s.invasion) {
+      if (e.team === 0) {
         // 침공 수비군: 집결 깃발이 있으면 거기로 행군해 주둔한다.
         // 깃발이 없으면 제자리 — 전진 본능을 되살리면 파도 소탕 후
         // 전군이 스폰 지점으로 순례를 떠난다 (라운드 24 사고)
@@ -1890,9 +2420,26 @@ export function step(s: GameState, cmds: readonly Command[]): void {
         if (dist2(e.x, e.y, r.x, r.y) <= RALLY_ARRIVE * RALLY_ARRIVE) continue;
         [gx, gy] = moveGoal(e, r.x, r.y);
       } else {
-        // 타겟이 없으면 적 진영 방향으로 전진
-        [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
+        // 파도는 성으로 몰려와야 한다 — 이게 침공이라는 게임 그 자체다
+        [gx, gy] = moveGoal(e, e.x, ARENA_H);
       }
+    } else if (s.sandbox) {
+      // 실험장은 붙어야 관찰이 된다 — 상성을 보려고 만든 화면이다
+      [gx, gy] = moveGoal(e, e.x, e.team === 0 ? 0 : ARENA_H);
+    } else {
+      // **대전은 여기서 아무것도 하지 않는다** (오너 결정).
+      //
+      // 표적 없는 병력이 스스로 전진하는 것은 클래시 로얄의 문법이다.
+      // 매크로 RTS에 안개까지 얹히자 그 자동 이동이 게임을 망가뜨렸다:
+      // 늘 보이는 목표가 있으면 전군이 그리로 빨려가 도중의 확장을
+      // 지나쳤고(경제 전략 27%), 목표를 가리면 갈 곳을 못 찾고 헤맸다
+      // (러시 33%). 둘 다 "누가 어디로 갈지를 코드가 정한다"가 원인이었다.
+      //
+      // 이제 그건 플레이어가 정한다. 병력은 명령을 받을 때까지 자리를
+      // 지키고, 사거리 안의 적은 그대로 쏜다 — 안 싸우는 게 아니라
+      // **안 걸어나가는** 것이다. 확장을 칠지 지킬지, 언제 나갈지가
+      // 비로소 선택이 된다.
+      continue;
     }
 
     const dx = gx - e.x;
@@ -1947,6 +2494,8 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       const p = s.players[e.team];
       p.workers = Math.max(0, p.workers - Math.max(0, after - before));
     }
+    // 맞은 시각을 남긴다 — 기지는 이걸로 잠시 새 예약을 못 받는다
+    if (dmg[i] > 0) e.hurt = s.tick;
     e.hp -= dmg[i];
   }
   resolveDeaths(s);
@@ -1981,7 +2530,6 @@ export function step(s: GameState, cmds: readonly Command[]): void {
       let reward = s.waveReward;
       if (hasRelic(p, 'reserves')) reward = Math.trunc((reward * 130) / 100);
       p.minerals += reward;
-      if (p.minerals > MINERAL_MAX) p.minerals = MINERAL_MAX;
       // 파도를 넘겼으니 설치권 보충 — 성은 파도를 견딘 만큼 자란다
       p.wallCharges = Math.min(INVASION_WALL_CAP, p.wallCharges + INVASION_WALL_PER_WAVE);
       // 영웅은 파도를 넘길 때마다 자란다 — 런이 길어질수록 손맛이 커진다
@@ -2205,6 +2753,7 @@ export function restore(target: GameState, snap: GameState): void {
   target.tick = fresh.tick;
   target.rng = fresh.rng;
   target.nextId = fresh.nextId;
+  target.queue = fresh.queue;
   target.entities = fresh.entities;
   target.players = fresh.players;
   target.overtime = fresh.overtime;
@@ -2242,6 +2791,15 @@ export function hashState(s: GameState): number {
   mix(s.waveBudget);
   mix(s.waveAlive ? 1 : 0);
   mix(s.waveReward);
+  mix(s.queue.length);
+  for (const q of s.queue) {
+    mix(q.base);
+    mix(q.team);
+    mixStr(q.unit);
+    mix(q.x);
+    mix(q.y);
+    mix(q.left);
+  }
   mix(s.draft.length);
   for (const d of s.draft) mixStr(d);
   mix(s.heroDraft.length);
@@ -2261,6 +2819,10 @@ export function hashState(s: GameState): number {
     mix(e.haste);
     mix(e.orderX);
     mix(e.orderY);
+    mix(e.orderAttack);
+    mix(e.hold);
+    mix(e.reveal);
+    mix(e.hurt);
     mix(e.x);
     mix(e.y);
     mix(e.hp);
@@ -2284,6 +2846,7 @@ export function hashState(s: GameState): number {
     mixStr(p.hero);
     mix(p.heroLevel);
     mix(p.heroRespawn);
+    mix(p.scouted);
     mix(p.rally ? p.rally.x : -1);
     mix(p.rally ? p.rally.y : -1);
     if (p.research) {

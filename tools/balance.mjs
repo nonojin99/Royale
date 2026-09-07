@@ -44,12 +44,22 @@ import {
   siteReachable,
   step,
   workerCapacity,
+  isHiddenFrom,
+  blockedAt,
+  ORDER_MAX_UNITS,
+  PRODUCE_QUEUE_MAX,
+  hurtLocked,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
 } from '../packages/shared/dist/index.js';
 
 const args = process.argv.slice(2);
 const SEEDS = Number(args[args.indexOf('--seeds') + 1] || 0) || 16;
 const MAP_ID = args.includes('--map') ? args[args.indexOf('--map') + 1] : undefined;
-const FACTIONS = ['steel', 'swarmhive', 'covenant'];
+const FACTIONS = args.includes('--faction')
+  ? [args[args.indexOf('--faction') + 1]]
+  : ['steel', 'swarmhive', 'covenant'];
 const DECIDE_EVERY = 24; // 서버 연습봇과 같은 간격
 const MAX_TICKS = 20 * 60 * 5; // 5분 안전 상한 (연장 포함 사실상 안 걸림)
 
@@ -72,30 +82,70 @@ function armyCost(s, team) {
 }
 
 /** 전방(적 본진 방향)으로 치우친 배치 좌표를 찾는다 */
+/** 이 기지 자리에 걸린 예약 수 — 어느 기지가 아직 여유가 있는지 고른다 */
+function queueAt(s, team, pos) {
+  let host = -1;
+  let bestD2 = Infinity;
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0 || e.deploy > 0) continue;
+    const d2 = (e.x - pos[0]) ** 2 + (e.y - pos[1]) ** 2;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      host = e.id;
+    }
+  }
+  if (host < 0) return PRODUCE_QUEUE_MAX;
+  let n = 0;
+  for (const o of s.queue) if (o.base === host) n++;
+  return n;
+}
+
+/** 이 기지 자리가 방금 맞아 새 예약을 못 받는 상태인가 */
+function lockedAt(s, team, pos) {
+  for (const e of s.entities) {
+    if (e.kind !== 'base' || e.team !== team || e.hp <= 0) continue;
+    if (Math.abs(e.x - pos[0]) < 500 && Math.abs(e.y - pos[1]) < 500) return hurtLocked(s, e);
+  }
+  return false;
+}
+
 function forwardSpot(s, team, rng) {
   const bases = ownBasePositions(s, team);
   if (!bases.length) return null;
   const [ex, ey] = enemyMain(team);
-  // 적에게 가장 가까운 기지에서 적 방향으로 민다
-  let front = bases[0];
-  let best = Infinity;
-  for (const b of bases) {
-    const d = Math.abs(b[0] - ex) + Math.abs(b[1] - ey);
-    if (d < best) {
-      best = d;
+  // 앞선 기지부터 쓰되, **큐가 찬 기지는 건너뛴다**.
+  //
+  // 늘 최전방에만 배치하면 주문이 한 기지에 몰려 팀 전체 큐가 5에서
+  // 멈춘다 — 기지가 넷이어도 처리량은 하나 몫이고, 남는 돈은 그냥 쌓인다
+  // (실측: 4기지 GREED가 387코를 쥐고 죽었다). 앞이 막히면 뒤에서 굽는다.
+  const order = bases
+    .map((b) => [b, Math.abs(b[0] - ex) + Math.abs(b[1] - ey)])
+    .sort((p, q) => p[1] - q[1]);
+  let front = order[0][0];
+  for (const [b] of order) {
+    if (queueAt(s, team, b) < PRODUCE_QUEUE_MAX && !lockedAt(s, team, b)) {
       front = b;
+      break;
     }
   }
   const dx = ex - front[0];
   const dy = ey - front[1];
   const len = Math.max(1, Math.abs(dx) + Math.abs(dy));
-  for (let k = 8; k >= 3; k--) {
+  // 앞쪽부터 훑되 **뒤까지** 훑는다. 앞으로만 밀고 막히면 포기하게 두면
+  // 전선이 막히는 순간 생산 판단이 통째로 버려진다 — 사람이라면 기지
+  // 반대편에 깐다
+  for (let k = 8; k >= -8; k--) {
     const r = (DEPLOY_RADIUS * k) / 10;
     const x = front[0] + Math.trunc((dx / len) * r) + nextInt(rng, 600) - 300;
     const y = front[1] + Math.trunc((dy / len) * r) + nextInt(rng, 600) - 300;
     if (canDeployAt(x, y, bases)) return [x, y];
   }
-  return [front[0], front[1]];
+  return null;
+}
+
+/** 첫 기지 몫을 넘은 일꾼이 요구하는 최소 병력 — 일꾼 하나당 1코 */
+function workerDebt(s, team) {
+  return Math.max(0, s.players[team].workers - 8) * MINERAL_SCALE;
 }
 
 function trainWorker(s, team) {
@@ -143,13 +193,43 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, onl
   const me = s.players[team];
   const bases = ownBasePositions(s, team);
   if (!bases.length) return null;
+  const cap = supplyCapOf(s, team);
+  const used = supplyUsedOf(s, team);
+  /**
+   * 천장이 가까우면 **칸당 밀도**로 고르고, 못 사면 기다린다.
+   *
+   * "지금 살 수 있는 것 중 가장 비싼 것"은 천장이 없던 시절의 규칙이다.
+   * 돈이 1~12에서 오르내리면 5코짜리는 한 번도 안 잡혀서, TECH이 T2를
+   * 다 연구하고도 140초까지 화염병만 뽑았다(실측). 칸이 모자란 판에서는
+   * 싼 걸 채워 넣는 것이 자리를 버리는 짓이다 — 아껴서 밀도를 산다.
+   */
+  const tight = !cheap && used * 4 >= cap * 3;
   let best = null;
   let bestCost = cheap ? Infinity : -1;
+  let bestDense = -1;
   for (const id of me.unlocked) {
     if (only && id !== only) continue;
     if (!isUnlocked(me, id)) continue;
     const u = getUnit(id);
     if (u.kind !== 'unit') continue; // 건물은 명시적 웅크림 채널로만
+    // 건물 전용(정찰차·굴착충)은 **유닛을 아예 못 때린다** — 군대가 될 수 없다.
+    //
+    // 이걸 안 걸었더니 TECH이 연구비를 남기느라 가난해져서, "살 수 있는 것
+    // 중 가장 비싼 것"을 고를 때마다 2코짜리 정찰차만 잡혔다. 110초에
+    // 병력이 정찰차 13 + 화염병 8이었고, 싸울 수 없는 그 뭉치를 들고 나가
+    // 전멸했다. GREED에 100%로 지던 진짜 이유다.
+    if (u.targets === 'buildings') continue;
+    if (cheap && me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
+    if (used + supplyOf(u) > cap) continue; // 천장을 넘는 카드는 시뮬이 거절한다
+    if (tight) {
+      // 돈이 모자라도 후보로 둔다 — 못 사면 이번 판단은 건너뛰고 모은다
+      const dense = (u.cost * 1000) / supplyOf(u);
+      if (dense > bestDense) {
+        bestDense = dense;
+        best = id;
+      }
+      continue;
+    }
     if (me.minerals - reserve < u.cost * MINERAL_SCALE) continue;
     if (cheap ? u.cost < bestCost : u.cost > bestCost) {
       bestCost = u.cost;
@@ -157,12 +237,18 @@ function produce(s, team, rng, { reserve = 0, cheap = false, defend = false, onl
     }
   }
   if (!best) return null;
+  // 밀도로 고른 카드를 아직 못 사면 이번 판단은 쉰다 (돈이 쌓인다)
+  if (tight && me.minerals - reserve < getUnit(best).cost * MINERAL_SCALE) return null;
   let spot;
   if (defend) {
     // 본진 곁에 깐다
     const main = bases[0];
-    spot = [main[0] + nextInt(rng, 1200) - 600, main[1] + nextInt(rng, 1200) - 600];
-    if (!canDeployAt(spot[0], spot[1], bases)) spot = main;
+    spot = null;
+    for (let k = 0; k < 8 && !spot; k++) {
+      const px = main[0] + nextInt(rng, 2400) - 1200;
+      const py = main[1] + nextInt(rng, 2400) - 1200;
+      if (canDeployAt(px, py, bases)) spot = [px, py];
+    }
   } else {
     spot = forwardSpot(s, team, rng);
   }
@@ -246,7 +332,22 @@ function observe(s, team) {
     foeTeching: s.players[foe].research !== null,
     foeWorkers: s.players[foe].workers,
     myWorkers: s.players[team].workers,
+    foeAir: airShare(s, foe),
   };
+}
+
+/** 상대 병력 중 공중이 차지하는 비율 (0~100) — 대공 판단용 */
+function airShare(s, team) {
+  let air = 0;
+  let all = 0;
+  for (const e of s.entities) {
+    if (e.kind !== 'unit' || e.team !== team) continue;
+    const u = getUnit(e.unit);
+    const c = (u.cost * MINERAL_SCALE) / Math.max(1, u.count);
+    all += c;
+    if (u.flying) air += c;
+  }
+  return all > 0 ? Math.round((air / all) * 100) : 0;
 }
 
 /** 종족별 공중 테크 경로 — 선행 1단계 → 공중 2단계 */
@@ -255,6 +356,24 @@ const AIR_PATH = {
   swarmhive: ['burrower', 'wingswarm'],
   covenant: ['mystic', 'skiff'],
 };
+
+/**
+ * 지금 노릴 수 있는 가장 싼 연구 노드의 값 (미네랄 단위). 없으면 0.
+ *
+ * 이게 없으면 TECH는 **영영 테크를 못 탄다**: 병력 생산이 예비금 4까지
+ * 계속 긁어써서 12짜리 노드에 손이 닿지 않는다. 실측에서 6판 전부
+ * T2 미도달로 전멸했다 — 웅크리다 죽는 게 아니라 웅크린 채 못 크는 것이었다.
+ */
+function techReserve(s, team) {
+  const me = s.players[team];
+  if (me.research) return 0;
+  let cheapest = Infinity;
+  for (const node of getFaction(me.faction).tech) {
+    if (!canResearch(me, node.unit)) continue;
+    if (node.cost < cheapest) cheapest = node.cost;
+  }
+  return cheapest === Infinity ? 0 : cheapest * MINERAL_SCALE;
+}
 
 /** 특정 노드를 향해 곧장 연구한다 */
 function researchToward(s, team, target) {
@@ -266,16 +385,149 @@ function researchToward(s, team, target) {
   return { kind: 'tech', id: target, x: 0, y: 0 };
 }
 
+/** 해금된 것 중 공중을 때릴 수 있는 유닛이 있는가 */
+function hasAntiAir(s, team) {
+  for (const id of s.players[team].unlocked) {
+    const u = getUnit(id);
+    if (u.kind === 'spell') continue;
+    if (u.targets === 'any' || u.targets === 'air') return true;
+  }
+  return false;
+}
+
+/* ── 출진 지휘 ─────────────────────────────────────────────────────────────
+
+   대전에서 병력은 **명령을 받아야 움직인다** (자동 전진 제거). 예전 봇들은
+   "뽑아 두면 알아서 간다"를 전제로 짜여 있어서, 그대로 두면 전군이 집에서
+   늙어 죽는다 — 측정값이 전략이 아니라 봇의 노후를 재게 된다.
+
+   전략의 차이는 이제 "무엇을 사는가"만이 아니라 **"언제 나가는가"**다.
+   그게 이 게임의 실제 결정이기도 하다.                                  */
+
+/** 5초에 한 번만 지휘한다 — 매 판단마다 명령을 쓰면 생산이 영영 안 나간다 */
+const PUSH_EVERY = 100;
+
+/** 내 병력 id 목록 (오름차순 — 결정론) */
+function armyIds(s, team) {
+  const ids = [];
+  for (const e of s.entities) if (e.kind === 'unit' && e.team === team) ids.push(e.id);
+  return ids.sort((a, b) => a - b).slice(0, ORDER_MAX_UNITS);
+}
+
+/**
+ * 어디를 칠 것인가 — **아는 곳 중 가장 가까운 적 기지.**
+ *
+ * 정찰한 자리는 계속 알고(sim의 scouted), 시야에 든 것도 안다. 아무것도
+ * 모르면 상대 시작 자리로 간다 — 2인용 점대칭 맵에서 그건 추론되는 정보다.
+ */
+function strikeAt(s, team) {
+  const foe = team === 0 ? 1 : 0;
+  let bx = -1;
+  let by = -1;
+  let best = Infinity;
+  const mine = ownBasePositions(s, team);
+  const from = mine.length ? mine[0] : enemyMain(team);
+  for (const e of s.entities) {
+    if (e.team !== foe || e.kind !== 'base' || e.hp <= 0) continue;
+    if (isHiddenFrom(s, team, e)) continue;
+    const d = (e.x - from[0]) ** 2 + (e.y - from[1]) ** 2;
+    if (d < best) {
+      best = d;
+      bx = e.x;
+      by = e.y;
+    }
+  }
+  return bx >= 0 ? [bx, by] : enemyMain(team);
+}
+
+/**
+ * 전방 집결지 — 내 기지와 목표의 중간쯤.
+ *
+ * 여기가 없으면 병력이 **줄줄이 흘러들어간다**: 생산 즉시 한 기씩 출발해
+ * 52타일을 혼자 건너다 앞에서 각개격파된다. 실측에서 27기 중 최근접만
+ * 4타일이고 중앙값이 25타일이었다 — 절반이 늘 이동 중이라 한 덩어리로
+ * 도착하는 순간이 영영 오지 않았고, 그래서 경기가 300초 상한까지 갔다.
+ */
+function stagingPoint(s, team) {
+  const mine = ownBasePositions(s, team);
+  const from = mine.length ? mine[0] : enemyMain(team);
+  const [tx, ty] = strikeAt(s, team);
+  return [
+    Math.trunc(from[0] + (tx - from[0]) * 0.55),
+    Math.trunc(from[1] + (ty - from[1]) * 0.55),
+  ];
+}
+
+/**
+ * 출진 지휘 — 먼저 모으고, 모이면 보낸다.
+ *
+ * 집결지(Y)를 전방에 찍어 두면 새로 나온 병력이 알아서 그리로 걸어가
+ * 대기한다. `minArmy`만큼 쌓이면 전군에 공격 이동을 건다 — 공격 이동이라
+ * 가는 길에 만난 것과 싸운다(확장을 지나치지 않는다).
+ */
+function push(s, team, minArmy) {
+  if (s.tick % PUSH_EVERY >= DECIDE_EVERY) return null;
+  const me = s.players[team];
+  const [sx, sy] = stagingPoint(s, team);
+  // 집결지를 아직 안 찍었거나 목표가 바뀌어 멀어졌으면 다시 찍는다.
+  // 같은 자리에 다시 찍으면 해제되므로(setRally) 넉넉히 멀 때만 옮긴다
+  if (
+    !blockedAt(sx, sy) &&
+    (!me.rally || Math.hypot(me.rally.x - sx, me.rally.y - sy) > 8000)
+  ) {
+    return { kind: 'rally', id: '', x: sx, y: sy };
+  }
+  if (armyCost(s, team) < minArmy) return null;
+  const ids = armyIds(s, team);
+  if (!ids.length) return null;
+  const [x, y] = strikeAt(s, team);
+  return { kind: 'attack', id: ids.join(','), x, y };
+}
+
 const STRATS = {
   // 진짜 올인도 최소한의 경제는 깐다 — 일꾼 4기까지만 (기본 2기로는
   // 2코스트 유닛 하나에 8초가 걸려 러시 자체가 성립하지 않는다)
+  // 러시는 모으지 않는다 — 나오는 족족 보낸다. 그게 러시다
   RUSH: (s, team, rng) =>
+    // 모아서 나가 봤지만 더 나빴다 (GREED 13%→8%, TECH 60%→17%) —
+    // 러시의 값어치는 이른 압박이지 뭉치가 아니다
+    push(s, team, 6 * MINERAL_SCALE) ??
     (s.players[team].workers < 6 ? trainWorker(s, team) : null) ??
-    produce(s, team, rng, { cheap: true }),
-  GREED: (s, team, rng) =>
-    trainWorker(s, team) ??
-    expand(s, team) ??
-    produce(s, team, rng, { reserve: BASE_BUILD_COST }),
+    produce(s, team, rng, { cheap: true }) ??
+    // 천장에 닿으면 병력 카드가 안 나온다 — 남는 돈은 강화로 간다
+    buyUpgrade(s, team),
+  // 경제는 모아서 한 번에 나간다 — 찔끔 내보내면 헌납이고, 그 물량이
+  // 확장 값을 회수하는 순간이 이 전략의 존재 이유다
+  GREED: (s, team, rng) => {
+    const army = armyCost(s, team);
+    // 욕심에는 값을 치른다.
+    //
+    // 예전엔 일꾼도 확장도 공짜였다 — 상한까지 일꾼을 채우고 60초에
+    // 4기지를 깔면서 **병력이 120초 내내 0**이었다(실측 96:0). 그건
+    // 전략이 아니라 헌납이다. 이제 첫 기지 몫(일꾼 8기·앞마당 1개)까지는
+    // 공짜지만, 그 위로는 일꾼 하나에 1코씩, 확장 하나에 12코씩 병력이
+    // 먼저 서 있어야 한다
+    const wantBases = army >= BASE_BUILD_COST ? 4 : 2;
+    return (
+      push(s, team, 20 * MINERAL_SCALE) ??
+      (army >= workerDebt(s, team) ? trainWorker(s, team) : null) ??
+      expand(s, team, wantBases) ??
+      // **돈이 쌓이면 질로 바꾼다.** 연구를 맨 뒤에 두면 `produce`가 실패할
+      // 때(=천장이 찬 순간)에만 걸린다. 그래서 천장에 닿는 맵(쌍둥이 해안)
+      // 에서는 T2까지 가고, 안 닿는 맵(대협곡)에서는 394코를 쥔 채 T1도
+      // 없이 늙어 죽었다 — 같은 봇인데 맵이 전략을 바꿔 버린 것이다.
+      // 24코가 넘게 남으면 그건 쓸 곳을 못 찾은 돈이다
+      (s.players[team].minerals > 24 * MINERAL_SCALE
+        ? buyUpgrade(s, team) ?? research(s, team, 0)
+        : null) ??
+      // 기지를 다 깔면 예비금은 죽은 돈이다 — 그대로 두면 생산이 막힌다
+      produce(s, team, rng, { reserve: baseCount(s, team) < wantBases ? BASE_BUILD_COST : 0 }) ??
+      // 천장이 차면 병력 카드가 안 나온다. 쌓인 돈은 질로 바꾼다 —
+      // 이게 천장을 둔 이유이자, 부자가 부자답게 두는 수다
+      buyUpgrade(s, team) ??
+      research(s, team)
+    );
+  },
   // 테크의 원형: 포탑 뒤에서 웅크리고 테크 → T2가 나오면 밀고 나간다.
   // 영원히 웅크리면 기지 수 판정에서 자동으로 진다 — 웅크림은 수단이지 목표가 아니다
   TECH: (s, team, rng) => {
@@ -283,17 +535,34 @@ const STRATS = {
     const f = getFaction(me.faction);
     const t2 = f.tech.some((n) => n.tier === 2 && me.unlocked.includes(n.unit));
     return (
+      // T2가 뜨고 한 무리가 모여야 나간다 — 웅크림은 수단이지 목표가 아니다
+      (t2 ? push(s, team, 24 * MINERAL_SCALE) : null) ??
       // 첫 포탑이 일꾼보다 먼저다 — 러시는 34초에 도착한다
       buildDefense(s, team, rng, 1) ??
-      trainWorker(s, team) ??
+      // 투자는 병력으로 값을 치른다 — GREED에 쓴 규칙과 같다.
+      // 안 걸면 앞마당을 먹은 뒤 일꾼·강화가 돈을 다 먹어 **공급 0/28**로
+      // 늙어 죽는다 (실측: 220초까지 병력 4)
+      (armyCost(s, team) >= workerDebt(s, team) ? trainWorker(s, team) : null) ??
       buildDefense(s, team, rng) ??
+      // 앞마당은 웅크림의 일부다 — 천장이 기지에 묶인 뒤로 1기지 테크는
+      // 28칸에 갇혀 늙어 죽는다 (실측: 120초까지 1기지, GREED에 0%)
+      expand(s, team, 2) ??
       // 포탑 뒤 앞마당 — 1기지 수입으로는 포탑 유지비+연구+병력을 다 못
       // 감당해 빈곤 대치로 늙어 죽는다 (실측: 5분 무승부). 단 러시 창
       // (~80초) 안에 확장비를 모으면 그 돈이 병력이 안 돼 그대로 죽는다
       // (실측: RUSH 98%) — 창이 닫힌 뒤에만 저축·확장한다
-      (s.tick > 20 * 90 ? expand(s, team, 2) : null) ??
+      // 연구가 확장보다 먼저다 — 테크가 이 전략의 이름이자 승리 수단인데
+      // 확장이 앞에 있으면 모은 12가 매번 기지로 나가 T2에 영영 못 닿는다
       research(s, team, 0, true) ??
-      buyUpgrade(s, team, 4 * MINERAL_SCALE) ??
+      // 천장에 닿았으면 러시 창이 닫히길 기다릴 이유가 없다 — 확장이
+      // 곧 천장이라, 안 늘리면 병력이 그 자리에서 멈춘다
+      (s.tick > 20 * 90 || supplyUsedOf(s, team) >= supplyCapOf(s, team)
+        ? expand(s, team, 2)
+        : null) ??
+      // 강화도 마찬가지다 — 지킬 병력이 없는데 올린 공격력은 0에 곱해진다
+      (armyCost(s, team) >= 8 * MINERAL_SCALE
+        ? buyUpgrade(s, team, 4 * MINERAL_SCALE)
+        : null) ??
       castSpell(s, team) ??
       // T2 전에는 집(고지 주머니 — 올라오는 러시가 30% 깎인다). T2 후에도
       // 병력이 한 무리 모일 때까지 집에서 싸운다 — 한 기씩 전진하면
@@ -301,10 +570,17 @@ const STRATS = {
       produce(s, team, rng, {
         // 러시 창이 닫히면 확장비(8)를 모은다 — 예비금 4로는 8이 영영 안
         // 모이고(실측: expand 무발동), 창 안에 모으면 병력이 비어 죽는다
+        // 러시 창(~90초)이 닫히면 **다음 연구비를 남긴다**. 창 안에 모으면
+        // 그 돈이 병력이 안 돼 그대로 죽는다(라운드 6.5), 창 밖에서 안 모으면
+        // 영영 T2에 못 닿는다 — 둘 다 실측으로 겪었다
+        // 앞마당을 먹을 때까지는 확장비를 남긴다 — 예비금 4로는 돈이 7에서
+        // 멈춰 12에 영영 못 닿았고(실측), 그래서 220초까지 1기지였다
         reserve:
-          s.tick > 20 * 90 && baseCount(s, team) < 2
+          baseCount(s, team) < 2
             ? BASE_BUILD_COST
-            : 4 * MINERAL_SCALE,
+            : s.tick > 20 * 90
+              ? techReserve(s, team)
+              : 4 * MINERAL_SCALE,
         defend: !t2 || armyCost(s, team) < 24 * MINERAL_SCALE,
       })
     );
@@ -316,6 +592,7 @@ const STRATS = {
     const [t1, t2] = AIR_PATH[me.faction];
     const airReady = isUnlocked(me, t2);
     return (
+      (airReady ? push(s, team, 16 * MINERAL_SCALE) : null) ??
       buildDefense(s, team, rng, 1) ??
       trainWorker(s, team) ??
       buildDefense(s, team, rng) ??
@@ -329,17 +606,47 @@ const STRATS = {
     );
   },
   BAL: (s, team, rng) =>
+    push(s, team, 12 * MINERAL_SCALE) ??
     trainWorker(s, team) ??
     expand(s, team) ??
     research(s, team) ??
     buyUpgrade(s, team, 6 * MINERAL_SCALE) ??
     castSpell(s, team) ??
     produce(s, team, rng, { reserve: 0 }),
+  /**
+   * 정보를 쓰는 원형 — 훔쳐본 값으로 **언제 나갈지**를 고른다.
+   *
+   * 자동 전진을 걷어내면서 정보가 붙을 자리가 생겼다. 예전에는 병력이
+   * 알아서 나갔으니 "상대를 안다"가 바꿀 수 있는 게 구매 목록뿐이었고,
+   * 그래서 정보의 승률 가치가 0에 붙어 있었다. 이제 출진 시점이 결정이다:
+   *
+   *   · 내가 더 세다        → 지금 나간다 (상대가 회복하기 전에)
+   *   · 상대가 배를 불렸다  → 지금 나간다 (병력이 얇을 때)
+   *   · 상대가 더 세다      → 안 나간다. 지키고 모은다
+   *   · 상대가 공중을 갔다  → 대공을 확보하고, 그 전에는 안 나간다
+   */
   REACT: (s, team, rng) => {
     const o = observe(s, team);
     const early = s.tick < 20 * 75;
-    // 일꾼 수 판독(올인 예고)도 실험했지만 대응 정책이 방어에 갇혀
-    // 역효과였다 — 감지보다 "언제 반격으로 전환하나"가 어렵다 (라운드 4)
+
+    // 상대가 공중으로 갔는데 내가 대공이 없다 — 나가면 헌납이다
+    const needAir = o.foeAir >= 40 && !hasAntiAir(s, team);
+    if (needAir) {
+      return (
+        buildDefense(s, team, rng) ??
+        research(s, team, 0, true) ??
+        produce(s, team, rng, { reserve: 0 })
+      );
+    }
+
+    // 유리할 때만 나간다 — 이게 정보가 승률로 바뀌는 지점이다
+    const stronger = o.myArmy > o.foeArmy + 4 * MINERAL_SCALE;
+    const foeGreedy = o.foeBases > o.myBases || (o.foeTeching && o.myArmy >= 6 * MINERAL_SCALE);
+    if (stronger || foeGreedy) {
+      const p = push(s, team, 6 * MINERAL_SCALE);
+      if (p) return p;
+    }
+
     if (early && o.foeArmy > o.myArmy + 4 * MINERAL_SCALE) {
       // 상대가 초반부터 병력을 쏟는다 → 포탑만 얹은 표준 매크로.
       // 수비 배치·확장 중단을 강제한 변형들은 전부 표준보다 나빴다
@@ -347,13 +654,19 @@ const STRATS = {
       // 한 수로 좁혀야 산다 (라운드 4의 교훈과 일치)
       return buildDefense(s, team, rng) ?? STRATS.BAL(s, team, rng);
     }
-    if (o.foeBases > o.myBases || (o.foeTeching && o.myArmy >= 6 * MINERAL_SCALE)) {
-      // 상대가 배를 불리거나 테크에 돈을 묻었다 → 지금 찌른다.
-      // (구 조건 "상대 병력 < 내 병력"은 병력을 유지하는 새 TECH 상대로
-      // 영영 안 열려 찌르기가 한 번도 안 나갔다 — REACT가 BAL과 완전 동일)
+    if (foeGreedy) {
+      // 상대가 배를 불리거나 테크에 돈을 묻었다 → 싼 병력으로 찌른다
       return produce(s, team, rng, { cheap: true }) ?? trainWorker(s, team);
     }
-    return STRATS.BAL(s, team, rng);
+    // 불리하면 나가지 않는다 — BAL의 출진을 건너뛰고 경제·병력만 굴린다
+    return (
+      trainWorker(s, team) ??
+      expand(s, team) ??
+      research(s, team) ??
+      buyUpgrade(s, team, 6 * MINERAL_SCALE) ??
+      castSpell(s, team) ??
+      produce(s, team, rng, { reserve: 0 })
+    );
   },
 };
 
@@ -434,7 +747,46 @@ if (args.includes('--trace')) {
         const p = s.players[t];
         const bases = s.entities.filter((e) => e.kind === 'base' && e.team === t);
         const hp = bases.reduce((x, e) => x + Math.max(0, e.hp), 0);
-        return `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers} 기지${bases.length}(${hp})`;
+        const f = getFaction(p.faction);
+        const t2 = f.tech.filter((n) => n.tier === 2 && p.unlocked.includes(n.unit)).length;
+        const t1 = f.tech.filter((n) => n.tier === 1 && p.unlocked.includes(n.unit)).length;
+        const q = s.queue.filter((o) => o.team === t).length;
+        // 병력이 적 기지에서 얼마나 떨어져 있나 — 드립 전진을 잡는 눈이다.
+        // 물량이 3배인데 기지가 안 깎이면 못 싸운 게 아니라 못 닿은 것이다
+        const foeBases = s.entities.filter(
+          (e) => e.kind === 'base' && e.team !== t && e.hp > 0,
+        );
+        const ds = [];
+        for (const e of s.entities) {
+          if (e.kind !== 'unit' || e.team !== t || e.hp <= 0) continue;
+          let best = Infinity;
+          for (const b of foeBases) best = Math.min(best, Math.hypot(e.x - b.x, e.y - b.y));
+          if (best < Infinity) ds.push(best / 1000);
+        }
+        ds.sort((a, b) => a - b);
+        const far = ds.length ? Math.round(ds[ds.length >> 1]) : -1;
+        // 뭉쳐 왔나 흩어져 왔나 — 사분위 간 거리. 크면 앞뒤로 늘어져
+        // 각개격파당한다는 뜻이다 (드립 전진의 지표)
+        const q1 = ds.length ? ds[Math.floor(ds.length * 0.25)] : 0;
+        const q3 = ds.length ? ds[Math.floor(ds.length * 0.75)] : 0;
+        const spread = ds.length ? Math.round(q3 - q1) : -1;
+        // 무엇을 들고 있나 — "테크했는데 왜 지나"는 편성을 봐야 갈린다
+        const mix = new Map();
+        for (const e of s.entities) {
+          if (e.kind !== 'unit' || e.team !== t || e.hp <= 0) continue;
+          mix.set(e.unit, (mix.get(e.unit) ?? 0) + 1);
+        }
+        const comp = [...mix.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([id, n]) => `${getUnit(id).name}${n}`)
+          .join(',');
+        return (
+          `팀${t} 병력${Math.round(armyCost(s, t) / 1000)} 일꾼${p.workers}` +
+          ` 기지${bases.length}(${hp}) 돈${Math.round(p.minerals / 1000)}` +
+          ` 공급${supplyUsedOf(s, t)}/${supplyCapOf(s, t)} T1:${t1} T2:${t2} 큐${q}` +
+          ` ${far >= 0 ? far : '-'}타일±${spread >= 0 ? spread : '-'} [${comp}]`
+        );
       });
       console.log(`${String(s.tick / 20).padStart(3)}s  ${line.join('   ')}`);
     }
@@ -525,8 +877,28 @@ for (const foe of fixed) {
 const reactPct = (100 * reactW) / Math.max(1, reactN);
 const balPct = (100 * balW) / Math.max(1, balN);
 console.log(
-  `\n종합: REACT ${reactPct.toFixed(1)}% vs BAL ${balPct.toFixed(1)}%` +
-    ` → 정보의 승률 가치 ≈ ${(reactPct - balPct).toFixed(1)}%p`,
+  `\n고정 봇 상대: REACT ${reactPct.toFixed(1)}% vs BAL ${balPct.toFixed(1)}%` +
+    ` → 차이 ${(reactPct - balPct).toFixed(1)}%p`,
+);
+
+// 위 지표는 **포화된다**: BAL이 고정 봇들을 이미 87%로 이겨 정보가 드러날
+// 여지가 없다(러시·경제 상대로는 양쪽 다 100%). 정보의 값은 둘을 직접
+// 붙여야 보인다 — 여기는 여지가 절반이다.
+const h2h = runPair('REACT', 'BAL');
+const decided = h2h.aw + h2h.bw;
+console.log(
+  `정면 대결: REACT ${h2h.aw}승 ${h2h.bw}패 ${h2h.n - decided}무` +
+    ` → 결정된 판 기준 ${decided ? ((100 * h2h.aw) / decided).toFixed(0) : '—'}%` +
+    '  ← 정보의 승률 가치',
+);
+
+// 진영 편향 감시 — 점대칭 맵의 미러는 반반이어야 한다. 한쪽으로 쏠리면
+// 맵이나 시뮬에 자리 이점이 있다는 뜻이고, 그러면 위의 모든 수치가 흔들린다
+const mirror = runPair('BAL', 'BAL');
+const mDecided = mirror.aw + mirror.bw;
+console.log(
+  `미러 편향: 아래 진영 ${mirror.aw} : ${mirror.bw} 위 진영 (무 ${mirror.n - mDecided})` +
+    `${mDecided && Math.abs(mirror.aw - mirror.bw) > mDecided * 0.3 ? '  ⚠️ 자리 이점' : ''}`,
 );
 
 const med = (a) => (a.length ? a.sort((x, y) => x - y)[Math.floor(a.length / 2)] : NaN);

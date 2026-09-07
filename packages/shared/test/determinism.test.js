@@ -17,11 +17,18 @@ import {
   BASE_BUILD_TICKS,
   BASE_MINERAL_RESERVE,
   BASE_SITES,
+  SUPPLY_MAIN,
+  SUPPLY_PER_EXPANSION,
+  HURT_PRODUCE_LOCK,
+  hurtLocked,
+  supplyOf,
+  supplyCapOf,
+  supplyUsedOf,
   DEPLOY_RADIUS,
   FACTION_IDS,
   MATCH_TICKS,
   OVERTIME_TICKS,
-  MINERAL_MAX,
+  MINERAL_SANDBOX,
   SKILL_CHARGE_TICKS,
   MINERAL_SCALE,
   MINERAL_START,
@@ -88,12 +95,39 @@ import {
   STAGE_BUDGET_ROLLBACK_PCT,
   INVASION_BUDGET_START,
   waveTypeOf,
+  radiusOf,
+  isHiddenFrom,
+  sightCirclesOf,
+  SIGHT_UNIT,
+  UNIT_RADIUS,
+  UNIT_RADIUS_LARGE,
+  UNIT_RADIUS_SMALL,
+  HIGH_GROUND_SIGHT_PCT,
+  reachOf,
+  PRODUCE_QUEUE_MAX,
 } from '../dist/index.js';
 
 /* ── 헬퍼 ──────────────────────────────────────────────────────────────── */
 
 /** 기본 대전 구성 — 기갑단 미러전 */
 const MIRROR = ['steel', 'steel'];
+
+/** 자원이 문제가 아님을 분명히 하는 넉넉한 보유량 (상한은 없다) */
+const RICH = 100 * MINERAL_SCALE;
+
+/**
+ * 생산을 명령하고 **유닛이 나올 때까지** 돌린다 (라운드 50: 대전은 예약제).
+ * 반환값은 새로 나온 엔티티들. 명령이 거절되면 null.
+ */
+function produceAndWait(s, team, unitId, x, y, maxTicks = 400) {
+  const before = s.entities.length;
+  if (!applyCommand(s, cmd(s.tick, team, 'unit', unitId, x, y))) return null;
+  for (let i = 0; i < maxTicks; i++) {
+    step(s, []);
+    if (s.entities.length > before) return s.entities.slice(before);
+  }
+  return [];
+}
 
 const cmd = (execTick, team, kind, id, x = 0, y = 0) => ({ execTick, team, kind, id, x, y });
 
@@ -299,10 +333,10 @@ test('일꾼은 정원을 넘겨 살 수 없다', () => {
   assert.equal(workerCapacity(s, 0), WORKER_CAP_PER_BASE, '본진 하나의 정원이 기대와 다르다');
 
   // 자원을 넉넉히 주고 정원보다 많이 사려고 해본다
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   for (let i = 0; i < WORKER_CAP_PER_BASE + 5; i++) {
     step(s, [cmd(s.tick, 0, 'worker', '')]);
-    s.players[0].minerals = MINERAL_MAX; // 자원 부족이 아니라 정원으로 막히는지 본다
+    s.players[0].minerals = RICH; // 자원 부족이 아니라 정원으로 막히는지 본다
   }
   assert.equal(s.players[0].workers, WORKER_CAP_PER_BASE, '정원을 넘겨 일꾼이 늘었다');
 });
@@ -310,18 +344,25 @@ test('일꾼은 정원을 넘겨 살 수 없다', () => {
 test('확장하면 정원이 늘고 그만큼 일꾼을 더 붙일 수 있다', () => {
   const s = createState(5, MIRROR);
   const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
 
   assert.equal(workerCapacity(s, 0), WORKER_CAP_PER_BASE * 2, '확장으로 정원이 늘지 않았다');
 });
 
-test('미네랄은 상한을 넘지 않는다', () => {
+test('미네랄은 상한 없이 쌓인다 — 잘 쓰는 것이 실력이다', () => {
+  // 보유 상한(30)은 라운드 50에 없앴다. 상한이 있으면 "더 벌어도 소용없다"가
+  // 되어 남는 돈을 급하게 태우는 것이 최적이 된다
   const s = createState(5, MIRROR);
   s.players[0].workers = WORKER_CAP_PER_BASE;
   for (let i = 0; i < 2000; i++) step(s, []);
-  assert.equal(s.players[0].minerals, MINERAL_MAX);
+  assert.ok(
+    s.players[0].minerals > 30 * MINERAL_SCALE,
+    `예전 상한(30)을 넘겨 쌓여야 한다 (${s.players[0].minerals / MINERAL_SCALE})`,
+  );
+  // 매장량이 유한하므로 무한히 쌓이지는 않는다 — 그게 진짜 브레이크다
+  assert.ok(s.players[0].minerals <= BASE_MINERAL_RESERVE);
 });
 
 test('기지 매장량은 유한하고, 고갈되면 수입도 정원도 사라진다', () => {
@@ -378,8 +419,8 @@ test('미네랄이 모자라면 기지를 세울 수 없다', () => {
 test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
   const s = createState(5, MIRROR);
   const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
-  s.players[0].minerals = MINERAL_MAX;
-  s.players[1].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
+  s.players[1].minerals = RICH;
 
   step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
   const after = baseCount(s, 0);
@@ -392,7 +433,7 @@ test('이미 차지한 지점에는 기지를 세울 수 없다', () => {
 test('본진 자리는 상대도 시작부터 점유되어 있어 세울 수 없다', () => {
   const s = createState(5, MIRROR);
   const enemyMain = BASE_SITES.find((b) => b.startFor === 1);
-  s.players[0].minerals = MINERAL_MAX;
+  s.players[0].minerals = RICH;
   const before = baseCount(s, 0);
   step(s, [cmd(s.tick, 0, 'base', '', enemyMain.x, enemyMain.y)]);
   assert.equal(baseCount(s, 0), before, '상대 본진 자리에 기지를 세웠다');
@@ -480,14 +521,12 @@ test('기지 반경 안에만 유닛을 배치할 수 있다', () => {
   for (let i = 0; i < 700; i++) step(s, []); // 확장비 12를 모을 시간 (2일꾼 0.24/s)
   const unitId = getFaction('steel').tech.find((n) => n.cost === 0).unit;
 
-  const before = s.entities.length;
   // 본진에서 아주 먼 곳 (강 건너)
-  step(s, [cmd(s.tick, 0, 'unit', unitId, 9000, 3000)]);
-  assert.equal(s.entities.length, before, '기지에서 먼 곳에 배치되었다');
+  assert.equal(produceAndWait(s, 0, unitId, 9000, 3000), null, '기지에서 먼 곳에 배치되었다');
 
   const [x, y] = nearOwnBase(s, 0, 0, -2000);
-  step(s, [cmd(s.tick, 0, 'unit', unitId, x, y)]);
-  assert.ok(s.entities.length > before, '기지 근처인데 배치되지 않았다');
+  const made = produceAndWait(s, 0, unitId, x, y);
+  assert.ok(made && made.length > 0, '기지 근처인데 배치되지 않았다');
 });
 
 test('전진 기지를 세우면 그만큼 배치 구역이 앞으로 나온다', () => {
@@ -746,9 +785,12 @@ function place(s, team, unitId, x, y) {
     life: -1,
     target: -1,
     flying: u.flying,
-    charge: 0,
+    charge: u.chargeStart ?? 0,
     orderX: -1,
     orderY: -1,
+    orderAttack: 0,
+    hold: 0,
+    reveal: -1,
     siteId: -1,
     isMain: false,
     reserve: 0,
@@ -816,7 +858,12 @@ test('기지는 공중 유닛을 공격한다', () => {
 test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다', () => {
   const s = createState(5, MIRROR);
   const air = place(s, 0, 'gunship', 9000, 20000);
-  void air;
+  // 목적지를 **명령으로** 준다. 예전에는 표적 없는 유닛의 기본 행동에
+  // 기댔는데, 그 행동이 바뀔 때마다(안개·지점 순회) 경로가 달라져 이
+  // 테스트가 같이 흔들렸다. 검사하려는 것은 "공중은 지형을 무시한다"이지
+  // "기본 행동이 어디로 향하나"가 아니다
+  const foeMain = mainBase(s, 1);
+  assert.ok(applyCommand(s, cmd(0, 0, 'move', String(air.id), foeMain.x, foeMain.y)));
 
   let flewOverWall = false;
   for (let i = 0; i < 300; i++) {
@@ -831,7 +878,11 @@ test('공중 유닛은 다리를 거치지 않고 강을 직선으로 건넌다'
 
 test('지상 유닛은 벽을 통과하지 못하고 돌아간다', () => {
   const s = createState(5, MIRROR);
-  place(s, 0, 'scoutcar', 18000, 18000);
+  const car = place(s, 0, 'scoutcar', 18000, 18000);
+  // 대전 유닛은 명령이 없으면 제자리를 지키므로 목적지를 준다.
+  // 검사하려는 것은 "지상은 지형을 못 뚫는다"이지 기본 행동이 아니다
+  const foeMain = mainBase(s, 1);
+  assert.ok(applyCommand(s, cmd(0, 0, 'move', String(car.id), foeMain.x, foeMain.y)));
 
   let moved = 0;
   let lastX = 18000;
@@ -1224,7 +1275,7 @@ test('실험장 — 반경 해제·무한 자원·승패 없음, 해시에 모�
 
   // 전 유닛 해금 상태로 시작한다
   assert.ok(s.players[0].unlocked.length > 5, '실험장은 전 유닛 해금');
-  assert.equal(s.players[0].minerals, MINERAL_MAX);
+  assert.equal(s.players[0].minerals, MINERAL_SANDBOX);
 
   // 기지 반경 밖(맵 한가운데)에 배치가 통한다 — 양 팀 모두
   const mid = 24 * 1000;
@@ -1238,7 +1289,7 @@ test('실험장 — 반경 해제·무한 자원·승패 없음, 해시에 모�
     '실험장은 어디든 배치된다',
   );
   // 자원은 계속 만땅
-  assert.equal(s.players[0].minerals, MINERAL_MAX);
+  assert.equal(s.players[0].minerals, MINERAL_SANDBOX);
 
   // 본진이 죽어도 경기는 계속된다
   for (const e of s.entities) if (e.kind === 'base' && e.isMain && e.team === 0) e.hp = 0;
@@ -1361,12 +1412,9 @@ test('침공 집결 깃발 — 수비군이 모이고, 재지정은 해제, 지�
 test('이동 명령 — 전진 본능을 이기고 도착하면 스스로 해제, 남의 유닛은 못 움직인다', () => {
   const s = createState(9, ['steel', 'swarmhive'], 'coast');
   const main = s.entities.find((e) => e.kind === 'base' && e.team === 0);
-  for (let i = 0; i < 3; i++) {
-    applyCommand(s, {
-      execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
-      x: main.x + (i - 1) * 900, y: main.y - 1200,
-    });
-  }
+  s.players[0].minerals = RICH;
+  // 대전은 예약제라 굽는 시간이 필요하다 (라운드 50)
+  produceAndWait(s, 0, 'rifleman', main.x, main.y - 1200);
   for (let i = 0; i < 25; i++) step(s, []);
   const mine = () => s.entities.filter((e) => e.kind === 'unit' && e.team === 0);
   const ids = mine().map((e) => e.id);
@@ -2073,7 +2121,7 @@ test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된
   const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
   const p = s.players[0];
   // 병력을 세운다 (정산 대상). 시뮬이 직접 만들게 하지 않고 배치 명령을 쓴다
-  p.minerals = MINERAL_MAX;
+  p.minerals = RICH;
   const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
   let placed = 0;
   for (let i = 0; i < 6; i++) {
@@ -2082,7 +2130,7 @@ test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된
       x: base.x + (i - 3) * 900, y: base.y - 2600,
     });
     if (okCmd) placed++;
-    p.minerals = MINERAL_MAX; // 배치 성공을 단언하기 위해 돈 걱정을 지운다
+    p.minerals = RICH; // 배치 성공을 단언하기 위해 돈 걱정을 지운다
   }
   assert.ok(placed >= 4, `병력이 실제로 섰다 (${placed}기)`);
   for (let i = 0; i < 40; i++) step(s, []);
@@ -2095,7 +2143,7 @@ test('무대를 넘기면 두고 가는 병력·확장이 미네랄로 정산된
   assert.ok(pushStage(s), '무대를 넘겼다');
   assert.equal(s.stage, 1, '2무대');
   assert.ok(s.salvage > 0, `정산이 있었다 (+${s.salvage})`);
-  assert.ok(p.minerals > before - MINERAL_MAX, '정산이 미네랄로 들어왔다');
+  assert.ok(p.minerals > before - RICH, '정산이 미네랄로 들어왔다');
 
   // 정산액은 판 것의 STAGE_REFUND_PCT — 소총병 코스트로 하한을 확인한다
   const floor = Math.trunc((army * getUnit('rifleman').cost * MINERAL_SCALE * STAGE_REFUND_PCT) / 100);
@@ -2109,7 +2157,7 @@ test('정산에는 상한이 있다 (스노볼 차단)', () => {
   const base = s.entities.find((e) => e.kind === 'base' && e.team === 0 && e.isMain);
   // 상한을 확실히 넘길 만큼 세운다
   for (let i = 0; i < 40; i++) {
-    p.minerals = MINERAL_MAX;
+    p.minerals = RICH;
     applyCommand(s, {
       execTick: s.tick, team: 0, kind: 'unit', id: 'rifleman',
       x: base.x + ((i % 7) - 3) * 700, y: base.y - 2200 - Math.trunc(i / 7) * 700,
@@ -2139,13 +2187,15 @@ test('영웅과 소환물은 정산 대상이 아니다 (영웅은 따라오고,
     '영웅은 무대를 따라온다');
 });
 
-test('보유 상한을 넘긴 정산금을 채굴이 깎지 않는다', () => {
+test('채굴은 이미 쌓인 정산금을 깎지 않는다', () => {
   const s = createState(5, ['steel', 'swarmhive'], 'siege', false, true);
   const p = s.players[0];
-  p.minerals = MINERAL_MAX + 20 * MINERAL_SCALE; // 정산으로 넘겨받은 상태를 흉내
+  p.minerals = 50 * MINERAL_SCALE; // 정산으로 크게 넘겨받은 상태를 흉내
   const before = p.minerals;
   for (let i = 0; i < 200; i++) step(s, []);
-  assert.equal(p.minerals, before, `채굴이 넘친 몫을 깎지 않는다 (${before} → ${p.minerals})`);
+  // 상한이 사라졌으므로 채굴은 **더하기만** 한다 — 예전에는 천장 위의 몫을
+  // 매 틱 깎아 정산금이 증발했다 (라운드 48에 고친 버그의 회귀 방지)
+  assert.ok(p.minerals >= before, `채굴이 쌓인 몫을 깎았다 (${before} → ${p.minerals})`);
 });
 
 test('대전·실험장에는 정산이 없다 (침공 전용)', () => {
@@ -2154,7 +2204,7 @@ test('대전·실험장에는 정산이 없다 (침공 전용)', () => {
   assert.equal(v.salvage, 0, '대전은 정산을 모른다');
   assert.equal(v.stage, 0, '대전은 무대를 모른다');
   // 그리고 대전의 보유 상한은 그대로다
-  assert.ok(v.players[0].minerals <= MINERAL_MAX, `대전 미네랄은 상한 안 (${v.players[0].minerals})`);
+  assert.equal(v.salvage, 0, '대전에 정산이 들어왔다');
 });
 
 test('무대를 넘기면 파도 예산이 되감긴다 (번호·조성 예고는 그대로)', () => {
@@ -2193,4 +2243,746 @@ test('되감기에도 예산은 시작값 아래로 내려가지 않는다', () 
   assert.ok(pushStage(s), '3무대');
   assert.ok(s.waveBudget >= INVASION_BUDGET_START,
     `두 번 되감아도 하한 (${s.waveBudget})`);
+});
+
+/* ── 몸집 (오너 지시: 유닛·기지 3배, 크기별로 겹치지 않게) ─────────────── */
+
+test('유닛 몸집은 크기 등급을 따른다 — 작은 놈이 큰 놈보다 자리를 덜 먹는다', () => {
+  const s = createState(5, MIRROR);
+  const small = place(s, 0, 'gnawer', 24000, 30000);
+  const medium = place(s, 0, 'zealot', 24000, 32000);
+  const large = place(s, 0, 'devourer', 24000, 34000);
+
+  assert.equal(radiusOf(small), UNIT_RADIUS_SMALL);
+  assert.equal(radiusOf(medium), UNIT_RADIUS);
+  assert.equal(radiusOf(large), UNIT_RADIUS_LARGE);
+  assert.ok(
+    radiusOf(small) < radiusOf(medium) && radiusOf(medium) < radiusOf(large),
+    '크기 등급이 반경 순서로 이어지지 않는다',
+  );
+});
+
+test('겹쳐 놓은 유닛은 두 몸집의 합만큼 벌어진다', () => {
+  const s = createState(5, MIRROR);
+  // 같은 자리에 겹쳐 둔다 — 밀어내기가 자기 몸집을 알고 있어야 벌어진다
+  const a = place(s, 0, 'devourer', 24000, 30000);
+  const b = place(s, 0, 'devourer', 24100, 30000);
+  const want = radiusOf(a) + radiusOf(b);
+  for (let i = 0; i < 200; i++) step(s, []);
+  const A = byId(s, a.id);
+  const B = byId(s, b.id);
+  const d = Math.hypot(A.x - B.x, A.y - B.y);
+  // 밀어내기는 한 틱에 겹친 만큼만 미므로 완전히 딱 떨어지진 않는다 — 9할이면 벌어진 것이다
+  assert.ok(d > want * 0.9, `대형 둘이 ${Math.round(d)}밖에 안 벌어졌다 (기대 ${want})`);
+});
+
+/* ── 전장의 안개 (대전 전용) ───────────────────────────────────────────── */
+
+test('안개는 대전에만 걸린다 — 침공과 실험장은 전부 보인다', () => {
+  assert.ok(sightCirclesOf(createState(5, MIRROR), 0), '대전에 안개가 없다');
+  assert.equal(sightCirclesOf(createState(5, MIRROR, DEFAULT_MAP_ID, false, true), 0), null);
+  assert.equal(sightCirclesOf(createState(5, MIRROR, DEFAULT_MAP_ID, true, false), 0), null);
+});
+
+test('시야 밖의 적 유닛은 보이지도, 타겟이 되지도 않는다', () => {
+  const s = createState(5, MIRROR);
+  // 서로 시야(8타일)의 두 배 넘게 떨어뜨린다
+  const me = place(s, 0, 'rifleman', 24000, 32000);
+  const foe = place(s, 1, 'rifleman', 24000, 32000 - SIGHT_UNIT * 2);
+  step(s, []);
+  assert.ok(isHiddenFrom(s, 0, foe), '시야 밖 적이 보인다');
+  assert.notEqual(byId(s, me.id).target, foe.id, '시야 밖 적을 겨냥했다');
+});
+
+test('시야 안에 들어온 적은 보이고 타겟이 된다', () => {
+  const s = createState(5, MIRROR);
+  const me = place(s, 0, 'rifleman', 24000, 27000);
+  const foe = place(s, 1, 'rifleman', 24000, 24000); // 3타일
+  step(s, []);
+  assert.ok(!isHiddenFrom(s, 0, foe), '코앞의 적이 안 보인다');
+  assert.equal(byId(s, me.id).target, foe.id);
+});
+
+test('안개는 본진도 가린다 — 시야 밖이면 무엇이든 안 보인다', () => {
+  const s = createState(5, MIRROR);
+  s.players[1].minerals = BASE_BUILD_COST;
+  // 자리 id를 박아 두면 지도를 손질할 때마다 깨진다 — 닿는 자리를 찾아 쓴다
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 1, b));
+  assert.ok(site, '팀1이 닿는 확장 자리가 없다');
+  assert.ok(applyCommand(s, cmd(0, 1, 'base', '', site.x, site.y)), '확장이 세워지지 않았다');
+  const expansion = s.entities.find((e) => e.kind === 'base' && e.team === 1 && !e.isMain);
+  const foeMain = mainBase(s, 1);
+  const myMain = mainBase(s, 0);
+
+  // 내 본진에서 본다 — 상대 진영은 전부 시야 밖이다
+  assert.ok(isHiddenFrom(s, 0, foeMain), '적 본진이 그대로 보인다 (4인용 맵의 전제가 깨진다)');
+  assert.ok(isHiddenFrom(s, 0, expansion), '적 확장이 그대로 보인다');
+  assert.ok(!isHiddenFrom(s, 0, myMain), '내 것이 가려졌다');
+});
+
+test('대전에서 명령 없는 병력은 스스로 걸어나가지 않는다', () => {
+  const s = createState(5, MIRROR);
+  const home = mainBase(s, 0);
+  const me = place(s, 0, 'rifleman', home.x - 4000, home.y - 4000);
+  const x0 = me.x;
+  const y0 = me.y;
+  for (let i = 0; i < 20 * TICK_RATE; i++) step(s, []);
+  const m = byId(s, me.id);
+  assert.ok(m, '유닛이 죽었다 — 전제가 깨졌다');
+  assert.equal(m.x, x0, '명령도 표적도 없는데 움직였다');
+  assert.equal(m.y, y0);
+});
+
+test('제자리를 지켜도 사거리 안의 적은 쏜다 — 안 걷는 것이지 안 싸우는 게 아니다', () => {
+  const s = createState(5, MIRROR);
+  const me = place(s, 0, 'rifleman', 24000, 27000);
+  const foe = place(s, 1, 'gnawer', 24000, 25000); // 2타일
+  const hp0 = foe.hp;
+  for (let i = 0; i < 40; i++) step(s, []);
+  const f = byId(s, foe.id);
+  assert.ok(!f || f.hp < hp0, '코앞의 적을 쏘지 않았다');
+});
+
+test('침공 파도는 그대로 성으로 몰려온다', () => {
+  const s = createState(5, MIRROR, DEFAULT_MAP_ID, false, true);
+  // 벽 위에 놓으면 길찾기가 아니라 지형에 낀 것을 재게 된다
+  let spot = null;
+  for (let ty = 4; ty < 12 && !spot; ty++) {
+    for (let tx = 10; tx < 38; tx++) {
+      const x = tx * 1000 + 500;
+      const y = ty * 1000 + 500;
+      if (!blockedAt(x, y)) { spot = [x, y]; break; }
+    }
+  }
+  assert.ok(spot, '맵 위쪽에 통행 가능한 자리가 없다');
+  const wave = place(s, 1, 'gnawer', spot[0], spot[1]);
+  const y0 = wave.y;
+  for (let i = 0; i < 60; i++) step(s, []);
+  const w = byId(s, wave.id);
+  assert.ok(w, '파도 유닛이 죽었다 — 전제가 깨졌다');
+  assert.ok(w.y > y0 + 1000, `파도가 전진하지 않았다 (${y0} → ${w.y})`);
+});
+
+/* ── 명령어 A · S · Y (오너 지시) ──────────────────────────────────────── */
+
+test('공격 이동(A)은 길에서 만난 적에 붙고, 그냥 이동은 지나친다', () => {
+  const run = (kind) => {
+    const s = createState(5, MIRROR);
+    const me = place(s, 0, 'rifleman', 24000, 34000);
+    // 쏘지 않는 구조물을 길옆 3타일에 둔다 — 맞아 죽으면 무엇도 측정되지 않는다.
+    // 피해량은 판별자가 될 수 없다: 그냥 이동도 지나가며 쏘기 때문이다.
+    // 차이는 **발이 멈추는가**에 있다 (y가 목적지 쪽으로 얼마나 갔는가).
+    place(s, 1, 'nest', 27000, 28000);
+    assert.ok(applyCommand(s, cmd(0, 0, kind, String(me.id), 24000, 20000)));
+    for (let i = 0; i < 200; i++) step(s, []);
+    return byId(s, me.id).y;
+  };
+  const moved = run('move');
+  const attacked = run('attack');
+
+  assert.ok(moved < 30000, '그냥 이동이 목적지 쪽으로 나아가지 않았다 — 전제가 깨졌다');
+  assert.ok(
+    attacked > moved + 3000,
+    `공격 이동이 붙어 싸우지 않고 지나쳤다 (이동 y=${moved}, 공격 y=${attacked})`,
+  );
+});
+
+test('정지(S)는 가던 명령을 버리고 그 자리에 선다', () => {
+  const s = createState(5, MIRROR);
+  const me = place(s, 0, 'rifleman', 24000, 30000);
+  assert.ok(applyCommand(s, cmd(0, 0, 'move', String(me.id), 24000, 16000)));
+  for (let i = 0; i < 20; i++) step(s, []);
+  const mid = byId(s, me.id);
+  assert.ok(mid.y < 30000, '이동 명령을 받고도 안 움직였다 — 전제가 깨졌다');
+
+  assert.ok(applyCommand(s, cmd(0, 0, 'stop', String(me.id))));
+  const stopped = { x: byId(s, me.id).x, y: byId(s, me.id).y };
+  for (let i = 0; i < 60; i++) step(s, []);
+  const after = byId(s, me.id);
+  assert.equal(after.x, stopped.x, '정지 명령을 받고도 계속 갔다');
+  assert.equal(after.y, stopped.y);
+  assert.equal(after.orderX, -1, '명령이 남아 있다');
+  assert.equal(after.hold, 1);
+});
+
+test('정지한 유닛도 사거리 안의 적은 쏜다 — 정지는 "가지 마라"이지 "싸우지 마라"가 아니다', () => {
+  const s = createState(5, MIRROR);
+  const me = place(s, 0, 'rifleman', 24000, 27000);
+  const foe = place(s, 1, 'gnawer', 24000, 25000); // 2타일 — 사거리 안
+  applyCommand(s, cmd(0, 0, 'stop', String(me.id)));
+  const hp0 = foe.hp;
+  for (let i = 0; i < 40; i++) step(s, []);
+  const f = byId(s, foe.id);
+  assert.ok(!f || f.hp < hp0, '정지한 유닛이 코앞의 적을 쏘지 않았다');
+});
+
+test('새 이동·공격 명령은 정지를 푼다', () => {
+  const s = createState(5, MIRROR);
+  const me = place(s, 0, 'rifleman', 24000, 30000);
+  applyCommand(s, cmd(0, 0, 'stop', String(me.id)));
+  assert.equal(byId(s, me.id).hold, 1);
+  applyCommand(s, cmd(0, 0, 'move', String(me.id), 24000, 26000));
+  assert.equal(byId(s, me.id).hold, 0, '이동 명령이 정지를 풀지 않았다');
+});
+
+test('집결지(Y)는 대전에서 갓 생산된 유닛을 그리로 보낸다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  const rx = home.x - 4000;
+  const ry = home.y - 4000;
+  assert.ok(applyCommand(s, cmd(0, 0, 'rally', '', rx, ry)), '대전에서 집결지가 거절됐다');
+
+  const made = produceAndWait(s, 0, 'rifleman', home.x, home.y - 1000);
+  assert.ok(made && made.length > 0, '유닛이 생산되지 않았다');
+  for (const e of made) {
+    assert.equal(e.orderX, rx, '갓 나온 유닛이 집결지로 가지 않는다');
+    assert.equal(e.orderY, ry);
+  }
+});
+
+test('같은 자리에 집결지를 다시 찍으면 해제된다', () => {
+  const s = createState(5, MIRROR);
+  const home = mainBase(s, 0);
+  applyCommand(s, cmd(0, 0, 'rally', '', home.x - 4000, home.y - 4000));
+  assert.ok(s.players[0].rally);
+  applyCommand(s, cmd(0, 0, 'rally', '', home.x - 4000, home.y - 4000));
+  assert.equal(s.players[0].rally, null);
+});
+
+test('남의 유닛에는 공격 이동·정지 명령이 먹히지 않는다', () => {
+  const s = createState(5, MIRROR);
+  const foe = place(s, 1, 'rifleman', 24000, 24000);
+  assert.equal(applyCommand(s, cmd(0, 0, 'attack', String(foe.id), 24000, 30000)), false);
+  assert.equal(applyCommand(s, cmd(0, 0, 'stop', String(foe.id))), false);
+  assert.equal(byId(s, foe.id).orderX, -1);
+  assert.equal(byId(s, foe.id).hold, 0);
+});
+
+test('안개·새 명령이 섞여도 결정론은 그대로다', () => {
+  const cmds = genCommands(4242, 900);
+  // 같은 대본에 A·S·Y를 얹는다
+  for (let t = 120; t < 900; t += 37) {
+    cmds.push(cmd(t, t % 2, 'rally', '', 20000 + (t % 5000), 20000 + (t % 7000)));
+  }
+  const a = runMatch(11, 900, cmds);
+  const b = runMatch(11, 900, cmds);
+  assert.deepEqual(a.trace, b.trace, '같은 입력이 다른 궤적을 냈다');
+});
+
+/* ── 확장 건설 시간 (오너 지시: 1.5배) ─────────────────────────────────── */
+
+test('확장 기지는 6초 뒤에 가동한다', () => {
+  assert.equal(BASE_BUILD_TICKS, 6 * TICK_RATE);
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = BASE_BUILD_COST;
+  // 확장은 내 영토에서 이어져야 한다 — 팀 0 본진(42000,42000)에서 닿는 지점
+  const site = BASE_SITES.find((b) => b.id === 5);
+  assert.ok(siteReachable(s, 0, site), '고른 지점이 팀 0에서 닿지 않는다');
+  assert.ok(applyCommand(s, cmd(0, 0, 'base', '', site.x, site.y)));
+  const built = s.entities.find((e) => e.kind === 'base' && e.team === 0 && !e.isMain);
+
+  for (let i = 0; i < BASE_BUILD_TICKS - 1; i++) step(s, []);
+  assert.ok(byId(s, built.id).deploy > 0, '6초가 되기 전에 가동했다');
+  step(s, []);
+  assert.equal(byId(s, built.id).deploy, 0, '6초가 지나도 가동하지 않았다');
+});
+
+/* ── 안개 2차 규칙 (오너 지시: 교전 노출 · 고지 시야 · 정찰 기억) ───────── */
+
+test('공격하면 안개 속이라도 내 자리가 드러난다', () => {
+  const s = createState(5, MIRROR);
+  const shooter = place(s, 0, 'rifleman', 24000, 26000);
+  const target = place(s, 1, 'rifleman', 24000, 24000); // 2타일 — 사거리 안
+  target.hp = 999999;
+  target.maxHp = 999999;
+
+  // 실제로 한 대 칠 때까지 돌린다 (쿨다운 때문에 첫 틱에 쏘지 않을 수 있다)
+  let fired = false;
+  for (let i = 0; i < 60 && !fired; i++) {
+    step(s, []);
+    const sh = byId(s, shooter.id);
+    if (sh && sh.reveal >= s.tick) fired = true;
+  }
+  assert.ok(fired, '공격하고도 드러나지 않았다');
+
+  // 시야 밖으로 물러나도 노출이 남은 동안은 보인다
+  const sh = byId(s, shooter.id);
+  sh.x = 4000;
+  sh.y = 44000;
+  assert.ok(!isHiddenFrom(s, 1, sh), '공격 직후인데 안 보인다');
+});
+
+test('노출은 시간이 지나면 풀린다', () => {
+  const s = createState(5, MIRROR);
+  const shooter = place(s, 0, 'rifleman', 24000, 26000);
+  const target = place(s, 1, 'rifleman', 24000, 24000);
+  target.hp = 999999;
+  target.maxHp = 999999;
+  for (let i = 0; i < 60; i++) step(s, []);
+
+  const sh = byId(s, shooter.id);
+  assert.ok(sh, '공격자가 죽었다 — 전제가 깨졌다');
+  // 아무도 없는 구석으로 물려 노출이 갱신되지 않게 한다
+  sh.x = 4000;
+  sh.y = 44000;
+  const target2 = byId(s, target.id);
+  if (target2) {
+    target2.x = 44000;
+    target2.y = 4000;
+  }
+  for (let i = 0; i < 4 * TICK_RATE; i++) step(s, []);
+  const sh2 = byId(s, shooter.id);
+  assert.ok(sh2, '공격자가 사라졌다');
+  assert.ok(isHiddenFrom(s, 1, sh2), '4초가 지나도 노출이 안 풀렸다');
+});
+
+test('고지에 선 쪽이 더 멀리 본다', () => {
+  const s = createState(5, MIRROR);
+  // 맵에서 고지/저지 타일을 하나씩 찾는다
+  let high = null;
+  let low = null;
+  for (let ty = 4; ty < ARENA_W_TILES - 4 && (!high || !low); ty++) {
+    for (let tx = 4; tx < ARENA_W_TILES - 4; tx++) {
+      const x = tx * 1000 + 500;
+      const y = ty * 1000 + 500;
+      if (blockedAt(x, y)) continue;
+      if (!high && elevAt(x, y) === 1) high = [x, y];
+      if (!low && elevAt(x, y) === 0) low = [x, y];
+    }
+  }
+  assert.ok(high && low, '맵에 고지 또는 저지가 없다');
+
+  // 같은 거리에서, 고지→저지가 저지→고지보다 먼저 보인다
+  const gap = 9000; // 기본 시야 8타일보다 조금 멀게
+  const upper = () => {
+    const t = createState(5, MIRROR);
+    const w = place(t, 0, 'rifleman', high[0], high[1]);
+    const o = place(t, 1, 'rifleman', high[0] + gap, high[1]);
+    // 상대를 저지로 옮긴다 — x만 옮기면 고도가 안 바뀔 수 있어 실제 저지 좌표를 쓴다
+    o.x = low[0];
+    o.y = low[1];
+    w.x = high[0];
+    w.y = high[1];
+    return { t, w, o };
+  };
+  const A = upper();
+  const d = Math.hypot(A.w.x - A.o.x, A.w.y - A.o.y);
+  step(A.t, []);
+  const highSeesLow = !isHiddenFrom(A.t, 0, byId(A.t, A.o.id));
+
+  const B = upper();
+  // 시점을 뒤집는다 — 저지에 선 쪽이 고지의 적을 본다
+  step(B.t, []);
+  const lowSeesHigh = !isHiddenFrom(B.t, 1, byId(B.t, B.w.id));
+
+  // 거리가 시야 근처일 때만 의미 있는 비교다
+  if (d > 8000 * 0.7 && d < 8000 * 1.3) {
+    assert.ok(
+      highSeesLow || !lowSeesHigh,
+      '저지가 고지를 보는데 고지는 저지를 못 본다 — 우위가 뒤집혔다',
+    );
+  }
+  assert.equal(HIGH_GROUND_SIGHT_PCT > 0, true, '고지 시야 보정이 꺼져 있다');
+});
+
+test('한 번 정찰한 기지 자리는 계속 안다', () => {
+  const s = createState(5, MIRROR);
+  const foeMain = mainBase(s, 1);
+  assert.ok(isHiddenFrom(s, 0, foeMain), '처음부터 적 본진이 보인다');
+  assert.equal(s.players[0].scouted & (1 << foeMain.siteId), 0);
+
+  // 정찰병을 적 본진 앞에 세운다
+  // 적 본진은 고지 주머니에 있다 — 저지에서 올려다보면 시야가 30% 깎이므로
+  // 넉넉히 붙인다 (그 규칙 자체는 아래 고지 테스트가 따로 본다)
+  const scout = place(s, 0, 'scoutcar', foeMain.x + 2500, foeMain.y + 2500);
+  step(s, []);
+  assert.ok((s.players[0].scouted & (1 << foeMain.siteId)) !== 0, '봤는데 기록되지 않았다');
+  assert.ok(!isHiddenFrom(s, 0, mainBase(s, 1)), '보고 있는데 안 보인다');
+
+  // 정찰병이 사라져도 자리는 기억한다 — 기지는 움직이지 않으므로 거짓이 아니다
+  const idx = s.entities.findIndex((e) => e.id === scout.id);
+  s.entities.splice(idx, 1);
+  step(s, []);
+  assert.ok(!isHiddenFrom(s, 0, mainBase(s, 1)), '정찰한 기지 자리를 잊어버렸다');
+});
+
+test('정찰 기록은 해시에 들어간다 (리싱크가 이걸 놓치면 안 된다)', () => {
+  const a = createState(7, MIRROR);
+  const b = createState(7, MIRROR);
+  step(a, []);
+  step(b, []);
+  assert.equal(hashState(a), hashState(b));
+  a.players[0].scouted |= 1 << 3;
+  assert.notEqual(hashState(a), hashState(b), 'scouted가 해시에 안 들어간다');
+});
+
+/* ── 몸집과 사거리의 관계 (라운드 50 — 근접이 표적에 못 닿던 버그) ─────── */
+
+test('모든 유닛은 밀어내기 거리 너머까지 닿는다 — 근접이 허공을 치면 안 된다', () => {
+  // 밀어내기는 두 몸집의 합만큼 떼어 놓는다. 닿는 거리가 그보다 짧으면
+  // 그 짝은 **영원히 서로를 못 때린다** — 몸집을 키우면서 실제로 그랬다
+  // (거대포식자 반경 1100 + 소총병 600 = 1700 떨어져 서는데 닿는 거리 1500).
+  const fake = (id) => ({ kind: 'unit', unit: id, team: 0 });
+  const fighters = UNIT_IDS.filter((id) => {
+    const u = getUnit(id);
+    return u.kind === 'unit' && u.range > 0;
+  });
+  for (const a of fighters) {
+    for (const b of UNIT_IDS) {
+      if (getUnit(b).kind !== 'unit') continue;
+      const ea = fake(a);
+      const eb = fake(b);
+      const push = radiusOf(ea) + radiusOf(eb);
+      const reach = reachOf(ea, eb, getUnit(a).range);
+      assert.ok(
+        reach > push,
+        `${getUnit(a).name}가 ${getUnit(b).name}에 못 닿는다 (닿는 거리 ${reach} ≤ 밀어내기 ${push})`,
+      );
+    }
+  }
+});
+
+test('같은 유닛끼리 대군으로 붙으면 어느 쪽도 이기지 않는다', () => {
+  // 미러가 한쪽으로 기울면 자리나 순서에 이점이 있다는 뜻이고, 그러면
+  // 결투 하네스의 모든 수치가 같이 기운다. 사거리 버그 시절 실제로 기울었다
+  // 고도가 균일하고 통행 가능한 자리를 먼저 찾는다. 언덕에 걸치면 데미지가
+  // 70%로 깎이고 시야가 ±30% 달라져, 유닛이 아니라 지형을 재게 된다
+  let spot = null;
+  for (let ty = 6; ty < ARENA_W_TILES - 12 && !spot; ty++) {
+    for (let tx = 6; tx < ARENA_W_TILES - 8; tx++) {
+      const e0 = elevAt(tx * 1000 + 500, ty * 1000 + 500);
+      let ok = true;
+      for (let y = ty; y < ty + 10 && ok; y++) {
+        for (let x = tx; x < tx + 6; x++) {
+          const px = x * 1000 + 500;
+          const py = y * 1000 + 500;
+          if (blockedAt(px, py) || elevAt(px, py) !== e0) {
+            ok = false;
+            break;
+          }
+        }
+      }
+      if (ok) {
+        spot = [tx * 1000 + 1500, ty * 1000 + 5000];
+        break;
+      }
+    }
+  }
+  assert.ok(spot, '고도가 균일한 평지를 찾지 못했다');
+
+  for (const id of ['zealot', 'rifleman', 'siegetank']) {
+    const s = createState(9, MIRROR);
+    const N = 6;
+    for (let i = 0; i < N; i++) {
+      place(s, 0, id, spot[0] + (i % 3) * 1600, spot[1] + 1600 + ((i / 3) | 0) * 1600);
+      place(s, 1, id, spot[0] + (i % 3) * 1600, spot[1] - 1600 - ((i / 3) | 0) * 1600);
+    }
+    for (let t = 0; t < 1200; t++) {
+      step(s, []);
+      const a = s.entities.some((e) => e.kind === 'unit' && e.team === 0);
+      const b = s.entities.some((e) => e.kind === 'unit' && e.team === 1);
+      if (!a || !b) break;
+    }
+    const live = (t) => s.entities.filter((e) => e.kind === 'unit' && e.team === t).length;
+    assert.equal(
+      live(0),
+      live(1),
+      `${getUnit(id).name} 미러가 기울었다 (${live(0)} : ${live(1)}) — 자리나 순서에 이점이 있다`,
+    );
+  }
+});
+
+/* ── 공중의 지형 이점 (라운드 50, 오너 지시) ───────────────────────────── */
+
+test('공중은 같은 사거리의 지상보다 멀리 본다 — 지형이 시야를 막지 못한다', () => {
+  // 사격보행기(지상)와 부유선(공중)은 둘 다 대공 가능한 4코 유닛이다.
+  // 같은 거리에 적을 두고, 공중 쪽이 먼저 본다
+  const probe = (watcher) => {
+    const s = createState(5, MIRROR);
+    const w = place(s, 0, watcher, 24000, 30000);
+    const foe = place(s, 1, 'rifleman', 24000, 30000 - 9500); // 9.5타일
+    step(s, []);
+    void w;
+    return !isHiddenFrom(s, 0, byId(s, foe.id));
+  };
+  assert.equal(probe('skiff'), true, '공중이 9.5타일 밖을 못 본다');
+  assert.equal(probe('strider'), false, '지상이 공중만큼 멀리 본다 — 이점이 없다');
+});
+
+test('충전 스킬은 유닛마다 다른 시간을 쓰고, 술사는 게이지를 채워 나온다', () => {
+  const mystic = getUnit('mystic');
+  assert.ok(mystic.chargeTicks, '술사에 유닛별 충전 시간이 없다');
+  assert.ok(mystic.chargeStart > 0, '술사가 빈 게이지로 나온다 — 한 방을 못 쓴다');
+  assert.ok(
+    mystic.chargeStart < mystic.chargeTicks,
+    '만충으로 나오면 붙자마자 한 무리를 지운다 (실측: 소총병 12기 즉사)',
+  );
+  // 실제로 생산 경로를 타면 게이지가 차 있어야 한다
+  const s = createState(5, ['covenant', 'covenant']);
+  s.players[0].minerals = RICH;
+  s.players[0].unlocked = [...s.players[0].unlocked, 'mystic'].sort();
+  const home = mainBase(s, 0);
+  const made = produceAndWait(s, 0, 'mystic', home.x, home.y - 1000);
+  assert.ok(
+    made && made.length > 0 && made[0].charge === mystic.chargeStart,
+    '생산된 술사의 게이지가 비었다',
+  );
+});
+
+test('지상 전용 시전자의 주문도 지상만 때린다', () => {
+  // 술사는 지상만 때리는데 그 주문(정신붕괴)만 공중을 때리면
+  // "못 때리는 유닛이 때린다"가 된다
+  assert.equal(getUnit('mystic').targets, 'ground');
+  assert.equal(getUnit('mindbreak').targets, 'ground');
+});
+
+/* ── 생산 예약 (라운드 50 — 보유 상한 제거의 짝) ───────────────────────── */
+
+test('대전 생산은 코스트만큼 시간이 걸린다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  const u = getUnit('rifleman');
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.equal(s.queue.length, 1, '예약이 잡히지 않았다');
+
+  const before = s.entities.length;
+  for (let i = 0; i < u.cost * TICK_RATE - 1; i++) step(s, []);
+  assert.equal(s.entities.length, before, '시간이 되기 전에 나왔다');
+  step(s, []);
+  assert.ok(s.entities.length > before, '시간이 지나도 안 나왔다');
+  assert.equal(s.queue.length, 0, '예약이 안 걷혔다');
+});
+
+test('전진 배치는 살아 있다 — 찍은 자리에 그대로 나온다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  // 배치 구역 앞쪽 끝 — 기지가 아니라 여기서 나와야 한 박자 빠르다
+  const fx = home.x;
+  const fy = home.y - 7000;
+  const made = produceAndWait(s, 0, 'rifleman', fx, fy);
+  assert.ok(made && made.length > 0, '생산되지 않았다');
+  for (const e of made) {
+    assert.ok(
+      Math.hypot(e.x - fx, e.y - fy) < 3000,
+      `찍은 자리가 아니라 기지에서 나왔다 (${e.x},${e.y} vs ${fx},${fy})`,
+    );
+    assert.ok(Math.hypot(e.x - home.x, e.y - home.y) > 5000, '기지 옆에서 나왔다');
+  }
+});
+
+test('기지마다 큐가 따로 돈다 — 확장이 곧 생산력이다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.id === 5);
+  assert.ok(siteReachable(s, 0, site));
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'base', '', site.x, site.y)));
+  for (let i = 0; i < BASE_BUILD_TICKS + 2; i++) step(s, []);
+
+  const bases = s.entities.filter((e) => e.kind === 'base' && e.team === 0);
+  assert.equal(bases.length, 2, '확장이 가동하지 않았다');
+  s.players[0].minerals = RICH;
+  for (const b of bases) {
+    assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', b.x, b.y - 1000)));
+  }
+  assert.equal(s.queue.length, 2);
+
+  // 둘 다 동시에 굽는다 — 한 기지였다면 뒤엣것이 두 배 걸린다
+  const u = getUnit('rifleman');
+  for (let i = 0; i < u.cost * TICK_RATE; i++) step(s, []);
+  assert.equal(s.queue.length, 0, '기지 둘이 순차로 구웠다 — 병렬이어야 한다');
+});
+
+test('한 기지에 쌓을 수 있는 예약에는 상한이 있다', () => {
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH * 10;
+  const home = mainBase(s, 0);
+  let ok = 0;
+  for (let i = 0; i < PRODUCE_QUEUE_MAX + 3; i++) {
+    if (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000))) ok++;
+  }
+  assert.equal(ok, PRODUCE_QUEUE_MAX, `상한(${PRODUCE_QUEUE_MAX})을 넘겨 예약됐다 (${ok})`);
+});
+
+test('굽던 기지를 잃으면 예약도 사라진다', () => {
+  // 본진이 아니라 확장으로 검사한다 — 본진이 부서지면 경기가 끝나 버려
+  // 그다음 틱이 돌지 않는다
+  const s = createState(5, MIRROR);
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.id === 5);
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'base', '', site.x, site.y)));
+  for (let i = 0; i < BASE_BUILD_TICKS + 2; i++) step(s, []);
+  const exp = s.entities.find((e) => e.kind === 'base' && e.team === 0 && !e.isMain);
+  assert.ok(exp, '확장이 가동하지 않았다');
+
+  s.players[0].minerals = RICH;
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', exp.x, exp.y - 1000)));
+  const queued = s.queue.filter((q) => q.base === exp.id).length;
+  assert.equal(queued, 1, '확장에 예약이 안 걸렸다');
+  exp.hp = 0;
+  step(s, []);
+  assert.equal(s.queue.filter((q) => q.base === exp.id).length, 0, '기지가 사라졌는데 예약이 남았다');
+});
+
+test('침공과 실험장은 예약 없이 즉시 생산한다', () => {
+  for (const [sandbox, invasion] of [[true, false], [false, true]]) {
+    const s = createState(5, MIRROR, DEFAULT_MAP_ID, sandbox, invasion);
+    s.players[0].minerals = RICH;
+    s.players[0].unlocked = [...new Set([...s.players[0].unlocked, 'rifleman'])].sort();
+    const home = mainBase(s, 0);
+    const before = s.entities.length;
+    assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+    assert.ok(s.entities.length > before, `${sandbox ? '실험장' : '침공'}이 예약제가 됐다`);
+    assert.equal(s.queue.length, 0);
+  }
+});
+
+test('예약은 해시와 스냅샷을 그대로 통과한다', () => {
+  const a = createState(11, MIRROR);
+  a.players[0].minerals = RICH;
+  const home = mainBase(a, 0);
+  assert.ok(applyCommand(a, cmd(a.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.equal(a.queue.length, 1, '예약이 안 잡혀 이 검사가 헛돈다');
+  const snap = snapshot(a);
+  const b = createState(11, MIRROR);
+  restore(b, snap);
+  assert.equal(hashState(a), hashState(b), '스냅샷 왕복에서 예약이 어긋났다');
+  for (let i = 0; i < 30; i++) {
+    step(a, []);
+    step(b, []);
+  }
+  assert.equal(hashState(a), hashState(b), '복원 후 궤적이 갈렸다');
+});
+
+/* ── 공급 천장 (라운드 50) ────────────────────────────────────────────── */
+
+test('공급 천장은 본진이 크게, 확장이 조금 더한다', () => {
+  const s = createState(21, MIRROR);
+  assert.equal(supplyCapOf(s, 0), SUPPLY_MAIN, '시작은 본진 몫이어야 한다');
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
+  assert.ok(site, '확장 자리가 없어 이 검사가 헛돈다');
+  step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
+  assert.equal(supplyCapOf(s, 0), SUPPLY_MAIN, '짓는 중인 기지가 벌써 천장을 줬다');
+  for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
+  assert.equal(supplyCapOf(s, 0), SUPPLY_MAIN + SUPPLY_PER_EXPANSION);
+});
+
+test('천장을 넘는 생산은 거절된다 — 예약도 자리를 미리 문다', () => {
+  const s = createState(22, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  const per = supplyOf(getUnit('rifleman'));
+  assert.ok(per > 0, '소총병 공급이 0이면 이 검사가 헛돈다');
+  let made = 0;
+  for (let i = 0; i < 60; i++) {
+    s.players[0].minerals = RICH; // 돈이 아니라 **공급**이 막는지만 본다
+    if (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000))) made++;
+    // 큐 상한(5)이 아니라 공급이 막는 것을 보려면 구운 것을 비워 줘야 한다
+    for (let k = 0; k < 40 && s.queue.length; k++) step(s, []);
+  }
+  assert.ok(made > 0, '한 장도 못 뽑았다');
+  assert.ok(supplyUsedOf(s, 0) <= supplyCapOf(s, 0), '천장을 넘겼다');
+  assert.ok(
+    supplyUsedOf(s, 0) + per > supplyCapOf(s, 0),
+    `천장(${supplyCapOf(s, 0)})에 닿기 전에 멈췄다 — ${supplyUsedOf(s, 0)}칸`,
+  );
+});
+
+test('예약만으로는 천장을 넘길 수 없다', () => {
+  const s = createState(23, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  // 큐에만 쌓는다 (step을 돌리지 않으니 필드 병력은 0)
+  while (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.ok(supplyUsedOf(s, 0) <= supplyCapOf(s, 0), '예약이 천장을 넘었다');
+  assert.equal(s.entities.filter((e) => e.kind === 'unit' && e.team === 0).length, 0);
+});
+
+test('침공·실험장에는 천장이 없다', () => {
+  for (const [sandbox, invasion] of [[true, false], [false, true]]) {
+    const s = createState(24, MIRROR, DEFAULT_MAP_ID, sandbox, invasion);
+    s.players[0].minerals = RICH;
+    const home = mainBase(s, 0);
+    let made = 0;
+    for (let i = 0; i < 30; i++) {
+      if (applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000))) made++;
+      s.players[0].minerals = RICH;
+    }
+    assert.ok(
+      supplyUsedOf(s, 0) > supplyCapOf(s, 0),
+      `${sandbox ? '실험장' : '침공'}에 천장이 걸렸다 — ${made}장`,
+    );
+  }
+});
+
+test('기지를 잃으면 천장이 내려간다 — 초과분은 그대로 남는다', () => {
+  const s = createState(25, MIRROR);
+  s.players[0].minerals = RICH;
+  const site = BASE_SITES.find((b) => b.startFor === -1 && siteReachable(s, 0, b));
+  step(s, [cmd(s.tick, 0, 'base', '', site.x, site.y)]);
+  for (let i = 0; i < BASE_BUILD_TICKS + 1; i++) step(s, []);
+  const exp = s.entities.find((e) => e.kind === 'base' && e.team === 0 && !e.isMain);
+  assert.ok(exp, '확장이 안 세워져 이 검사가 헛돈다');
+  const wide = supplyCapOf(s, 0);
+  exp.hp = 0;
+  assert.equal(supplyCapOf(s, 0), wide - SUPPLY_PER_EXPANSION, '확장을 잃었는데 천장이 그대로다');
+});
+
+/* ── 피격 생산 정지 (라운드 52) ────────────────────────────────────────── */
+
+test('맞고 있는 기지는 새 예약을 못 받는다', () => {
+  const s = createState(31, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  home.hurt = s.tick; // 방금 맞았다
+  assert.ok(hurtLocked(s, home), '잠기지 않았다');
+  assert.equal(
+    applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)),
+    false,
+    '맞고 있는데 새 예약이 걸렸다',
+  );
+});
+
+test('이미 건 예약은 맞아도 그대로 나온다 — 준비한 것은 나온다', () => {
+  const s = createState(32, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  assert.equal(s.queue.length, 1);
+  const before = s.entities.filter((e) => e.kind === 'unit' && e.team === 0).length;
+  for (let i = 0; i < 200 && s.queue.length; i++) {
+    mainBase(s, 0).hurt = s.tick; // 내내 맞고 있다
+    step(s, []);
+  }
+  assert.equal(s.queue.length, 0, '예약이 안 구워졌다');
+  assert.ok(
+    s.entities.filter((e) => e.kind === 'unit' && e.team === 0).length > before,
+    '맞는 동안 걸어 둔 예약이 사라졌다',
+  );
+});
+
+test('잠금은 시간이 지나면 풀린다', () => {
+  const s = createState(33, MIRROR);
+  s.players[0].minerals = RICH;
+  const home = mainBase(s, 0);
+  home.hurt = s.tick;
+  assert.ok(hurtLocked(s, home));
+  for (let i = 0; i < HURT_PRODUCE_LOCK + 1; i++) step(s, []);
+  assert.ok(!hurtLocked(s, mainBase(s, 0)), '잠금이 안 풀렸다');
+  assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+});
+
+test('침공·실험장에는 피격 잠금이 없다', () => {
+  for (const [sandbox, invasion] of [[true, false], [false, true]]) {
+    const s = createState(34, MIRROR, DEFAULT_MAP_ID, sandbox, invasion);
+    s.players[0].minerals = RICH;
+    const home = mainBase(s, 0);
+    home.hurt = s.tick;
+    assert.ok(!hurtLocked(s, home), `${sandbox ? '실험장' : '침공'}에 잠금이 걸렸다`);
+    assert.ok(applyCommand(s, cmd(s.tick, 0, 'unit', 'rifleman', home.x, home.y - 1000)));
+  }
 });

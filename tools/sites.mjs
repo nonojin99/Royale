@@ -1,0 +1,159 @@
+/**
+ * 기지 자리 검사기 — 맵 규칙 §7의 3번(확장 사슬 BFS)을 기계로 돌린다.
+ *
+ * 손으로 좌표를 찍으면 반드시 틀린다. 대협곡의 다리 어귀가 15.8타일로
+ * 사슬이 끊겨 필드 절반에서 확장이 멈춘 사고가 그래서 났다 (라운드 14.5).
+ *
+ * 재는 것:
+ *   1. 점대칭  — 모든 자리가 (47-x, 47-y) 짝을 갖는가
+ *   2. 사슬    — 본진에서 EXPAND_RANGE 링크만 밟아 전 자리에 닿는가
+ *   3. 통행    — 자리가 벽·물 위에 있지 않은가
+ *   4. **다툼도** — 각 자리가 양 본진에서 얼마나 먼가. 자기 본진에만
+ *      가깝고 적에게서 먼 자리가 넷이면 확장이 벌을 안 받는다 (라운드 50)
+ *
+ * 사용: node tools/sites.mjs [맵id]
+ */
+import {
+  BASE_SITES,
+  EXPAND_RANGE,
+  ARENA_W_TILES,
+  MAPS,
+  setActiveMap,
+  blockedAt,
+  navDistance,
+} from '../packages/shared/dist/index.js';
+
+const mapId = process.argv[2];
+if (mapId) setActiveMap(mapId);
+// 침공 전용 맵은 중앙 본진 방사대칭이다 — 점대칭도 다툼도도 뜻이 없다
+const invasionOnly = MAPS.find((m) => m.id === (mapId ?? 'coast'))?.invasionOnly ?? false;
+const T = 1000;
+const W = ARENA_W_TILES;
+const sites = BASE_SITES;
+const mains = sites.filter((b) => b.startFor === 0 || b.startFor === 1);
+const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) / T;
+
+let bad = 0;
+const fail = (m) => { console.log('  ✗ ' + m); bad++; };
+
+console.log(`\n【${mapId ?? '기본'}】 자리 ${sites.length}개 · 사슬 간격 ${EXPAND_RANGE / T}타일\n`);
+
+// 1. 점대칭
+for (const s of invasionOnly ? [] : sites) {
+  const mx = (W - 1) * T - s.x;
+  const my = (W - 1) * T - s.y;
+  if (!sites.some((o) => o.x === mx && o.y === my)) {
+    fail(`${s.id}(${s.x / T},${s.y / T})의 점대칭 짝이 없다`);
+  }
+}
+
+// 3. 통행
+for (const s of sites) {
+  if (blockedAt(s.x, s.y)) fail(`${s.id} ${s.label ?? ''}가 벽·물 위에 있다`);
+}
+
+// 2. 사슬 BFS — 본진마다
+for (const main of invasionOnly ? [] : mains) {
+  const seen = new Set([main.id]);
+  const q = [main];
+  while (q.length) {
+    const cur = q.shift();
+    for (const s of sites) {
+      if (seen.has(s.id)) continue;
+      if (d(cur, s) * T <= EXPAND_RANGE) {
+        seen.add(s.id);
+        q.push(s);
+      }
+    }
+  }
+  const missed = sites.filter((s) => !seen.has(s.id)).map((s) => s.id);
+  if (missed.length) fail(`본진 ${main.id}에서 사슬이 안 닿는 자리: ${missed.join(', ')}`);
+}
+
+// 3b. 병목 폭 — 본진 사이를 가르는 가장 좁은 목
+//
+// 행·열로 세면 대각 협곡을 못 잡고, 거리 띠로 세도 회랑 밖까지 같이 세어
+// 안 잡힌다. **최단경로 회랑**만 본다: 두 본진에서의 거리 합이 총거리와
+// 같은 칸이 최단경로 위의 칸이다. 그 회랑을 거리 띠로 잘라 가장 좁은
+// 곳을 재면 "군대가 지나갈 수 있는 길목이 몇 칸인가"가 나온다.
+//
+// 넉넉한 회랑(총거리 +4타일까지 돌아가는 길 포함)도 같이 잰다 — 실제
+// 군대는 최단경로만 밟지 않는다.
+{
+  const p0m = sites.find((b) => b.startFor === 0);
+  const p1m = sites.find((b) => b.startFor === 1);
+  const goal = navDistance(p1m.x, p1m.y, p0m.x, p0m.y);
+  const tight = new Map();
+  const loose = new Map();
+  for (let ty = 0; ty < W; ty++) {
+    for (let tx = 0; tx < W; tx++) {
+      const px = tx * T + 500;
+      const py = ty * T + 500;
+      if (blockedAt(px, py)) continue;
+      const dA = navDistance(px, py, p0m.x, p0m.y);
+      const dB = navDistance(px, py, p1m.x, p1m.y);
+      if (dA < 0 || dB < 0) continue;
+      const slack = dA + dB - goal;
+      if (slack > 40) continue; // 4타일 넘게 돌아가면 회랑 밖
+      const k = Math.round(dA / 20) * 20;
+      loose.set(k, (loose.get(k) ?? 0) + 1);
+      if (slack === 0) tight.set(k, (tight.get(k) ?? 0) + 1);
+    }
+  }
+  const narrowest = (m) => {
+    let n = Infinity;
+    let at = 0;
+    for (const [k, v] of m) {
+      if (k < goal * 0.2 || k > goal * 0.8) continue;
+      if (v < n) {
+        n = v;
+        at = k;
+      }
+    }
+    return [n === Infinity ? 0 : n, at];
+  };
+  const [tn, ta] = narrowest(tight);
+  const [ln] = narrowest(loose);
+  console.log(
+    `  본진 간 경로 ${(goal / 10).toFixed(1)}타일 · 최단 회랑 최소 폭 **${tn}칸** ` +
+      `(본진에서 ${(ta / 10).toFixed(0)}타일) · 넉넉한 회랑 ${ln}칸\n`,
+  );
+}
+
+// 4. 다툼도
+if (invasionOnly) {
+  console.log('  (침공 전용 맵 — 대칭·사슬·다툼도 검사는 건너뛴다)');
+  console.log(bad ? `\n  ✗ ${bad}건 실패` : '\n  ✓ 통행 통과');
+  process.exit(bad ? 1 : 0);
+}
+const p0 = sites.find((b) => b.startFor === 0);
+const p1 = sites.find((b) => b.startFor === 1);
+console.log('  id  자리            내본진  적본진   성격');
+const safeCount = { 0: 0, 1: 0 };
+for (const s of sites) {
+  if (s.startFor === 0 || s.startFor === 1) continue;
+  const d0 = d(s, p0);
+  const d1 = d(s, p1);
+  const near = d0 < d1 ? 0 : 1;
+  const mine = Math.min(d0, d1);
+  const foe = Math.max(d0, d1);
+  // 자기 본진에 가깝고 적에게서 두 배 넘게 멀면 "뒤뜰" — 칠 수가 없다
+  const kind = foe >= mine * 2 ? '뒤뜰' : foe >= mine * 1.35 ? '반뒤뜰' : '다툼터';
+  if (kind === '뒤뜰') safeCount[near]++;
+  console.log(
+    `  ${String(s.id).padStart(2)}  ${(s.label ?? '').padEnd(12)}` +
+      `${mine.toFixed(0).padStart(6)}${foe.toFixed(0).padStart(8)}   ${kind} (팀${near} 쪽)`,
+  );
+}
+console.log(`\n  팀별 뒤뜰 자리: 팀0 ${safeCount[0]}개 · 팀1 ${safeCount[1]}개`);
+if (safeCount[0] > 2) {
+  console.log(
+    '  ℹ️  뒤뜰이 셋이면 4기지를 안전하게 깔 수 있다 — 다만 이건 **재 보라는 신호이지\n' +
+      '     판정이 아니다.** 쌍둥이 해안은 넷을 둘로 줄이자 GREED>TECH이 100%→85%가\n' +
+      '     됐지만, 대협곡에 같은 처방을 쓰자 58%→75%로 나빠졌다(RUSH vs TECH도\n' +
+      '     40%→13%). 뒤뜰 셋인 채로 대협곡이 우리 맵 중 가장 건강하다.\n' +
+      '     `node tools/balance.mjs --map <id>`로 A/B를 재고 정할 것 (라운드 51)',
+  );
+}
+console.log(bad ? `\n  ✗ ${bad}건 실패` : '\n  ✓ 대칭·사슬·통행 모두 통과');
+process.exit(bad ? 1 : 0);
